@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+.idea/
+# notes for this machine only
+CLAUDE.local.md
+# test images (third-party figures, not cleared for redistribution) and anything derived from them: everything in
+# testgraphs/ but its README, which keeps the directory in every clone
+testgraphs/*
+!testgraphs/README.md

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>dotscraper</title>
+    <meta name="description" content="Extract dot locations from images of graphs, including overlapping translucent dots, in the browser.">
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="src/ui/main.js"></script>
+</head>
+<body>
+    <noscript><p class="warning">dotscraper runs in the browser and needs JavaScript.</p></noscript>
+    <header>
+        <div class="title">
+            <h1>dotscraper</h1>
+            <p class="subtitle">Dot locations from images of graphs</p>
+        </div>
+        <div class="source" role="group" aria-label="Image source">
+            <label for="test-image">Test image</label>
+            <select id="test-image">
+                <option value="">Choose…</option>
+            </select>
+            <button type="button" id="open-file">Open file…</button>
+            <input type="file" id="file-input" accept="image/*" hidden>
+            <span class="hint">or paste (⌘V) or drop an image</span>
+        </div>
+    </header>
+    <main>
+        <aside id="panel" aria-label="Details">
+            <section>
+                <h2>Image</h2>
+                <dl id="image-info">
+                    <dt>Source</dt><dd id="info-name">none</dd>
+                    <dt>Size</dt><dd id="info-size">–</dd>
+                    <dt>Pixel hash</dt><dd id="info-hash" title="FNV-1a of the RGBA values, to compare with the Node tools">–</dd>
+                </dl>
+            </section>
+            <section>
+                <h2>Pixel</h2>
+                <dl>
+                    <dt>Position</dt><dd id="pixel-pos">–</dd>
+                    <dt>RGBA</dt><dd id="pixel-rgba">–</dd>
+                </dl>
+                <div id="pixel-swatch" aria-hidden="true"></div>
+            </section>
+            <section>
+                <h2>View</h2>
+                <div class="zoom" role="group" aria-label="Zoom">
+                    <button type="button" id="zoom-fit" title="Fit the image in the view (0)">Fit</button>
+                    <button type="button" id="zoom-1" title="One image pixel per screen pixel (1)">1:1</button>
+                    <button type="button" id="zoom-out" title="Zoom out (−)">−</button>
+                    <button type="button" id="zoom-in" title="Zoom in (+)">+</button>
+                    <span id="zoom-level" role="status">–</span>
+                </div>
+                <p class="fine">Scroll or pinch to zoom at the pointer; drag to pan.</p>
+            </section>
+            <p class="fine">Extraction steps (layers, dot style, fit, axes) arrive in later phases; see PLAN.md.</p>
+        </aside>
+        <div id="stage" tabindex="0" aria-label="Image view">
+            <canvas id="view"></canvas>
+            <p id="stage-message" role="status">Choose a test image, open a file, or paste or drop an image.</p>
+        </div>
+    </main>
+</body>
+</html>

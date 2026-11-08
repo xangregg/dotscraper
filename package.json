@@ -1,0 +1,21 @@
+{
+  "name": "dotscraper",
+  "version": "0.0.1",
+  "description": "Extract dot locations from images of graphs, including overlapping translucent dots, by fitting a rendering of the dots to the image",
+  "type": "module",
+  "license": "0BSD",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "serve": "python3 -m http.server 8003",
+    "check:page": "node tools/check-page.mjs",
+    "images:index": "node tools/images-index.mjs",
+    "measure": "node tools/measure-dots.mjs"
+  },
+  "devDependencies": {
+    "pngjs": "7.0.0"
+  }
+}
