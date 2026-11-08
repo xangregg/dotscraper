@@ -55,6 +55,8 @@ test/*.test.js          node:test + node:assert/strict
   --eval '<js expr>' --screenshot out.png [--dark]`. Exits 1 on any console error, exception, or failed load.
 - Test image list: after adding an image to `testgraphs/`, `npm run images:index` (the test suite fails if
   `testgraphs/index.json` is stale). Servers that don't list directories (WebStorm's built-in one) need it.
+- Model vs Chrome canvas (server running): `npm run check:page -- http://localhost:8003/tools/render-check.html
+  --until 'window.renderCheckResult' --eval 'JSON.stringify(window.renderCheckResult)' --screenshot out.png`.
 - Measure a dot family: `npm run measure -- testgraphs/<image> [--seed r,g,b] [--out dir]` (writes the overlap
   count image D to `dir`).
 - Benchmark (from phase 3): `npm run bench` runs the pipeline on the synthetic set and every image with ground truth and prints

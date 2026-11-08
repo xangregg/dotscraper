@@ -300,14 +300,51 @@ one α for all channels.
   replication phase, so it was resampled smoothly by a non-integer factor; a Gaussian edge model fits it.
 
 ### Phase 1 — Forward model and synthetic data
-- [ ] `render.js`: exact disc coverage per pixel, blur, compositing for one family; incremental updates. Tests:
-      coverage sums to the disc area, symmetry, patch updates equal a full rerender.
-- [ ] `synth.js` with a seeded generator for the §2.6 variations; `metrics.js`.
-- [ ] Agreement check against Chrome canvas renders of the same dots (fixture images made by a tools page via
-      `check-page.mjs`), within a stated tolerance per pixel.
+- [x] `render.js`: exact disc coverage per pixel (closed form: quarter-plane areas of the disc, combined over the
+      pixel's corners), sRGB compositing for one family, Gaussian blur of the composited image, and
+      `createDotModel` with incremental add, move and remove over a spatial grid. Tests: coverage sums to πr²
+      (1e-9) and matches 400×400 supersampling (2e-4), mirror symmetry, overlap levels, a blurred edge has
+      σ² + 1/12 (the pixel box), random edits equal a full rerender (1e-3, with and without blur), and
+      `influenceRect` bounds every changed pixel.
+- [x] `synth.js`: `scatterPoints` (uniform, curve, clusters; ties with jitter), `synthGraph` (families
+      composited in order, solid or dashed lines over the dots, native resolution then bilinear upsampling,
+      blur, noise, 8-bit rounding), presets `sparse`, `dense` and `curve` (a dog-ages imitation, 832 × 1078,
+      rendered at half size; 0.65 s). `metrics.js`: `matchDots`, optimal one-to-one matching within a tolerance
+      (Hungarian on connected groups), with precision, recall, count error and RMSE. Tests: determinism, dot
+      centers exact under upsampling by 2 and 1.7 (0.02 px), ink conserved by upsampling (0.5%), dashes, the
+      Hungarian against brute force, a cluster where greedy matching fails, coincident dots.
+- [x] Agreement check against Chrome's canvas (`tools/render-check.html`; run it through `check:page` with
+      `--until 'window.renderCheckResult'`). It draws the same dots with `arc` and `fill` and compares in the
+      page, since `src/core` runs unchanged there.
+
+**Measured (phase 1).**
+
+- **Synthetic round trip:** `measure-dots` on the `curve` preset recovers α = 0.311 (true 0.31), c = 50.3,
+  161.1, 73.2 (true 50, 161, 73), r = 23.94 px (true 24) and σ = 1.22 px (true 1.17: 2× bilinear upsampling plus
+  0.6 blur). On `dense`, α 0.300, r 10.94 (true 11) and σ 0.83 (true 0.85). The tool's radius reads 0.06 px
+  low. Real dog-ages measured σ = 1.16, so the upsampling imitation is realistic. The synthetic levels imply
+  a background of 255.1, so dog-ages' oversized first step (phase 0) comes from whatever rendered it.
+- **Model vs Chrome canvas** (headless Chrome, software raster), five cases with r from 3.3 to 24 px and α from
+  0.3 to 1:
+  - Interior pixels more than 1 px from any edge: max |diff| 1.47, mean ≤ 0.21 (0–255). That's 8-bit
+    rounding, which accumulates with depth: Chrome's stacked levels run darker than the exact geometric series
+    by 0.5 (1 dot), 1.3 (3), 2.1 (5) and 2.5 (8 dots).
+  - Edge pixels: Chrome's coverage is close to exact area but deviates by up to about ±0.15 (25–50 units in
+    single pixels, mean 3.6–7.8). The deviations are largest along near-horizontal edges, consistent with
+    coarse vertical subsampling, and the antialiasing reaches about a pixel past the exact disc. The effect on
+    ink is small: opaque dots have an effective radius 0.08 px smaller (r 8.37 and 24.04) or 0.02 px larger
+    (r 2.5).
+- **Consequences for phases 2 and 3:**
+  - The level colors should come from the data, not from a strict geometric series. Measure each level
+    present, and extrapolate geometrically beyond them. The model maps the effective count
+    n = log T / log(1 − α) through that table, which is exact on plateaus and smooth at edges.
+  - The fit must expect edge residuals of a few tenths of a level that no position change can remove. Use a
+    robust loss, or weight edge pixels by their expected error, and let the fitted radius absorb the ~0.1 px
+    bias.
 
 ### Phase 2 — Style and masks for one translucent family
-- [ ] `style.js`: background, color and alpha from overlap levels, radius, blur. Tests on synthetic images
+- [ ] `style.js`: background, color and alpha from overlap levels, an empirical level table (phase 1), radius,
+      blur; `render.js` maps the effective count through the table. Tests on synthetic images
       (recovered within tolerance) and on dog-ages (against the phase 0 numbers).
 - [ ] `layers.js`: classification, line removal by opening, dilated mask. dog-ages: the black curve, gray dashes
       and text are masked; dot pixels are not.

@@ -1,0 +1,384 @@
+// Forward model: render dots of one family as a plotting library would, then blur as resampling would (PLAN.md
+// §2.1). Each dot covers pixel p with fraction m(p), the exact area of the pixel square inside the disc. Dots are
+// composited source-over in sRGB values (measured in phase 0) onto a background:
+//
+//     U(p) = c + (B(p) − c) · T(p),   T(p) = Π_i (1 − α · m_i(p))
+//
+// T is the family's transmittance; within one family the product commutes, so drawing order doesn't matter. The
+// image is then blurred with a Gaussian of sd σ, since blur from resampling acts on the composited picture.
+//
+// Images here are RgbImage: { width, height, data } with data a Float32Array of 3 values per pixel (sRGB, 0–255,
+// unrounded), row-major. Pixel (i, j) covers [i, i + 1) × [j, j + 1).
+
+/**
+ * @typedef {object} RgbImage
+ * @property {number} width   px
+ * @property {number} height  px
+ * @property {Float32Array} data  RGB, sRGB values 0–255 (unrounded), 3 per pixel, row-major
+ */
+
+/**
+ * @typedef {object} DotStyle
+ * @property {number[]} color   [r, g, b] the full color c, 0–255
+ * @property {number} alpha     0–1
+ * @property {number} radius    px
+ * @property {number} [blur]    px, sd of the Gaussian applied to the composited image (default 0)
+ */
+
+const BLUR_EXTENT = 3; // kernel half-width in units of σ
+const GRID_CELL_RADII = 2; // spatial grid cell size, in dot radii
+
+// ∫_{-r}^{x} √(r² − u²) du for x in [−r, r]
+function chordIntegral(x, r) {
+    return 0.5 * (x * Math.sqrt(Math.max(0, r * r - x * x)) + r * r * Math.asin(x / r)) + Math.PI * r * r / 4;
+}
+
+// Area of the disc of radius r at the origin intersected with the quarter plane {u ≤ x, v ≤ y}. With
+// h(u) = √(r² − u²), the disc's column at u below y has length h + clamp(y, −h, h), which equals 2h where the
+// column lies wholly below y, 0 where wholly above, and h + y between: integrate over u ≤ x.
+function quarterArea(x, y, r) {
+    if (x <= -r || y <= -r)
+        return 0;
+    const xc = Math.min(x, r);
+    const H = chordIntegral(xc, r);
+    if (y >= r)
+        return 2 * H;
+    // columns with |u| ≤ w have h ≥ |y|, so clamp(y, −h, h) = y there; elsewhere it is sign(y) · h
+    const w = Math.sqrt(r * r - y * y);
+    let inner = 0; // ∫ h over [−w, w] ∩ [−r, xc]
+    let innerLen = 0;
+    if (xc > -w) {
+        const hi = Math.min(xc, w);
+        inner = chordIntegral(hi, r) - chordIntegral(-w, r);
+        innerLen = hi + w;
+    }
+    return H + y * innerLen + Math.sign(y) * (H - inner);
+}
+
+/**
+ * Exact area of pixel (px, py), the square [px, px + 1) × [py, py + 1), inside the disc of radius r centered at
+ * (cx, cy): the coverage fraction a renderer with exact area antialiasing would use.
+ *
+ * @param {number} cx  px
+ * @param {number} cy  px
+ * @param {number} r   px
+ * @param {number} px  pixel column
+ * @param {number} py  pixel row
+ * @returns {number}   0–1
+ */
+export function pixelCoverage(cx, cy, r, px, py) {
+    const x0 = px - cx;
+    const x1 = x0 + 1;
+    const y0 = py - cy;
+    const y1 = y0 + 1;
+    // nearest and farthest points of the square from the center decide the easy cases
+    const nx = x0 > 0 ? x0 : (x1 < 0 ? x1 : 0);
+    const ny = y0 > 0 ? y0 : (y1 < 0 ? y1 : 0);
+    if (nx * nx + ny * ny >= r * r)
+        return 0;
+    const fx = Math.max(-x0, x1);
+    const fy = Math.max(-y0, y1);
+    if (fx * fx + fy * fy <= r * r)
+        return 1;
+    const a = quarterArea(x1, y1, r) - quarterArea(x0, y1, r) - quarterArea(x1, y0, r) + quarterArea(x0, y0, r);
+    return Math.min(1, Math.max(0, a));
+}
+
+/**
+ * Normalized Gaussian kernel of sd sigma, half-width ⌈BLUR_EXTENT·σ⌉.
+ *
+ * @param {number} sigma  px
+ * @returns {Float64Array}
+ */
+export function gaussianKernel(sigma) {
+    const k = Math.ceil(BLUR_EXTENT * sigma);
+    const w = new Float64Array(2 * k + 1);
+    let sum = 0;
+    for (let i = -k; i <= k; i++) {
+        w[i + k] = Math.exp(-0.5 * (i / sigma) ** 2);
+        sum += w[i + k];
+    }
+    for (let i = 0; i < w.length; i++)
+        w[i] /= sum;
+    return w;
+}
+
+/**
+ * Blur the rectangle [x0, x1) × [y0, y1) of src into dst with a separable Gaussian, clamping at the image edges.
+ * Reads src up to the kernel half-width outside the rectangle.
+ *
+ * @param {RgbImage} src
+ * @param {RgbImage} dst  same size as src; only the rectangle is written
+ * @param {Float64Array} kernel
+ * @param {number[]} rect  [x0, y0, x1, y1]
+ */
+export function blurRect(src, dst, kernel, rect) {
+    const { width, height } = src;
+    const k = (kernel.length - 1) / 2;
+    const [x0, y0, x1, y1] = rect;
+    const ty0 = Math.max(0, y0 - k);
+    const ty1 = Math.min(height, y1 + k);
+    const tw = x1 - x0;
+    const tmp = new Float32Array(3 * tw * (ty1 - ty0)); // horizontal pass over the rows the vertical pass reads
+    for (let y = ty0; y < ty1; y++) {
+        for (let x = x0; x < x1; x++) {
+            let r = 0;
+            let g = 0;
+            let b = 0;
+            for (let i = -k; i <= k; i++) {
+                const xs = Math.min(width - 1, Math.max(0, x + i));
+                const s = 3 * (y * width + xs);
+                const w = kernel[i + k];
+                r += w * src.data[s];
+                g += w * src.data[s + 1];
+                b += w * src.data[s + 2];
+            }
+            const t = 3 * ((y - ty0) * tw + (x - x0));
+            tmp[t] = r;
+            tmp[t + 1] = g;
+            tmp[t + 2] = b;
+        }
+    }
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+            let r = 0;
+            let g = 0;
+            let b = 0;
+            for (let i = -k; i <= k; i++) {
+                const ys = Math.min(height - 1, Math.max(0, y + i));
+                const t = 3 * ((ys - ty0) * tw + (x - x0));
+                const w = kernel[i + k];
+                r += w * tmp[t];
+                g += w * tmp[t + 1];
+                b += w * tmp[t + 2];
+            }
+            const d = 3 * (y * width + x);
+            dst.data[d] = r;
+            dst.data[d + 1] = g;
+            dst.data[d + 2] = b;
+        }
+    }
+}
+
+/**
+ * An RgbImage filled with one color.
+ *
+ * @param {number} width
+ * @param {number} height
+ * @param {number[]} color  [r, g, b]
+ * @returns {RgbImage}
+ */
+export function solidImage(width, height, color) {
+    const data = new Float32Array(3 * width * height);
+    for (let p = 0; p < width * height; p++) {
+        data[3 * p] = color[0];
+        data[3 * p + 1] = color[1];
+        data[3 * p + 2] = color[2];
+    }
+    return { width, height, data };
+}
+
+/**
+ * Round an RgbImage to an opaque RgbaImage (8-bit, as a PNG or canvas holds it).
+ *
+ * @param {RgbImage} image
+ * @returns {import('./image.js').RgbaImage}
+ */
+export function toRgba(image) {
+    const n = image.width * image.height;
+    const data = new Uint8ClampedArray(4 * n);
+    for (let p = 0; p < n; p++) {
+        data[4 * p] = Math.round(image.data[3 * p]);
+        data[4 * p + 1] = Math.round(image.data[3 * p + 1]);
+        data[4 * p + 2] = Math.round(image.data[3 * p + 2]);
+        data[4 * p + 3] = 255;
+    }
+    return { width: image.width, height: image.height, data };
+}
+
+/**
+ * An RgbaImage as an RgbImage (alpha dropped).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @returns {RgbImage}
+ */
+export function fromRgba(image) {
+    const n = image.width * image.height;
+    const data = new Float32Array(3 * n);
+    for (let p = 0; p < n; p++) {
+        data[3 * p] = image.data[4 * p];
+        data[3 * p + 1] = image.data[4 * p + 1];
+        data[3 * p + 2] = image.data[4 * p + 2];
+    }
+    return { width: image.width, height: image.height, data };
+}
+
+/**
+ * An incrementally updatable rendering of one dot family over a background. Adding, moving or removing a dot
+ * recomputes only the pixels it touches (its bounding box, grown by the blur kernel), so a fit can try a change
+ * and read the affected patch cheaply. A spatial grid finds the other dots overlapping that patch.
+ *
+ * Complexity per change: O((2r + 2)² · k) for k dots overlapping the patch, plus the blur, O((2r + 6σ)² · 6σ).
+ *
+ * @param {RgbImage} background  composited under the dots; not modified (a later family's background can be an
+ *                               earlier family's rendering)
+ * @param {DotStyle} style
+ */
+export function createDotModel(background, style) {
+    const { width, height } = background;
+    const { color, alpha, radius } = style;
+    const blur = style.blur ?? 0;
+    const kernel = blur > 0 ? gaussianKernel(blur) : null;
+    const kHalf = kernel ? (kernel.length - 1) / 2 : 0;
+    const T = new Float32Array(width * height).fill(1);
+    const composite = { width, height, data: Float32Array.from(background.data) };
+    const output = kernel ? { width, height, data: Float32Array.from(background.data) } : composite;
+    const cell = Math.max(1, GRID_CELL_RADII * radius);
+    const gw = Math.ceil(width / cell) + 1;
+    const gh = Math.ceil(height / cell) + 1;
+    const grid = Array.from({ length: gw * gh }, () => new Set());
+    const dots = new Map(); // id → { x, y }
+    let nextId = 0;
+
+    function cellOf(x, y) {
+        const gx = Math.min(gw - 1, Math.max(0, Math.floor(x / cell)));
+        const gy = Math.min(gh - 1, Math.max(0, Math.floor(y / cell)));
+        return gy * gw + gx;
+    }
+
+    // pixel rectangle [x0, y0, x1, y1) a dot at (x, y) can touch, clipped to the image
+    function dotRect(x, y) {
+        return [
+            Math.max(0, Math.floor(x - radius)),
+            Math.max(0, Math.floor(y - radius)),
+            Math.min(width, Math.floor(x + radius) + 1),
+            Math.min(height, Math.floor(y + radius) + 1),
+        ];
+    }
+
+    // dots whose discs can reach the rectangle
+    function dotsNear(rect) {
+        const [x0, y0, x1, y1] = rect;
+        const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
+        const gy0 = Math.max(0, Math.floor((y0 - radius) / cell));
+        const gx1 = Math.min(gw - 1, Math.floor((x1 + radius) / cell));
+        const gy1 = Math.min(gh - 1, Math.floor((y1 + radius) / cell));
+        const out = [];
+        for (let gy = gy0; gy <= gy1; gy++) {
+            for (let gx = gx0; gx <= gx1; gx++) {
+                for (const id of grid[gy * gw + gx])
+                    out.push(dots.get(id));
+            }
+        }
+        return out;
+    }
+
+    function recompute(rect) {
+        const [x0, y0, x1, y1] = rect;
+        if (x0 >= x1 || y0 >= y1)
+            return;
+        for (let y = y0; y < y1; y++)
+            T.fill(1, y * width + x0, y * width + x1);
+        for (const d of dotsNear(rect)) {
+            const [dx0, dy0, dx1, dy1] = dotRect(d.x, d.y);
+            for (let y = Math.max(y0, dy0); y < Math.min(y1, dy1); y++) {
+                for (let x = Math.max(x0, dx0); x < Math.min(x1, dx1); x++) {
+                    const m = pixelCoverage(d.x, d.y, radius, x, y);
+                    if (m > 0)
+                        T[y * width + x] *= 1 - alpha * m;
+                }
+            }
+        }
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++) {
+                const p = y * width + x;
+                for (let ch = 0; ch < 3; ch++)
+                    composite.data[3 * p + ch] = color[ch] + (background.data[3 * p + ch] - color[ch]) * T[p];
+            }
+        }
+        if (kernel) {
+            blurRect(composite, output, kernel, [
+                Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf),
+            ]);
+        }
+    }
+
+    function union(a, b) {
+        return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+    }
+
+    return {
+        /** The rendered image (blurred if the style has blur). Live: changes as dots change. */
+        image: output,
+        /** The transmittance T before blur, one value per pixel. Live. */
+        transmittance: T,
+
+        /**
+         * @param {number} x  px
+         * @param {number} y  px
+         * @returns {number} the new dot's id
+         */
+        add(x, y) {
+            const id = nextId++;
+            dots.set(id, { x, y });
+            grid[cellOf(x, y)].add(id);
+            recompute(dotRect(x, y));
+            return id;
+        },
+
+        /** Add many dots and recompute once (for a first render). */
+        addAll(points) {
+            const ids = [];
+            for (const { x, y } of points) {
+                const id = nextId++;
+                dots.set(id, { x, y });
+                grid[cellOf(x, y)].add(id);
+                ids.push(id);
+            }
+            recompute([0, 0, width, height]);
+            return ids;
+        },
+
+        remove(id) {
+            const d = dots.get(id);
+            grid[cellOf(d.x, d.y)].delete(id);
+            dots.delete(id);
+            recompute(dotRect(d.x, d.y));
+        },
+
+        move(id, x, y) {
+            const d = dots.get(id);
+            const before = dotRect(d.x, d.y);
+            grid[cellOf(d.x, d.y)].delete(id);
+            d.x = x;
+            d.y = y;
+            grid[cellOf(x, y)].add(id);
+            recompute(union(before, dotRect(x, y)));
+        },
+
+        /** @returns {{id: number, x: number, y: number}[]} */
+        dots() {
+            return [...dots].map(([id, d]) => ({ id, x: d.x, y: d.y }));
+        },
+
+        /** The pixel rectangle [x0, y0, x1, y1) of the output a dot at (x, y) can affect, blur included. */
+        influenceRect(x, y) {
+            const [x0, y0, x1, y1] = dotRect(x, y);
+            return [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
+        },
+    };
+}
+
+/**
+ * Render a set of dots of one family over a background in one go.
+ *
+ * @param {RgbImage} background
+ * @param {{x: number, y: number}[]} points  dot centers, px
+ * @param {DotStyle} style
+ * @returns {RgbImage}
+ */
+export function renderDots(background, points, style) {
+    const model = createDotModel(background, style);
+    model.addAll(points);
+    return model.image;
+}
