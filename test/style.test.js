@@ -115,3 +115,12 @@ test('economist: red and blue families, red first, its trend line beyond its lev
     assert.ok(translucent[0].beyond.length >= 1);
     near(est.style.radius, 8.37, 0.1, 'red radius');
 });
+
+test('regression: translucent dots that never overlap give one level, a two-entry table and a radius', () => {
+    // sparse preset seed 3 has no overlapping dots; its table once repeated the level, so every dot read as 13 deep
+    const est = estimateStyle(synthGraph(SYNTH_PRESETS.sparse(3)).image);
+    assert.equal(est.style.measuredLevels, 1);
+    assert.equal(est.style.levels.length, 2);
+    near(est.style.radius, 10, 0.05, 'radius');
+    assert.ok(est.notes.some(n => n.includes('one level')));
+});

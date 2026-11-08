@@ -33,8 +33,10 @@ index.html              layout, loads src/ui/main.js as a module
 styles.css
 src/core/               pure algorithms: image.js (hash, pixel access), render.js (forward model), style.js (dot
                         style), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
-                        dots), metrics.js (matching against ground truth), rng.js; planned: fit.js, axes.js
-src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click), overlays.js, input.js
+                        dots), metrics.js (matching against ground truth), fit.js (the fit), rng.js;
+                        planned: axes.js
+src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot marks), overlays.js, input.js
+src/fit-worker.js       module worker running fitDots, posting progress
 src/fit-worker.js       module Web Worker wrapping the fit
 testgraphs/             test images, index.json, ground truth in truth/<name>.json: LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,
@@ -55,12 +57,15 @@ test/*.test.js          node:test + node:assert/strict
   --eval '<js expr>' --screenshot out.png [--dark]`. Exits 1 on any console error, exception, or failed load.
 - Test image list: after adding an image to `testgraphs/`, `npm run images:index` (the test suite fails if
   `testgraphs/index.json` is stale). Servers that don't list directories (WebStorm's built-in one) need it.
+- Consistency check without ground truth: `node tools/compare-fits.mjs a.png b.png` fits two renderings of one
+  graph, estimates the scale and offset between them, and reports how well the dots agree.
 - Model vs Chrome canvas (server running): `npm run check:page -- http://localhost:8003/tools/render-check.html
   --until 'window.renderCheckResult' --eval 'JSON.stringify(window.renderCheckResult)' --screenshot out.png`.
 - Measure a dot family: `npm run measure -- testgraphs/<image> [--seed r,g,b] [--out dir]` (writes the overlap
   count image D to `dir`).
-- Benchmark (from phase 3): `npm run bench` runs the pipeline on the synthetic set and every image with ground truth and prints
-  precision, recall, position error and time.
+- Benchmark: `npm run bench [-- --seeds n --preset name --verbose]` runs style, mask and fit on the synthetic
+  presets and on every local image with `testgraphs/truth/<name>.json`, printing precision, recall, count error,
+  position RMSE, Hough-only precision/recall, flags and time. Record results in PLAN.md.
 
 ## Conventions
 

@@ -213,3 +213,49 @@ test('level table with opaque dots (α = 1) interpolates between B and c at edge
     for (let i = 0; i < a.data.length; i++)
         assert.ok(Math.abs(a.data[i] - b.data[i]) < 1e-3);
 });
+
+test('snapshot and restore undo moves, adds and removes exactly', () => {
+    const bg = solidImage(90, 70, [255, 255, 255]);
+    const model = createDotModel(bg, { color: [50, 160, 70], alpha: 0.3, radius: 8.5, blur: 1 });
+    const a = model.add(30, 30);
+    const b = model.add(40, 35);
+    const before = Float32Array.from(model.image.data);
+    const dotsBefore = JSON.stringify(model.dots());
+    const rect = (r1, r2) => [Math.min(r1[0], r2[0]), Math.min(r1[1], r2[1]), Math.max(r1[2], r2[2]), Math.max(r1[3], r2[3])];
+    let snap = model.snapshot(rect(model.footprint(30, 30), model.footprint(33.4, 28.1)));
+    model.move(a, 33.4, 28.1);
+    model.restore(snap);
+    snap = model.snapshot(model.footprint(40, 35));
+    model.remove(b);
+    model.restore(snap);
+    snap = model.snapshot(model.footprint(55, 50));
+    model.add(55, 50);
+    model.restore(snap);
+    assert.equal(JSON.stringify(model.dots()), dotsBefore);
+    for (let i = 0; i < before.length; i++)
+        assert.equal(model.image.data[i], before[i]);
+    // and later edits still agree with a full render (the grid was restored too)
+    model.move(b, 47, 41);
+    const full = renderDots(bg, model.dots(), { color: [50, 160, 70], alpha: 0.3, radius: 8.5, blur: 1 });
+    for (let i = 0; i < full.data.length; i++)
+        assert.ok(Math.abs(full.data[i] - model.image.data[i]) < 1e-3);
+});
+
+test('projected rendering equals the projection of the RGB rendering', () => {
+    const B = [255, 255, 255];
+    const c = [50, 161, 73];
+    const d = B.map((v, i) => v - c[i]);
+    const len = Math.hypot(...d);
+    const line = { B, u: d.map(v => v / len) };
+    const levels = Array.from({ length: 10 }, (_, n) => c.map((v, ch) => v + (B[ch] - v) * 0.69 ** n + (n === 1 ? 1.5 : 0)));
+    const points = [{ x: 20.3, y: 20.6 }, { x: 31.1, y: 22.4 }, { x: 25.7, y: 30.2 }];
+    const bg = solidImage(60, 55, B);
+    for (const style of [{ color: c, alpha: 0.31, radius: 9.2, blur: 0.9 }, { color: c, alpha: 0.31, radius: 9.2, blur: 0.9, levels }]) {
+        const rgb = renderDots(bg, points, style);
+        const t = renderDots(bg, points, { ...style, project: line });
+        for (let p = 0; p < 60 * 55; p++) {
+            const proj = [0, 1, 2].reduce((s, ch) => s + (B[ch] - rgb.data[3 * p + ch]) * line.u[ch], 0);
+            assert.ok(Math.abs(proj - t.data[p]) < 1e-3, `pixel ${p}: ${proj} vs ${t.data[p]}`);
+        }
+    }
+});

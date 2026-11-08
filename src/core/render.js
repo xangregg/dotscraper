@@ -23,6 +23,10 @@
  * @property {number} alpha     0–1
  * @property {number} radius    px
  * @property {number} [blur]    px, sd of the Gaussian applied to the composited image (default 0)
+ * @property {{B: number[], u: number[]}} [project]  render one value per pixel, the distance from B along the
+ *                              unit vector u (a family's color line), instead of RGB: what the fit compares, at a
+ *                              third of the cost (blur is linear, so projecting commutes with it). Assumes a
+ *                              uniform background B.
  * @property {number[][]} [levels]  measured level colors L_0 = B, L_1, …: when given, a pixel's color is
  *                              interpolated in this table by its transmittance instead of c + (B − c)·T, and
  *                              the background image is ignored (the table assumes a uniform background)
@@ -117,6 +121,11 @@ export function gaussianKernel(sigma) {
  */
 export function blurRect(src, dst, kernel, rect) {
     const { width, height } = src;
+    const ch = src.data.length / (width * height); // 3 for RgbImage, 1 for a plane
+    if (ch === 1) {
+        blurPlaneRect(src.data, dst.data, width, height, kernel, rect);
+        return;
+    }
     const k = (kernel.length - 1) / 2;
     const [x0, y0, x1, y1] = rect;
     const ty0 = Math.max(0, y0 - k);
@@ -159,6 +168,42 @@ export function blurRect(src, dst, kernel, rect) {
             dst.data[d] = r;
             dst.data[d + 1] = g;
             dst.data[d + 2] = b;
+        }
+    }
+}
+
+// one-channel version of blurRect, the fit's hot path: interior columns skip the edge clamping
+function blurPlaneRect(src, dst, width, height, kernel, rect) {
+    const k = (kernel.length - 1) / 2;
+    const [x0, y0, x1, y1] = rect;
+    const ty0 = Math.max(0, y0 - k);
+    const ty1 = Math.min(height, y1 + k);
+    const tw = x1 - x0;
+    const tmp = new Float32Array(tw * (ty1 - ty0));
+    for (let y = ty0; y < ty1; y++) {
+        const row = y * width;
+        for (let x = x0; x < x1; x++) {
+            let s = 0;
+            if (x - k >= 0 && x + k < width) {
+                const base = row + x - k;
+                for (let i = 0; i < kernel.length; i++)
+                    s += kernel[i] * src[base + i];
+            }
+            else {
+                for (let i = -k; i <= k; i++)
+                    s += kernel[i + k] * src[row + Math.min(width - 1, Math.max(0, x + i))];
+            }
+            tmp[(y - ty0) * tw + x - x0] = s;
+        }
+    }
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+            let s = 0;
+            for (let i = -k; i <= k; i++) {
+                const ys = Math.min(ty1 - 1, Math.max(ty0, y + i));
+                s += kernel[i + k] * tmp[(ys - ty0) * tw + x - x0];
+            }
+            dst[y * width + x] = s;
         }
     }
 }
@@ -234,14 +279,20 @@ export function createDotModel(background, style) {
     const kernel = blur > 0 ? gaussianKernel(blur) : null;
     const kHalf = kernel ? (kernel.length - 1) / 2 : 0;
     const T = new Float32Array(width * height).fill(1);
-    const composite = { width, height, data: Float32Array.from(background.data) };
-    const output = kernel ? { width, height, data: Float32Array.from(background.data) } : composite;
+    const project = style.project ?? null;
+    const CH = project ? 1 : 3;
+    const proj = c => (project.B[0] - c[0]) * project.u[0] + (project.B[1] - c[1]) * project.u[1] + (project.B[2] - c[2]) * project.u[2];
+    const initial = () => (project ? new Float32Array(width * height) : Float32Array.from(background.data));
+    const composite = { width, height, data: initial() };
+    const output = kernel ? { width, height, data: initial() } : composite;
     const table = style.levels ?? null;
     // Interpolating the table linearly in T between T_k = q^k and T_(k+1) reproduces each measured plateau, and
     // equals c + (B − c)·T exactly when the table is geometric, edges included (the color is linear in T).
     const q = 1 - alpha;
     const tPow = table ? table.map((_, k) => q ** k) : null;
     const logQ = Math.log(q);
+    const tableT = table && project ? table.map(proj) : null;
+    const spanT = project ? proj(color) : 0; // t of the full color: t = spanT · (1 − T) without a table
     function tableColor(Tp, out, o) {
         const K = table.length - 1;
         let k = 0;
@@ -254,11 +305,21 @@ export function createDotModel(background, style) {
         out[o + 1] = a[1] + frac * (b[1] - a[1]);
         out[o + 2] = a[2] + frac * (b[2] - a[2]);
     }
+    function tableValue(Tp) {
+        const K = table.length - 1;
+        let k = 0;
+        if (q > 0 && Tp < 1)
+            k = Tp <= 0 ? K - 1 : Math.min(K - 1, Math.floor(Math.log(Tp) / logQ));
+        const frac = Math.min(1, Math.max(0, (tPow[k] - Tp) / (tPow[k] - tPow[k + 1])));
+        return tableT[k] + frac * (tableT[k + 1] - tableT[k]);
+    }
     const cell = Math.max(1, GRID_CELL_RADII * radius);
     const gw = Math.ceil(width / cell) + 1;
     const gh = Math.ceil(height / cell) + 1;
     const grid = Array.from({ length: gw * gh }, () => new Set());
-    const dots = new Map(); // id → { x, y }
+    // id → { x, y, rect, stamp }: each dot keeps its coverage over its rectangle, so re-rendering a patch costs a
+    // multiply per covered pixel for the dots that didn't change instead of recomputing their coverage
+    const dots = new Map();
     let nextId = 0;
 
     function cellOf(x, y) {
@@ -277,7 +338,19 @@ export function createDotModel(background, style) {
         ];
     }
 
-    // dots whose discs can reach the rectangle
+    function makeRecord(x, y) {
+        const rect = dotRect(x, y);
+        const [x0, y0, x1, y1] = rect;
+        const w = Math.max(0, x1 - x0);
+        const stamp = new Float32Array(w * Math.max(0, y1 - y0));
+        for (let yy = y0; yy < y1; yy++) {
+            for (let xx = x0; xx < x1; xx++)
+                stamp[(yy - y0) * w + xx - x0] = 1 - alpha * pixelCoverage(x, y, radius, xx, yy);
+        }
+        return { x, y, rect, stamp };
+    }
+
+    // dots whose rectangles can reach the rectangle
     function dotsNear(rect) {
         const [x0, y0, x1, y1] = rect;
         const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
@@ -294,6 +367,11 @@ export function createDotModel(background, style) {
         return out;
     }
 
+    function blurredRect(rect) {
+        const [x0, y0, x1, y1] = rect;
+        return [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
+    }
+
     function recompute(rect) {
         const [x0, y0, x1, y1] = rect;
         if (x0 >= x1 || y0 >= y1)
@@ -301,18 +379,25 @@ export function createDotModel(background, style) {
         for (let y = y0; y < y1; y++)
             T.fill(1, y * width + x0, y * width + x1);
         for (const d of dotsNear(rect)) {
-            const [dx0, dy0, dx1, dy1] = dotRect(d.x, d.y);
-            for (let y = Math.max(y0, dy0); y < Math.min(y1, dy1); y++) {
-                for (let x = Math.max(x0, dx0); x < Math.min(x1, dx1); x++) {
-                    const m = pixelCoverage(d.x, d.y, radius, x, y);
-                    if (m > 0)
-                        T[y * width + x] *= 1 - alpha * m;
-                }
+            const [dx0, dy0, dx1] = d.rect;
+            const dw = dx1 - dx0;
+            const ya = Math.max(y0, dy0);
+            const yb = Math.min(y1, d.rect[3]);
+            const xa = Math.max(x0, dx0);
+            const xb = Math.min(x1, dx1);
+            for (let y = ya; y < yb; y++) {
+                const row = (y - dy0) * dw - dx0;
+                for (let x = xa; x < xb; x++)
+                    T[y * width + x] *= d.stamp[row + x];
             }
         }
         for (let y = y0; y < y1; y++) {
             for (let x = x0; x < x1; x++) {
                 const p = y * width + x;
+                if (project) {
+                    composite.data[p] = table ? tableValue(T[p]) : spanT * (1 - T[p]);
+                    continue;
+                }
                 if (table) {
                     tableColor(T[p], composite.data, 3 * p);
                     continue;
@@ -321,19 +406,37 @@ export function createDotModel(background, style) {
                     composite.data[3 * p + ch] = color[ch] + (background.data[3 * p + ch] - color[ch]) * T[p];
             }
         }
-        if (kernel) {
-            blurRect(composite, output, kernel, [
-                Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf),
-            ]);
-        }
+        if (kernel)
+            blurRect(composite, output, kernel, blurredRect(rect));
     }
 
     function union(a, b) {
         return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
     }
 
+    function copyRect(src, stride, rect) {
+        const [x0, y0, x1, y1] = rect;
+        const w = Math.max(0, x1 - x0);
+        const out = new Float32Array(w * Math.max(0, y1 - y0) * stride);
+        for (let y = y0; y < y1; y++)
+            out.set(src.subarray(stride * (y * width + x0), stride * (y * width + x1)), stride * (y - y0) * w);
+        return out;
+    }
+
+    function pasteRect(dst, stride, rect, saved) {
+        const [x0, y0, x1, y1] = rect;
+        const w = Math.max(0, x1 - x0);
+        for (let y = y0; y < y1; y++)
+            dst.set(saved.subarray(stride * (y - y0) * w, stride * (y - y0 + 1) * w), stride * (y * width + x0));
+    }
+
     return {
-        /** The rendered image (blurred if the style has blur). Live: changes as dots change. */
+        /** With `project`: the value a pixel of transmittance T renders to (before blur). */
+        valueOf(Tp) {
+            return table ? tableValue(Tp) : spanT * (1 - Tp);
+        },
+
+        /** The rendered image (blurred if the style has blur); one value per pixel with `project`. Live. */
         image: output,
         /** The transmittance T before blur, one value per pixel. Live. */
         transmittance: T,
@@ -345,9 +448,10 @@ export function createDotModel(background, style) {
          */
         add(x, y) {
             const id = nextId++;
-            dots.set(id, { x, y });
+            const rec = makeRecord(x, y);
+            dots.set(id, rec);
             grid[cellOf(x, y)].add(id);
-            recompute(dotRect(x, y));
+            recompute(rec.rect);
             return id;
         },
 
@@ -356,7 +460,7 @@ export function createDotModel(background, style) {
             const ids = [];
             for (const { x, y } of points) {
                 const id = nextId++;
-                dots.set(id, { x, y });
+                dots.set(id, makeRecord(x, y));
                 grid[cellOf(x, y)].add(id);
                 ids.push(id);
             }
@@ -368,17 +472,50 @@ export function createDotModel(background, style) {
             const d = dots.get(id);
             grid[cellOf(d.x, d.y)].delete(id);
             dots.delete(id);
-            recompute(dotRect(d.x, d.y));
+            recompute(d.rect);
         },
 
         move(id, x, y) {
             const d = dots.get(id);
-            const before = dotRect(d.x, d.y);
             grid[cellOf(d.x, d.y)].delete(id);
-            d.x = x;
-            d.y = y;
+            const rec = makeRecord(x, y);
+            dots.set(id, rec);
             grid[cellOf(x, y)].add(id);
-            recompute(union(before, dotRect(x, y)));
+            recompute(union(d.rect, rec.rect));
+        },
+
+        /**
+         * Save the state a change within `rect` (a footprint) can alter: the dot records and the buffers over the
+         * rectangle (grown by the blur for the output). restore() puts it back without re-rendering, so a rejected
+         * trial costs a copy instead of a second render.
+         */
+        snapshot(rect) {
+            const outRect = blurredRect(rect);
+            return {
+                rect, outRect,
+                records: new Map(dots),
+                T: copyRect(T, 1, rect),
+                comp: copyRect(composite.data, CH, rect),
+                out: kernel ? copyRect(output.data, CH, outRect) : null,
+            };
+        },
+
+        restore(snap) {
+            for (const [id, d] of dots) {
+                if (snap.records.get(id) !== d)
+                    grid[cellOf(d.x, d.y)].delete(id);
+            }
+            for (const [id, d] of snap.records) {
+                if (dots.get(id) !== d)
+                    grid[cellOf(d.x, d.y)].add(id);
+            }
+            dots.clear();
+            for (const [id, d] of snap.records)
+                dots.set(id, d);
+            pasteRect(T, 1, snap.rect, snap.T);
+            pasteRect(composite.data, CH, snap.rect, snap.comp);
+            if (kernel)
+                pasteRect(output.data, CH, snap.outRect, snap.out);
         },
 
         /** @returns {{id: number, x: number, y: number}[]} */
@@ -386,10 +523,12 @@ export function createDotModel(background, style) {
             return [...dots].map(([id, d]) => ({ id, x: d.x, y: d.y }));
         },
 
+        /** The pixel rectangle [x0, y0, x1, y1) a dot at (x, y) covers (before blur). */
+        footprint: dotRect,
+
         /** The pixel rectangle [x0, y0, x1, y1) of the output a dot at (x, y) can affect, blur included. */
         influenceRect(x, y) {
-            const [x0, y0, x1, y1] = dotRect(x, y);
-            return [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
+            return blurredRect(dotRect(x, y));
         },
     };
 }

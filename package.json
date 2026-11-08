@@ -13,7 +13,8 @@
     "serve": "python3 -m http.server 8003",
     "check:page": "node tools/check-page.mjs",
     "images:index": "node tools/images-index.mjs",
-    "measure": "node tools/measure-dots.mjs"
+    "measure": "node tools/measure-dots.mjs",
+    "bench": "node tools/bench.mjs"
   },
   "devDependencies": {
     "pngjs": "7.0.0"

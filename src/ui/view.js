@@ -8,6 +8,9 @@ const MIN_SCALE = 1 / 32; // CSS px per image px
 const MAX_SCALE = 64; // CSS px per image px
 const FIT_MARGIN = 12; // CSS px left around the image when fitting
 const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and still count as a click
+const MARK_LINE = 1.5; // CSS px, dot outline width
+const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
+export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', selected: '#f0a000' };
 
 /**
  * @param {object} opts
@@ -26,6 +29,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     let originX = 0; // image px at the left edge of the view
     let originY = 0; // image px at the top edge of the view
     let drag = null;
+    let marks = null; // { dots: [{ x, y, flags }], radius, selected }
 
     function draw() {
         const dpr = window.devicePixelRatio || 1;
@@ -42,6 +46,24 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         ctx.imageSmoothingEnabled = scale * dpr < 1;
         ctx.setTransform(scale * dpr, 0, 0, scale * dpr, -originX * scale * dpr, -originY * scale * dpr);
         ctx.drawImage(source, 0, 0);
+        if (marks)
+            drawMarks();
+    }
+
+    // dot outlines and centers in image coordinates, line widths constant in CSS px
+    function drawMarks() {
+        ctx.lineWidth = MARK_LINE / scale;
+        const c = MARK_CROSS / scale;
+        marks.dots.forEach((d, i) => {
+            ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected : (d.flags?.length ? MARK_COLORS.flagged : MARK_COLORS.ok);
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, marks.radius, 0, 2 * Math.PI);
+            ctx.moveTo(d.x - c, d.y);
+            ctx.lineTo(d.x + c, d.y);
+            ctx.moveTo(d.x, d.y - c);
+            ctx.lineTo(d.x, d.y + c);
+            ctx.stroke();
+        });
     }
 
     function setScale(newScale, anchorX, anchorY) {
@@ -153,6 +175,11 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
                 fit();
         },
         fit,
+        /** Dots to outline over the image, or null. */
+        setMarks(m) {
+            marks = m;
+            draw();
+        },
         zoomBy(factor) {
             setScale(scale * factor, stage.clientWidth / 2, stage.clientHeight / 2);
         },

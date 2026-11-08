@@ -9,14 +9,19 @@ import { pixelAt, pixelHash } from '../core/image.js';
 import { estimateStyle } from '../core/style.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
+import { refitNear } from '../core/fit.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
-import { createView } from './view.js';
-import { countOverlay, maskOverlay, classOverlay, cssColor, COUNT_MAX_SHOWN, CLASS_COLORS, OFF_LINE_COLOR, MASK_TINT } from './overlays.js';
+import { createView, MARK_COLORS } from './view.js';
+import {
+    countOverlay, maskOverlay, classOverlay, residualOverlay, rgbOverlay, cssColor,
+    COUNT_MAX_SHOWN, CLASS_COLORS, OFF_LINE_COLOR, MASK_TINT, RESIDUAL_FULL, RESIDUAL_DARKER, RESIDUAL_LIGHTER, RESIDUAL_MASKED,
+} from './overlays.js';
 
 const SAMPLE_SIZE = 80; // CSS px, each sample canvas
 const SAMPLE_MARGIN = 4; // px around the dot in the sample crop
 const SAMPLE_DIFF_GAIN = 10; // the diff sample shows |image − model| × this
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
+const EDIT_HIT_RADII = 0.6; // × r: a click this close to a dot's center removes it in edit mode
 
 const $ = id => document.getElementById(id);
 
@@ -32,6 +37,11 @@ const state = {
     layers: null, // from buildMask
     overlay: 'image',
     picking: false,
+    fit: null, // { dots, radius, sigma, lambda, log, ms, edited } once a fit has run
+    worker: null,
+    fitStart: 0,
+    editing: false,
+    showDots: true,
 };
 
 const view = createView({
@@ -54,9 +64,35 @@ function currentStyle() {
     return { ...s, ...state.overrides };
 }
 
+/** The style the fitted dots were drawn with: the style in effect, with the fit's radius. */
+function fittedStyle() {
+    const style = currentStyle();
+    return style && state.fit ? { ...style, radius: state.fit.radius } : style;
+}
+
+function fitInput() {
+    const style = currentStyle();
+    return { image: state.image, style, line: state.estimate.familyMeasure.line, mask: state.layers.mask, D: state.estimate.D };
+}
+
+function nearestDot(x, y, within) {
+    if (!state.fit)
+        return -1;
+    let best = -1;
+    let bestD = within;
+    state.fit.dots.forEach((d, i) => {
+        const dd = Math.hypot(d.x - x, d.y - y);
+        if (dd <= bestD) {
+            bestD = dd;
+            best = i;
+        }
+    });
+    return best;
+}
+
 function showPixel(x, y) {
     if (x === null || !state.image) {
-        for (const id of ['pixel-pos', 'pixel-rgba', 'pixel-count', 'pixel-class'])
+        for (const id of ['pixel-pos', 'pixel-rgba', 'pixel-count', 'pixel-class', 'pixel-dot'])
             $(id).textContent = '–';
         $('pixel-swatch').style.background = 'transparent';
         return;
@@ -73,6 +109,15 @@ function showPixel(x, y) {
         const cls = L.thin[p] ? 'thin mark in dot color' : (L.classes[p] === CLASS_BACKGROUND ? 'background' : (L.classes[p] === CLASS_FAMILY ? 'dot color' : 'other'));
         $('pixel-class').textContent = `${cls}${L.mask[p] ? ', masked' : ''}`;
     }
+    const i = state.fit ? nearestDot(x + 0.5, y + 0.5, state.fit.radius) : -1;
+    if (i < 0) {
+        $('pixel-dot').textContent = '–';
+        return;
+    }
+    const d = state.fit.dots[i];
+    const se = d.seX === undefined ? '' : ` ± ${d.seX.toFixed(2)}, ${d.seY.toFixed(2)}`;
+    const extra = d.visible === undefined ? '' : `; ${Math.round(100 * d.visible)}% visible, depth ${d.depth}, margin ${d.margin.toFixed(0)}λ`;
+    $('pixel-dot').textContent = `${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${extra}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
 }
 
 function showMessage(text, isError = false) {
@@ -90,11 +135,29 @@ function displayImage() {
         return maskOverlay(image, layers.mask);
     if (state.overlay === 'classes' && layers)
         return classOverlay(layers.classes, layers.thin, image.width, image.height);
+    if ((state.overlay === 'model' || state.overlay === 'residual') && state.fit) {
+        const style = fittedStyle();
+        const bg = solidImage(image.width, image.height, estimate.background.color);
+        if (state.overlay === 'model')
+            return rgbOverlay(renderDots(bg, state.fit.dots, style));
+        const line = estimate.familyMeasure.line;
+        const modelT = renderDots(bg, state.fit.dots, { ...style, project: line }).data;
+        const imgT = new Float32Array(image.width * image.height);
+        for (let p = 0; p < imgT.length; p++)
+            imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - image.data[4 * p + ch]) * line.u[ch], 0);
+        return residualOverlay(imgT, modelT, layers.mask, image.width, image.height);
+    }
     return image;
 }
 
 function refreshView(keepTransform) {
     view.setImage(displayImage(), { keepTransform });
+    refreshMarks();
+}
+
+function refreshMarks(dots = state.fit?.dots) {
+    const style = fittedStyle();
+    view.setMarks(state.showDots && dots && style ? { dots, radius: state.fit?.radius ?? style.radius } : null);
 }
 
 /** Estimate the style (with the current seed or family) and rebuild the mask. */
@@ -108,10 +171,14 @@ function analyze() {
     renderStylePanel();
 }
 
+// Any change of style or mask invalidates fitted dots: they were fitted to a different model.
 function rebuildMask() {
+    stopFit();
+    state.fit = null;
     const style = currentStyle();
     state.layers = style ? buildMask(state.image, { ...state.estimate, style }, state.dilate === null ? {} : { dilate: state.dilate }) : null;
     renderLayersPanel();
+    renderFitPanel();
 }
 
 function renderStylePanel() {
@@ -227,7 +294,17 @@ function renderLayersPanel() {
 
 function renderLegend() {
     const legend = $('overlay-legend');
-    const item = (color, text) => `<span class="key" style="background:${cssColor(color)}"></span>${text}`;
+    const item = (color, text) => `<span class="key" style="background:${typeof color === 'string' ? color : cssColor(color)}"></span>${text}`;
+    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')}`;
+    if (state.overlay === 'residual') {
+        legend.innerHTML = `Image − model along the dot color line: ${item(RESIDUAL_DARKER, 'image darker (missing ink)')} `
+            + `${item(RESIDUAL_LIGHTER, 'image lighter (too much)')} ${item(RESIDUAL_MASKED, 'masked')}; full color at ±${RESIDUAL_FULL} units.`;
+        return;
+    }
+    if (state.overlay === 'model') {
+        legend.textContent = 'The fitted dots rendered with the style (radius from the fit).';
+        return;
+    }
     if (state.overlay === 'count')
         legend.innerHTML = `Overlap count: black 0 to white ${COUNT_MAX_SHOWN}+ (hover for the value); ${item(OFF_LINE_COLOR, 'not the dot color')}`;
     else if (state.overlay === 'mask')
@@ -239,6 +316,10 @@ function renderLegend() {
 }
 
 function pickAt(x, y) {
+    if (state.editing && state.fit) {
+        editAt(x + 0.5, y + 0.5);
+        return;
+    }
     if (!state.picking || !state.image)
         return;
     const [r, g, b] = pixelAt(state.image, x, y);
@@ -252,6 +333,134 @@ function setPicking(on) {
     state.picking = on;
     $('pick-color').setAttribute('aria-pressed', String(on));
     $('stage').classList.toggle('picking', on);
+}
+
+function renderFitPanel(progress) {
+    const fit = state.fit;
+    const running = state.worker !== null;
+    $('fit-run').disabled = running || !currentStyle()?.radius;
+    $('fit-run').title = currentStyle()?.radius ? 'Find the dots' : 'Set the dot radius first';
+    $('fit-stop').disabled = !running;
+    $('fit-edit').disabled = !fit || running;
+    $('copy-csv').disabled = !fit || running;
+    $('save-truth').disabled = !fit || running;
+    if (running && progress) {
+        const secs = ((performance.now() - state.fitStart) / 1000).toFixed(1);
+        $('fit-status').textContent = `${progress.stage}, round ${progress.round}: ${progress.dots.length} dots, ${secs} s`;
+    }
+    if (!fit) {
+        for (const id of ['fit-count', 'fit-flags', 'fit-radius', 'fit-sigma'])
+            $(id).textContent = '–';
+        if (!running)
+            $('fit-status').textContent = '';
+        return;
+    }
+    const counts = {};
+    for (const d of fit.dots) {
+        for (const f of d.flags)
+            counts[f] = (counts[f] ?? 0) + 1;
+    }
+    const flagged = fit.dots.filter(d => d.flags.length).length;
+    $('fit-count').textContent = String(fit.dots.length);
+    $('fit-flags').textContent = flagged ? `${flagged} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')})` : '0';
+    $('fit-radius').textContent = `${fit.radius.toFixed(2)} px`;
+    $('fit-sigma').textContent = fit.sigma.toFixed(2);
+    if (!running) {
+        $('fit-status').textContent = `${fit.partial ? 'Stopped early: partial result, not assessed. ' : ''}`
+            + `${fit.edited ? 'Edited by hand. ' : ''}${fit.ms ? `Fit in ${(fit.ms / 1000).toFixed(1)} s. ` : ''}`
+            + 'Positions in image px (pixel i spans i to i + 1).';
+    }
+}
+
+function runFit() {
+    stopFit();
+    state.fitStart = performance.now();
+    state.worker = new Worker(new URL('../fit-worker.js', import.meta.url), { type: 'module' });
+    state.fit = null;
+    let last = null;
+    state.worker.onmessage = e => {
+        const msg = e.data;
+        if (msg.type === 'progress') {
+            last = msg.progress;
+            refreshMarks(last.dots);
+            renderFitPanel(last);
+            return;
+        }
+        state.worker.terminate();
+        state.worker = null;
+        if (msg.type === 'error') {
+            $('fit-status').textContent = `Fit failed: ${msg.message}`;
+            renderFitPanel();
+            return;
+        }
+        state.fit = msg.result;
+        renderFitPanel();
+        refreshView(true);
+    };
+    state.worker.onerror = e => {
+        $('fit-status').textContent = `Fit failed: ${e.message}`;
+        state.worker = null;
+        renderFitPanel();
+    };
+    state.stopFit = () => last;
+    state.worker.postMessage({ input: fitInput(), opts: {} });
+    renderFitPanel({ stage: 'starting', round: 0, dots: [] });
+}
+
+function stopFit() {
+    if (!state.worker)
+        return;
+    state.worker.terminate();
+    state.worker = null;
+    const last = state.stopFit?.();
+    // keep what the worker had reached, unassessed (no standard errors or flags)
+    if (last) {
+        state.fit = { dots: last.dots.map(d => ({ ...d, flags: [] })), radius: currentStyle().radius, sigma: NaN, partial: true };
+    }
+    renderFitPanel();
+    refreshView(true);
+}
+
+function editAt(x, y) {
+    const r = state.fit.radius;
+    const i = nearestDot(x, y, EDIT_HIT_RADII * r);
+    const dots = state.fit.dots.map(d => ({ x: d.x, y: d.y }));
+    if (i >= 0)
+        dots.splice(i, 1);
+    else
+        dots.push({ x, y });
+    const res = refitNear({ ...fitInput(), style: fittedStyle() }, dots, x, y);
+    state.fit = { ...state.fit, dots: res.dots, sigma: res.sigma, edited: true };
+    renderFitPanel();
+    refreshView(true);
+}
+
+function setEditing(on) {
+    state.editing = on;
+    $('fit-edit').setAttribute('aria-pressed', String(on));
+    $('stage').classList.toggle('editing', on);
+    if (on)
+        setPicking(false);
+}
+
+function dotsCsv() {
+    const rows = ['x_px\ty_px\tse_x_px\tse_y_px\tvisible\tdepth\tflags'];
+    for (const d of state.fit.dots)
+        rows.push([d.x.toFixed(3), d.y.toFixed(3), d.seX?.toFixed(3) ?? '', d.seY?.toFixed(3) ?? '', d.visible?.toFixed(2) ?? '', d.depth ?? '', d.flags.join(' ')].join('\t'));
+    return rows.join('\n') + '\n';
+}
+
+function saveTruth() {
+    const truth = {
+        image: state.name, hash: state.hash, radius: state.fit.radius,
+        note: 'Dot centers in image px. Review every dot before using this as ground truth.',
+        dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2) })),
+    };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(truth, null, 1) + '\n'], { type: 'application/json' }));
+    a.download = state.name.replace(/\.[a-z]+$/i, '') + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
 }
 
 function setImage(name, image) {
@@ -306,7 +515,23 @@ function wireControls() {
         state.overrides = {};
         analyze();
     });
-    $('pick-color').addEventListener('click', () => setPicking(!state.picking));
+    $('pick-color').addEventListener('click', () => {
+        setPicking(!state.picking);
+        if (state.picking)
+            setEditing(false);
+    });
+    $('fit-run').addEventListener('click', runFit);
+    $('fit-stop').addEventListener('click', stopFit);
+    $('fit-edit').addEventListener('click', () => setEditing(!state.editing));
+    $('show-dots').addEventListener('change', e => {
+        state.showDots = e.target.checked;
+        refreshMarks();
+    });
+    $('copy-csv').addEventListener('click', async () => {
+        await navigator.clipboard.writeText(dotsCsv());
+        $('fit-status').textContent = `Copied ${state.fit.dots.length} dots as CSV.`;
+    });
+    $('save-truth').addEventListener('click', saveTruth);
     for (const key of ['radius', 'alpha', 'blur']) {
         $(`style-${key}`).addEventListener('change', e => {
             const v = Number(e.target.value);
@@ -337,8 +562,10 @@ function wireControls() {
         });
     }
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && state.picking)
+        if (e.key === 'Escape') {
             setPicking(false);
+            setEditing(false);
+        }
     });
 }
 

@@ -238,7 +238,7 @@ src/core/image.js       RGBA → planes, color conversions, sRGB/linear, histogr
 src/core/render.js      exact pixel coverage of a disc and ring, blur, compositing, incremental patch updates
 src/core/style.js       background, family candidates, overlap levels → α, c, level table, count image D, radius, blur
 src/core/layers.js      pixel classes, distance transform and morphology, thin marks, mask (later: background field)
-src/core/fit.js         objective, candidates, continuous refinement, discrete moves, uncertainty
+src/core/fit.js         objective, Hough candidates, compass refinement, births/deaths/merges, radius refit, assess
 src/core/axes.js        plot area, axis lines, ticks, gridlines, scale fitting, pixel ↔ data
 src/core/synth.js       synthetic graphs with known dots
 src/core/metrics.js     assignment, precision/recall, RMSE
@@ -390,10 +390,68 @@ What the real images taught:
   no subpixel position removes, and should weight rims down (as the canvas check also suggested).
 
 ### Phase 3 — The fit
-- [ ] Candidates: matched filter on D, Hough with known radius, sparse grid solve; compare on the synthetic set.
-- [ ] Continuous refinement, birth/death/split/merge, style refit, uncertainty and flags.
-- [ ] Worker, progress animation, residual overlay, manual edits with "refit nearby".
-- [ ] Ground truth for dog-ages; benchmark table for the synthetic set and dog-ages, recorded here.
+- [x] Candidates: Hough vote with the known radius on D's gradient (`houghCenters`), then births from a box
+      filter of the residual (the matched filter of §2.4, applied to what the model doesn't yet explain). The
+      sparse grid solve wasn't needed: Hough plus births reach recall 1.000 on the synthetic set, so it is left
+      out.
+- [x] Refinement (`createFit`, `fitDots`): compass search per center over active dots, births, deaths and merges,
+      a global radius refit, and `assess` (position standard errors from the curvature, removal margin in λ,
+      visible fraction, depth; flags weak, hidden and deep). There's no separate split move, because births at a
+      dot's own site do it: a coincident pair is born as a second dot. Blur and α are not refit; the style
+      estimate's values are used.
+- [x] Worker (`src/fit-worker.js`) with progress drawn live and Stop (a stopped fit keeps its dots, marked
+      unassessed); Dots panel (count, flags, fitted radius, residual sd, Copy CSV, Save truth JSON); Model and
+      Residual overlays with a legend; Edit mode (click to add or remove, then `refitNear`); dot readout on hover.
+- [ ] Ground truth for dog-ages: **needs a person**. The app's Edit mode and Save truth write
+      `testgraphs/truth/dog-ages.json`, which `npm run bench` then scores. The fit's own output must not be used
+      as truth without review.
+
+**Measured (phase 3)**, `npm run bench` (5 seeds per preset, matching tolerance r/2), Node 22 on this Mac:
+
+| preset | dots | precision | recall | count error | position RMSE | Hough alone (P/R) | time per image |
+|---|---|---|---|---|---|---|---|
+| sparse (400 × 400, r 10, few overlaps) | 30 | 1.000 | 1.000 | 0 | 0.013–0.020 px | 1.00/1.00 | 0.2–0.3 s |
+| dense (500 × 400, r 11, clusters, 8% ties) | 150 | 1.000 | 1.000 | 0 | 0.061–0.116 px | 0.97–1.00/0.78–0.88 | 2.0–2.2 s |
+| curve (dog-ages imitation, 832 × 1078, r 24) | 104 | 1.000 | 1.000 | 0 | 0.096–0.278 px | 1.00/0.56–0.67 | 7.0–9.7 s |
+
+Real images, no ground truth yet:
+
+- **dog-ages:** 95 dots in 8.4 s (fitted r 23.92, residual sd 1.28). Flags: hidden 42 (under or beside the
+  curve and dashes), deep 15 (the x ≈ 0 pile and the top cluster). Hough gave only 20 starting points (the
+  stair-stepped rims weaken the edge votes); births found the rest. In the residual overlay, every dot interior
+  is white. What remains is rim fringes from the nearest-neighbor enlargement: mean |residual| 3.8 units over
+  unmasked ink pixels, 12% of them beyond 10.
+- **dog-ages-actual-size** (288 × 372, added during phase 3): the native rendering. α 0.332 from only 2 levels,
+  r 7.99, blur 0.35. **Cross-check** (`node tools/compare-fits.mjs testgraphs/dog-ages-actual-size.png
+  testgraphs/dog-ages.png`): dog-ages is this image enlarged exactly 3.000× (x 3.0002, y 3.0007) and cropped by
+  (8.1, 4.7) px. Fitted independently, both give 95 dots, and all 95 match one to one, none extra on either side.
+  The 41 dots unflagged in both agree within 0.072 px RMSE (native px; max 0.149), and all 95 within 0.163. Both
+  fits could share a systematic error (the deep pile's count above all), so this doesn't replace ground truth, but
+  it is strong evidence for the count and the positions.
+- **economist, red:** 110 dots in 3.5 s; separated dots are matched cleanly. Where the red and blue lines and
+  dots overlap at the left, it builds clumps of 5–10 red dots flagged deep or weak. That is a red–blue mixture
+  explained as deep red; it needs the second family (phase 5).
+
+What the fit needed, found on the way:
+
+- **Depth-aware birth units and λ:** births first missed dots in deep stacks. At depth n one more dot changes
+  the color only (1 − α)^n as much as the first, but the residual was measured in first-level steps and λ was 20
+  pixels one first step wrong. Recall on dense rose from 0.97 to 1.000 once both were made local: the residual
+  in units of the next level at each pixel, and λ = 20 px × 10 units (absolute).
+- **A neighborhood decides a birth:** while a dot is missing, its neighbors drift to cover it. Adding the
+  missing dot alone raised the loss (dog-ages: +13 000); with the neighbors refined it fell by 44 000. Births are
+  now judged after the neighbors re-settle, within half a radius, under a snapshot that undoes a rejected
+  birth. curve's position RMSE fell from 0.6–1.0 px to 0.1–0.3, and its last misses went.
+- **Single-level families:** with no overlaps, α isn't measured. The level table once repeated the single level
+  12 times, so every dot read as 13 deep and the radius was lost (sparse #3: 137 dots at r = 1). It is now kept
+  at two entries (regression test).
+- **Speed:** 21–55 s on curve at first. Per-dot coverage stamps, snapshot/undo instead of re-rendering a
+  rejected trial, rendering only the value along the color line (blur commutes with the projection), sweeps over
+  active dots only, and incremental birth search brought it to 7–10 s. Most of what's left is the blur and
+  re-render per trial move. A Newton step per dot could roughly halve the trials.
+- **Not done:** deaths and merges are still judged without re-settling neighbors, which errs toward keeping
+  dots. A dot almost entirely under a mask (12 of 448 px visible in a test) is not found, which is correct
+  given λ, but it is not reported either.
 
 ### Phase 4 — Scales
 - [ ] `axes.js`: plot area, axis lines, ticks, gridlines; typed tick values with guesses; linear, log and

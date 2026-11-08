@@ -71,6 +71,8 @@
                     <label><input type="radio" name="overlay" value="count"> Count</label>
                     <label><input type="radio" name="overlay" value="mask"> Mask</label>
                     <label><input type="radio" name="overlay" value="classes"> Classes</label>
+                    <label><input type="radio" name="overlay" value="model"> Model</label>
+                    <label><input type="radio" name="overlay" value="residual"> Residual</label>
                 </div>
                 <p id="overlay-legend" class="fine"></p>
                 <dl>
@@ -80,12 +82,34 @@
                 <p id="analysis-time" class="fine"></p>
             </section>
             <section>
+                <h2>Dots</h2>
+                <div class="row">
+                    <button type="button" id="fit-run" title="Find the dots: Hough candidates, then refine, births, deaths, merges and a radius refit">Find dots</button>
+                    <button type="button" id="fit-stop" disabled>Stop</button>
+                    <button type="button" id="fit-edit" aria-pressed="false" title="Click empty space to add a dot, click a dot to remove it; the dots nearby are refit">Edit</button>
+                </div>
+                <p id="fit-status" class="fine" role="status"></p>
+                <dl>
+                    <dt>Dots</dt><dd id="fit-count">–</dd>
+                    <dt>Flagged</dt><dd id="fit-flags" title="weak: removing it costs little; hidden: under half visible; deep: in a stack deeper than the measured levels">–</dd>
+                    <dt>Radius</dt><dd id="fit-radius" title="After the fit's radius refit">–</dd>
+                    <dt>Residual sd</dt><dd id="fit-sigma" title="Robust sd of image − model inside dots, 0–255 units along the color line">–</dd>
+                </dl>
+                <label class="check"><input type="checkbox" id="show-dots" checked> Show dots</label>
+                <p class="fine" id="dots-legend"></p>
+                <div class="row">
+                    <button type="button" id="copy-csv" disabled title="Pixel coordinates, standard errors and flags, tab-separated">Copy CSV</button>
+                    <button type="button" id="save-truth" disabled title="Save the current dots as ground truth JSON for testgraphs/truth/">Save truth</button>
+                </div>
+            </section>
+            <section>
                 <h2>Pixel</h2>
                 <dl>
                     <dt>Position</dt><dd id="pixel-pos">–</dd>
                     <dt>RGBA</dt><dd id="pixel-rgba">–</dd>
                     <dt>Count</dt><dd id="pixel-count" title="Fractional number of overlapping dots">–</dd>
                     <dt>Class</dt><dd id="pixel-class">–</dd>
+                    <dt>Dot</dt><dd id="pixel-dot">–</dd>
                 </dl>
                 <div id="pixel-swatch" aria-hidden="true"></div>
             </section>
@@ -100,7 +124,7 @@
                 </div>
                 <p class="fine">Scroll or pinch to zoom at the pointer; drag to pan.</p>
             </section>
-            <p class="fine">The fit and the axes arrive in later phases; see PLAN.md.</p>
+            <p class="fine">Axes (data coordinates) arrive in phase 4; see PLAN.md.</p>
         </aside>
         <div id="stage" tabindex="0" aria-label="Image view">
             <canvas id="view"></canvas>

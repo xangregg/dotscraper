@@ -60,8 +60,40 @@ export function classOverlay(classes, thin, width, height) {
     return out;
 }
 
+const RESIDUAL_FULL = 30; // t units (0–255) at full saturation in the residual overlay
+const RESIDUAL_DARKER = [200, 40, 40]; // image darker than the model: ink the model is missing
+const RESIDUAL_LIGHTER = [40, 90, 210]; // image lighter: the model has too much
+const RESIDUAL_MASKED = [150, 150, 150];
+
+/**
+ * Signed residual along the color line, image t minus model t: white where they agree, red where the image is
+ * darker (a dot missing), blue where lighter (a dot too many or misplaced), gray where masked.
+ */
+export function residualOverlay(imgT, modelT, mask, width, height) {
+    const out = blank(width, height);
+    for (let p = 0; p < imgT.length; p++) {
+        if (mask[p]) {
+            out.data.set([...RESIDUAL_MASKED, 255], 4 * p);
+            continue;
+        }
+        const r = imgT[p] - modelT[p];
+        const f = Math.min(1, Math.abs(r) / RESIDUAL_FULL);
+        const c = r > 0 ? RESIDUAL_DARKER : RESIDUAL_LIGHTER;
+        out.data.set([255 + (c[0] - 255) * f, 255 + (c[1] - 255) * f, 255 + (c[2] - 255) * f, 255], 4 * p);
+    }
+    return out;
+}
+
+/** An RgbImage (floats) as an RgbaImage for display. */
+export function rgbOverlay(rgb) {
+    const out = blank(rgb.width, rgb.height);
+    for (let p = 0; p < rgb.width * rgb.height; p++)
+        out.data.set([rgb.data[3 * p], rgb.data[3 * p + 1], rgb.data[3 * p + 2], 255], 4 * p);
+    return out;
+}
+
 export function cssColor(rgb) {
     return `rgb(${rgb.map(v => Math.round(Math.min(255, Math.max(0, v)))).join(' ')})`;
 }
 
-export { CLASS_COLORS, OFF_LINE_COLOR, MASK_TINT };
+export { CLASS_COLORS, OFF_LINE_COLOR, MASK_TINT, RESIDUAL_FULL, RESIDUAL_DARKER, RESIDUAL_LIGHTER, RESIDUAL_MASKED };

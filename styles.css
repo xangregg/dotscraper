@@ -305,3 +305,12 @@ button[aria-pressed="true"] {
 #stage.picking {
     cursor: crosshair;
 }
+
+.check {
+    display: block;
+    margin-top: 6px;
+}
+
+#stage.editing {
+    cursor: cell;
+}

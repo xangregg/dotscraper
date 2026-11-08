@@ -268,7 +268,7 @@ export function fitGeometric(colors) {
 
 /**
  * Level colors for n = 0 … K + EXTRA_LEVELS: B, the measured levels, then geometric continuation from the deepest
- * measured level with the fitted α and c.
+ * measured level with the fitted α and c (none when α is not measured).
  *
  * @param {number[]} B
  * @param {Level[]} levels
@@ -277,6 +277,10 @@ export function fitGeometric(colors) {
  */
 export function levelTable(B, levels, fit) {
     const table = [B, ...levels.map(L => L.color)];
+    // one level: α isn't measured, so there is nothing to extrapolate with (copies of the level would make every
+    // plateau pixel read as the deepest count)
+    if (fit.underdetermined)
+        return table;
     const last = table[table.length - 1];
     const q = 1 - fit.alpha;
     for (let k = 1; k <= EXTRA_LEVELS; k++)
