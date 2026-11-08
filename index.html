@@ -37,10 +37,55 @@
                 </dl>
             </section>
             <section>
+                <h2>Dot style</h2>
+                <div class="row">
+                    <span id="family-swatch" class="swatch" aria-hidden="true"></span>
+                    <select id="family" aria-label="Dot family"></select>
+                    <button type="button" id="pick-color" aria-pressed="false" title="Click a dot in the image to use its color (Esc cancels)">Pick</button>
+                </div>
+                <div id="levels" class="levels" aria-label="Overlap level colors"></div>
+                <dl>
+                    <dt>Full color</dt><dd id="style-c">–</dd>
+                    <dt>Levels</dt><dd id="style-levels">–</dd>
+                    <dt>Fit</dt><dd id="style-fit" title="Geometric model of the levels, 0–255 units">–</dd>
+                    <dt>Isolated</dt><dd id="style-isolated" title="Whole single dots used for the radius and blur">–</dd>
+                    <dt><label for="style-radius">Radius</label></dt><dd><input type="number" id="style-radius" step="0.01" min="0.5"> px</dd>
+                    <dt><label for="style-alpha">Alpha</label></dt><dd><input type="number" id="style-alpha" step="0.001" min="0.01" max="1"></dd>
+                    <dt><label for="style-blur">Blur</label></dt><dd><input type="number" id="style-blur" step="0.01" min="0"> px</dd>
+                </dl>
+                <button type="button" id="style-reset" title="Use the estimated values again">Reset to estimate</button>
+                <div id="style-notes" class="notes" role="status"></div>
+                <figure id="sample" hidden>
+                    <div class="row">
+                        <canvas id="sample-real"></canvas>
+                        <canvas id="sample-model"></canvas>
+                        <canvas id="sample-diff"></canvas>
+                    </div>
+                    <figcaption id="sample-caption" class="fine"></figcaption>
+                </figure>
+            </section>
+            <section>
+                <h2>Layers</h2>
+                <div class="overlay-choice" role="radiogroup" aria-label="Show">
+                    <label><input type="radio" name="overlay" value="image" checked> Image</label>
+                    <label><input type="radio" name="overlay" value="count"> Count</label>
+                    <label><input type="radio" name="overlay" value="mask"> Mask</label>
+                    <label><input type="radio" name="overlay" value="classes"> Classes</label>
+                </div>
+                <p id="overlay-legend" class="fine"></p>
+                <dl>
+                    <dt><label for="layer-dilate">Mask grow</label></dt><dd><input type="number" id="layer-dilate" step="0.5" min="0"> px</dd>
+                </dl>
+                <p id="layer-stats" class="fine">–</p>
+                <p id="analysis-time" class="fine"></p>
+            </section>
+            <section>
                 <h2>Pixel</h2>
                 <dl>
                     <dt>Position</dt><dd id="pixel-pos">–</dd>
                     <dt>RGBA</dt><dd id="pixel-rgba">–</dd>
+                    <dt>Count</dt><dd id="pixel-count" title="Fractional number of overlapping dots">–</dd>
+                    <dt>Class</dt><dd id="pixel-class">–</dd>
                 </dl>
                 <div id="pixel-swatch" aria-hidden="true"></div>
             </section>
@@ -55,7 +100,7 @@
                 </div>
                 <p class="fine">Scroll or pinch to zoom at the pointer; drag to pan.</p>
             </section>
-            <p class="fine">Extraction steps (layers, dot style, fit, axes) arrive in later phases; see PLAN.md.</p>
+            <p class="fine">The fit and the axes arrive in later phases; see PLAN.md.</p>
         </aside>
         <div id="stage" tabindex="0" aria-label="Image view">
             <canvas id="view"></canvas>

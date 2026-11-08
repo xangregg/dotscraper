@@ -236,14 +236,14 @@ as poorly determined rather than silently placed or dropped.
 index.html, styles.css
 src/core/image.js       RGBA → planes, color conversions, sRGB/linear, histograms, crops
 src/core/render.js      exact pixel coverage of a disc and ring, blur, compositing, incremental patch updates
-src/core/style.js       background, families, overlap levels → color and alpha, radius, blur
-src/core/layers.js      pixel classification, morphology, masks, background field
+src/core/style.js       background, family candidates, overlap levels → α, c, level table, count image D, radius, blur
+src/core/layers.js      pixel classes, distance transform and morphology, thin marks, mask (later: background field)
 src/core/fit.js         objective, candidates, continuous refinement, discrete moves, uncertainty
 src/core/axes.js        plot area, axis lines, ticks, gridlines, scale fitting, pixel ↔ data
 src/core/synth.js       synthetic graphs with known dots
 src/core/metrics.js     assignment, precision/recall, RMSE
 src/core/rng.js         seeded random numbers
-src/ui/                 main.js, view.js (canvas, zoom, overlays), steps.js, input.js, export.js, urlstate.js
+src/ui/                 main.js, view.js (canvas, zoom), overlays.js, input.js; later steps.js, export.js, urlstate.js
 src/fit-worker.js
 testgraphs/             images, index.json, truth/*.json (local only: git ignores all but the README)
 tools/                  check-page.mjs, png.mjs, images-index.mjs, measure-dots.mjs, bench.mjs, render-canvas page
@@ -343,12 +343,51 @@ one α for all channels.
     bias.
 
 ### Phase 2 — Style and masks for one translucent family
-- [ ] `style.js`: background, color and alpha from overlap levels, an empirical level table (phase 1), radius,
-      blur; `render.js` maps the effective count through the table. Tests on synthetic images
-      (recovered within tolerance) and on dog-ages (against the phase 0 numbers).
-- [ ] `layers.js`: classification, line removal by opening, dilated mask. dog-ages: the black curve, gray dashes
-      and text are masked; dot pixels are not.
-- [ ] UI: Layers and Dot style steps with overlays (mask, D) and correction controls.
+- [x] `style.js`: background (mode color); family candidates by clustering flat pixels on direction from B (2°
+      bins), each measured along its color line; levels, the geometric fit (golden-section search on α, c in
+      closed form), an empirical level table (B, the measured levels, then 12 geometric levels); the overlap count
+      image D; isolated whole dots for the radius; the erf edge fit for the blur (the pixel box's 1/12 variance
+      removed, since the renderer supplies it). `render.js` takes the table as `levels`, interpolating linearly in
+      transmittance: exact on plateaus, and identical to the formula when the table is geometric (test).
+- [x] `layers.js`: classes (background, dot color, other), exact Euclidean distance transform (Felzenszwalb),
+      disc dilation, erosion and opening, thin marks in the family's full color, and the mask (other ∪ thin,
+      grown by 1 + 2·blur px). dog-ages: every black and dash-gray pixel in the plot area is masked, and the
+      dots and background are not (test).
+- [x] UI: Dot style (family menu, Pick a dot's color, level swatches with measured and extrapolated ones
+      distinguished, full color, fit, isolated count, editable radius, α and blur with Reset, notes, and an isolated
+      dot beside its model rendering and their difference) and Layers (overlays Image, Count, Mask and Classes
+      with legends, mask growth, class and mask statistics, timing). The hover adds the pixel's count and class.
+
+**Measured (phase 2).**
+
+| image | family | α | radius | blur | isolated dots | levels | time (style + mask, page) |
+|---|---|---|---|---|---|---|---|
+| synth sparse | blue | 0.347 (0.35) | 10.001 (10) | 0.14 (0) | 15 | 2 | |
+| synth dense | green | 0.300 (0.30) | 11.007 (11) | 0.80 (0.80) | 3 | 5 | |
+| synth curve | green | 0.310 (0.31) | 23.992 (24) | 1.20 (upsampled) | 1 | 4 | |
+| dog-ages | green | 0.310 | 24.03 | 1.15 | 4 | 5 | 122 + 55 ms |
+| economist | red (1st of 2) | 0.302 | 8.37 | 0.72 | 9 | 2 | 198 + 79 ms |
+| economist | blue (2nd) | 0.288 | 8.38 | | | 3 | |
+
+The opaque test images are found as one-level families and say so, along with the fact that no isolated whole
+dot was found (their dots touch); they are phase 5.
+
+What the real images taught:
+
+- **Text can look like a family:** on the economist chart, black and gray text gave two plateaus with a
+  shrinking step. Its fitted c was −204, outside the RGB cube. A translucent family now needs a fit within 2 units
+  rms and c within 10 units of the cube.
+- **Rims are off the line in resampled images:** dog-ages' dot rims sit up to perp/t ≈ 0.14 off the color line,
+  which made 3 of its 4 isolated dots look partly hidden. The count image accepts perp/t ≤ 0.2 (gray text is at
+  0.31) and any perp ≤ 2 units. Doing so also removed the 0.06 px low radius from phase 1.
+- **Lines in the dot color are wide:** the economist trend lines are about 9 px wide against r = 8.4, so the
+  opening needs radius 0.75 r. "Deep" must mean saturated (within 8 units of the line's measured color, which
+  is a better anchor than the extrapolated c), not just beyond the measured levels. Otherwise the core of a deep
+  pile is taken for a line (synthetic curve: 867 px). Thin components must also be at least 3 r long.
+- **dog-ages' dots are stair-stepped:** the isolated-dot sample shows blocky rims against the model's smooth
+  ones (mean difference 1.39, max 27.8, 0–255). The figure looks enlarged by nearest-neighbor resampling at a
+  non-integer factor, which fits phase 0 seeing no integer-replication phase. The fit will see rim residuals that
+  no subpixel position removes, and should weight rims down (as the canvas check also suggested).
 
 ### Phase 3 — The fit
 - [ ] Candidates: matched filter on D, Hough with known radius, sparse grid solve; compare on the synthetic set.

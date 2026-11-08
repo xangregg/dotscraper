@@ -26,15 +26,15 @@ work is completed, and record measured results there (what was tried, the number
   only wraps `src/core/` functions.
 - Do not add Claude attribution to commit messages.
 
-## Layout (planned; see PLAN.md §7)
+## Layout (see PLAN.md §7 for what's planned)
 
 ```
 index.html              layout, loads src/ui/main.js as a module
 styles.css
-src/core/               pure algorithms: image.js (planes, color), render.js (forward model), style.js (dot
-                        style), layers.js (masks, background), fit.js (iteration), axes.js (scales), synth.js
-                        (synthetic graphs with known dots), metrics.js (matching against ground truth), rng.js
-src/ui/                 canvas view (zoom, pan, overlays), controls, image input, export, URL state
+src/core/               pure algorithms: image.js (hash, pixel access), render.js (forward model), style.js (dot
+                        style), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
+                        dots), metrics.js (matching against ground truth), rng.js; planned: fit.js, axes.js
+src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click), overlays.js, input.js
 src/fit-worker.js       module Web Worker wrapping the fit
 testgraphs/             test images, index.json, ground truth in truth/<name>.json: LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,

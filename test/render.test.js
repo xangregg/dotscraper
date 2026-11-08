@@ -177,3 +177,39 @@ test('toRgba and fromRgba round-trip integer values', () => {
     assert.equal(back.data[4], 255);
     assert.equal(back.data[0], 1);
 });
+
+test('level table: a geometric table reproduces the formula; a measured table sets the plateaus', () => {
+    const B = [255, 255, 255];
+    const c = [50, 161, 73];
+    const alpha = 0.31;
+    const geometric = Array.from({ length: 12 }, (_, n) => c.map((v, ch) => v + (B[ch] - v) * (1 - alpha) ** n));
+    const points = [{ x: 20.3, y: 20.6 }, { x: 31.1, y: 22.4 }, { x: 25.7, y: 30.2 }, { x: 25.7, y: 30.2 }];
+    const bg = solidImage(60, 55, B);
+    const plain = renderDots(bg, points, { color: c, alpha, radius: 9.2, blur: 0.7 });
+    const tabled = renderDots(bg, points, { color: c, alpha, radius: 9.2, blur: 0.7, levels: geometric });
+    let maxDiff = 0;
+    for (let i = 0; i < plain.data.length; i++)
+        maxDiff = Math.max(maxDiff, Math.abs(plain.data[i] - tabled.data[i]));
+    assert.ok(maxDiff < 1e-3, `max diff ${maxDiff}`);
+    // perturb level 1 and 3: interiors at those depths take the table's colors exactly
+    const measured = geometric.map(v => [...v]);
+    measured[1] = [190, 226, 197];
+    measured[3] = [118, 193, 133];
+    const im = renderDots(bg, points, { color: c, alpha, radius: 9.2, levels: measured });
+    const at = (x, y) => [0, 1, 2].map(ch => im.data[3 * (y * 60 + x) + ch]);
+    // (13, 20) is inside the first dot only; (25, 24) inside all four (the coincident pair and the other two)
+    assert.deepEqual(at(13, 20).map(v => +v.toFixed(3)), measured[1]);
+    const four = at(25, 24);
+    for (let ch = 0; ch < 3; ch++)
+        assert.ok(Math.abs(four[ch] - measured[4][ch]) < 1e-3);
+});
+
+test('level table with opaque dots (α = 1) interpolates between B and c at edges', () => {
+    const B = [255, 255, 255];
+    const c = [0, 0, 0];
+    const bg = solidImage(30, 30, B);
+    const a = renderDots(bg, [{ x: 15, y: 15 }], { color: c, alpha: 1, radius: 6.4 });
+    const b = renderDots(bg, [{ x: 15, y: 15 }], { color: c, alpha: 1, radius: 6.4, levels: [B, c, c] });
+    for (let i = 0; i < a.data.length; i++)
+        assert.ok(Math.abs(a.data[i] - b.data[i]) < 1e-3);
+});

@@ -7,15 +7,17 @@ const WHEEL_ZOOM_RATE = 1 / 300; // log2 of the zoom factor per unit of wheel de
 const MIN_SCALE = 1 / 32; // CSS px per image px
 const MAX_SCALE = 64; // CSS px per image px
 const FIT_MARGIN = 12; // CSS px left around the image when fitting
+const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and still count as a click
 
 /**
  * @param {object} opts
  * @param {HTMLElement} opts.stage   container whose size the canvas fills; receives the pointer events
  * @param {HTMLCanvasElement} opts.canvas
  * @param {function(number|null, number|null): void} opts.onHover  image pixel under the pointer, or nulls
+ * @param {function(number, number): void} opts.onClick  image pixel clicked (a press and release without a drag)
  * @param {function(number): void} opts.onZoom  the new scale
  */
-export function createView({ stage, canvas, onHover, onZoom }) {
+export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     const ctx = canvas.getContext('2d');
     let source = null; // canvas holding the image at full resolution
     let width = 0;
@@ -104,7 +106,14 @@ export function createView({ stage, canvas, onHover, onZoom }) {
         else
             onHover(null, null);
     });
-    stage.addEventListener('pointerup', () => {
+    stage.addEventListener('pointerup', e => {
+        if (drag && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) <= CLICK_SLOP) {
+            const p = imagePoint(e);
+            const x = Math.floor(p.x);
+            const y = Math.floor(p.y);
+            if (x >= 0 && y >= 0 && x < width && y < height)
+                onClick(x, y);
+        }
         drag = null;
         stage.classList.remove('dragging');
     });
@@ -126,15 +135,22 @@ export function createView({ stage, canvas, onHover, onZoom }) {
     new ResizeObserver(draw).observe(stage);
 
     return {
-        /** @param {import('../core/image.js').RgbaImage} image */
-        setImage(image) {
+        /**
+         * @param {import('../core/image.js').RgbaImage} image
+         * @param {{keepTransform?: boolean}} [opts]  keep the zoom and pan (for an overlay of the same image)
+         */
+        setImage(image, opts = {}) {
             source = document.createElement('canvas');
             source.width = image.width;
             source.height = image.height;
             source.getContext('2d').putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
+            const same = image.width === width && image.height === height;
             width = image.width;
             height = image.height;
-            fit();
+            if (opts.keepTransform && same)
+                draw();
+            else
+                fit();
         },
         fit,
         zoomBy(factor) {

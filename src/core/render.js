@@ -23,6 +23,9 @@
  * @property {number} alpha     0–1
  * @property {number} radius    px
  * @property {number} [blur]    px, sd of the Gaussian applied to the composited image (default 0)
+ * @property {number[][]} [levels]  measured level colors L_0 = B, L_1, …: when given, a pixel's color is
+ *                              interpolated in this table by its transmittance instead of c + (B − c)·T, and
+ *                              the background image is ignored (the table assumes a uniform background)
  */
 
 const BLUR_EXTENT = 3; // kernel half-width in units of σ
@@ -233,6 +236,24 @@ export function createDotModel(background, style) {
     const T = new Float32Array(width * height).fill(1);
     const composite = { width, height, data: Float32Array.from(background.data) };
     const output = kernel ? { width, height, data: Float32Array.from(background.data) } : composite;
+    const table = style.levels ?? null;
+    // Interpolating the table linearly in T between T_k = q^k and T_(k+1) reproduces each measured plateau, and
+    // equals c + (B − c)·T exactly when the table is geometric, edges included (the color is linear in T).
+    const q = 1 - alpha;
+    const tPow = table ? table.map((_, k) => q ** k) : null;
+    const logQ = Math.log(q);
+    function tableColor(Tp, out, o) {
+        const K = table.length - 1;
+        let k = 0;
+        if (q > 0 && Tp < 1)
+            k = Tp <= 0 ? K - 1 : Math.min(K - 1, Math.floor(Math.log(Tp) / logQ));
+        const frac = Math.min(1, Math.max(0, (tPow[k] - Tp) / (tPow[k] - tPow[k + 1])));
+        const a = table[k];
+        const b = table[k + 1];
+        out[o] = a[0] + frac * (b[0] - a[0]);
+        out[o + 1] = a[1] + frac * (b[1] - a[1]);
+        out[o + 2] = a[2] + frac * (b[2] - a[2]);
+    }
     const cell = Math.max(1, GRID_CELL_RADII * radius);
     const gw = Math.ceil(width / cell) + 1;
     const gh = Math.ceil(height / cell) + 1;
@@ -292,6 +313,10 @@ export function createDotModel(background, style) {
         for (let y = y0; y < y1; y++) {
             for (let x = x0; x < x1; x++) {
                 const p = y * width + x;
+                if (table) {
+                    tableColor(T[p], composite.data, 3 * p);
+                    continue;
+                }
                 for (let ch = 0; ch < 3; ch++)
                     composite.data[3 * p + ch] = color[ch] + (background.data[3 * p + ch] - color[ch]) * T[p];
             }
