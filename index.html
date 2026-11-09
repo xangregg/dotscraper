@@ -103,12 +103,20 @@
                 </div>
             </section>
             <section>
+                <h2>Axes</h2>
+                <label class="check"><input type="checkbox" id="show-axes" checked> Show axes and ticks</label>
+                <div id="axis-x" class="axis"></div>
+                <div id="axis-y" class="axis"></div>
+                <p id="axes-note" class="fine"></p>
+            </section>
+            <section>
                 <h2>Pixel</h2>
                 <dl>
                     <dt>Position</dt><dd id="pixel-pos">–</dd>
                     <dt>RGBA</dt><dd id="pixel-rgba">–</dd>
                     <dt>Count</dt><dd id="pixel-count" title="Fractional number of overlapping dots">–</dd>
                     <dt>Class</dt><dd id="pixel-class">–</dd>
+                    <dt>Data</dt><dd id="pixel-data" title="The pixel center in data units, from the axes">–</dd>
                     <dt>Dot</dt><dd id="pixel-dot">–</dd>
                 </dl>
                 <div id="pixel-swatch" aria-hidden="true"></div>
@@ -124,7 +132,6 @@
                 </div>
                 <p class="fine">Scroll or pinch to zoom at the pointer; drag to pan.</p>
             </section>
-            <p class="fine">Axes (data coordinates) arrive in phase 4; see PLAN.md.</p>
         </aside>
         <div id="stage" tabindex="0" aria-label="Image view">
             <canvas id="view"></canvas>

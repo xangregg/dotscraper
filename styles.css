@@ -314,3 +314,59 @@ button[aria-pressed="true"] {
 #stage.editing {
     cursor: cell;
 }
+
+.axis {
+    margin: 8px 0;
+}
+
+.axis h3 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 4px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.axis table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.axis td {
+    padding: 1px 4px 1px 0;
+    vertical-align: middle;
+}
+
+.axis td.px {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.axis canvas {
+    display: block;
+    max-width: 90px;
+    height: 20px;
+    image-rendering: auto;
+    background: #fff;
+    border: 1px solid var(--border);
+}
+
+.axis input {
+    width: 72px;
+}
+
+.axis input::placeholder {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.axis .summary {
+    margin: 4px 0 0;
+}
+
+.axis .warn {
+    color: var(--warning);
+}

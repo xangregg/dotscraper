@@ -10,6 +10,8 @@ import { estimateStyle } from '../core/style.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
 import { refitNear } from '../core/fit.js';
+import { detectAxes } from '../core/axes.js';
+import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
 import {
@@ -42,6 +44,9 @@ const state = {
     fitStart: 0,
     editing: false,
     showDots: true,
+    axes: null, // from detectAxes
+    axisEntries: { x: null, y: null }, // typed tick values and scale types
+    showAxes: true,
 };
 
 const view = createView({
@@ -75,6 +80,23 @@ function fitInput() {
     return { image: state.image, style, line: state.estimate.familyMeasure.line, mask: state.layers.mask, D: state.estimate.D };
 }
 
+/** The scales in effect: { x, y }, each from axisScale or null. */
+function scales() {
+    return {
+        x: state.axes ? axisScale(state.axes.x, state.axisEntries.x) : null,
+        y: state.axes ? axisScale(state.axes.y, state.axisEntries.y) : null,
+    };
+}
+
+/** Data coordinates of an image point, with per-axis resolution (data units per px). */
+function dataAt(x, y) {
+    const s = scales();
+    return {
+        x: toAxisData(s.x, x), y: toAxisData(s.y, y),
+        resX: axisResolution(s.x, x), resY: axisResolution(s.y, y),
+    };
+}
+
 function nearestDot(x, y, within) {
     if (!state.fit)
         return -1;
@@ -92,7 +114,7 @@ function nearestDot(x, y, within) {
 
 function showPixel(x, y) {
     if (x === null || !state.image) {
-        for (const id of ['pixel-pos', 'pixel-rgba', 'pixel-count', 'pixel-class', 'pixel-dot'])
+        for (const id of ['pixel-pos', 'pixel-rgba', 'pixel-count', 'pixel-class', 'pixel-dot', 'pixel-data'])
             $(id).textContent = '–';
         $('pixel-swatch').style.background = 'transparent';
         return;
@@ -109,15 +131,21 @@ function showPixel(x, y) {
         const cls = L.thin[p] ? 'thin mark in dot color' : (L.classes[p] === CLASS_BACKGROUND ? 'background' : (L.classes[p] === CLASS_FAMILY ? 'dot color' : 'other'));
         $('pixel-class').textContent = `${cls}${L.mask[p] ? ', masked' : ''}`;
     }
+    const pd = dataAt(x + 0.5, y + 0.5);
+    $('pixel-data').textContent = pd.x === null && pd.y === null ? '–' : `${formatData(pd.x, pd.resX)}, ${formatData(pd.y, pd.resY)}`;
     const i = state.fit ? nearestDot(x + 0.5, y + 0.5, state.fit.radius) : -1;
     if (i < 0) {
         $('pixel-dot').textContent = '–';
         return;
     }
     const d = state.fit.dots[i];
-    const se = d.seX === undefined ? '' : ` ± ${d.seX.toFixed(2)}, ${d.seY.toFixed(2)}`;
+    // the curvature standard errors reflect pixel noise only; systematic error (resampled rims, model mismatch) is
+    // several times larger (PLAN.md phase 4: two renderings of dog-ages differ by 3–6× these), so say so
+    const se = d.seX === undefined ? '' : ` ± ${d.seX.toFixed(2)}, ${d.seY.toFixed(2)} (noise only)`;
     const extra = d.visible === undefined ? '' : `; ${Math.round(100 * d.visible)}% visible, depth ${d.depth}, margin ${d.margin.toFixed(0)}λ`;
-    $('pixel-dot').textContent = `${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${extra}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    const dd = dataAt(d.x, d.y);
+    const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
+    $('pixel-dot').textContent = `${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
 }
 
 function showMessage(text, isError = false) {
@@ -444,10 +472,64 @@ function setEditing(on) {
 }
 
 function dotsCsv() {
-    const rows = ['x_px\ty_px\tse_x_px\tse_y_px\tvisible\tdepth\tflags'];
-    for (const d of state.fit.dots)
-        rows.push([d.x.toFixed(3), d.y.toFixed(3), d.seX?.toFixed(3) ?? '', d.seY?.toFixed(3) ?? '', d.visible?.toFixed(2) ?? '', d.depth ?? '', d.flags.join(' ')].join('\t'));
+    const s = scales();
+    const hasData = s.x?.kind === 'numeric' || s.x?.kind === 'category' || s.y?.kind === 'numeric' || s.y?.kind === 'category';
+    // se_noise: standard errors from pixel noise alone; the real error is larger (see the Axes note)
+    const head = ['x_px', 'y_px', 'se_noise_x_px', 'se_noise_y_px'];
+    if (hasData)
+        head.push('x', 'y', 'se_noise_x', 'se_noise_y');
+    head.push('visible', 'depth', 'flags');
+    const rows = [head.join('\t')];
+    for (const d of state.fit.dots) {
+        const row = [d.x.toFixed(3), d.y.toFixed(3), d.seX?.toFixed(3) ?? '', d.seY?.toFixed(3) ?? ''];
+        if (hasData) {
+            const dd = dataAt(d.x, d.y);
+            // standard errors in data units: the px error times the local data units per px
+            const se = (sePx, res) => (sePx === undefined || res === null ? '' : (sePx * res).toPrecision(2));
+            row.push(formatData(dd.x, dd.resX), formatData(dd.y, dd.resY), se(d.seX, dd.resX), se(d.seY, dd.resY));
+        }
+        row.push(d.visible?.toFixed(2) ?? '', d.depth ?? '', d.flags.join(' '));
+        rows.push(row.join('\t'));
+    }
     return rows.join('\n') + '\n';
+}
+
+function renderAxesPanel() {
+    for (const k of ['x', 'y']) {
+        renderAxis($(`axis-${k}`), k, state.axes?.[k] ?? null, state.axisEntries[k], state.image, entry => {
+            state.axisEntries[k] = entry;
+            saveEntries(state.hash, state.axisEntries);
+            renderAxesPanel();
+        });
+    }
+    const s = scales();
+    const note = [];
+    if (s.x?.kind === 'numeric' && s.y?.kind === 'numeric')
+        note.push('Data coordinates appear in the Pixel readout, the dot hover and the CSV. Dot standard errors count pixel noise only; '
+            + 'with resampled or antialiased edges the real position error is several times larger (a few tenths of a px), '
+            + 'and tick placement adds the scale residual shown above.');
+    else
+        note.push('Type tick values to get data coordinates.');
+    $('axes-note').textContent = note.join(' ');
+    refreshAxisMarks();
+}
+
+function refreshAxisMarks() {
+    const a = state.axes;
+    if (!a || !state.showAxes) {
+        view.setAxisMarks(null);
+        return;
+    }
+    const marks = [];
+    if (a.x)
+        // gridline ticks have no axis line: mark them at the bottom end of the y axis, or the image's bottom edge
+        marks.push({ dir: 'h', pos: a.x.line?.pos ?? null, at: a.x.line ? null : (a.y?.line?.to ?? state.image.height - 1), from: a.x.line?.from, to: a.x.line?.to, ticks: a.x.ticks.map(t => t.pos) });
+    if (a.y) {
+        // gridline ticks have no axis line: mark them at the left end of the x axis, or the image's left edge
+        const at = a.y.line ? null : (a.x?.line?.from ?? 0);
+        marks.push({ dir: 'v', pos: a.y.line?.pos ?? null, at, from: a.y.line?.from, to: a.y.line?.to, ticks: a.y.ticks.map(t => t.pos) });
+    }
+    view.setAxisMarks(marks);
 }
 
 function saveTruth() {
@@ -476,6 +558,9 @@ function setImage(name, image) {
     $('info-hash').textContent = state.hash;
     showMessage('');
     view.setImage(image);
+    state.axes = detectAxes(image);
+    state.axisEntries = loadEntries(state.hash, state.axes);
+    renderAxesPanel();
     analyze();
     $('stage').focus();
 }
@@ -523,6 +608,10 @@ function wireControls() {
     $('fit-run').addEventListener('click', runFit);
     $('fit-stop').addEventListener('click', stopFit);
     $('fit-edit').addEventListener('click', () => setEditing(!state.editing));
+    $('show-axes').addEventListener('change', e => {
+        state.showAxes = e.target.checked;
+        refreshAxisMarks();
+    });
     $('show-dots').addEventListener('change', e => {
         state.showDots = e.target.checked;
         refreshMarks();

@@ -10,7 +10,8 @@ const FIT_MARGIN = 12; // CSS px left around the image when fitting
 const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and still count as a click
 const MARK_LINE = 1.5; // CSS px, dot outline width
 const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
-export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', selected: '#f0a000' };
+export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', selected: '#f0a000', axis: '#e07800' };
+const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axis
 
 /**
  * @param {object} opts
@@ -30,6 +31,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     let originY = 0; // image px at the top edge of the view
     let drag = null;
     let marks = null; // { dots: [{ x, y, flags }], radius, selected }
+    let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos] }]
 
     function draw() {
         const dpr = window.devicePixelRatio || 1;
@@ -46,8 +48,42 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         ctx.imageSmoothingEnabled = scale * dpr < 1;
         ctx.setTransform(scale * dpr, 0, 0, scale * dpr, -originX * scale * dpr, -originY * scale * dpr);
         ctx.drawImage(source, 0, 0);
+        if (axisMarks)
+            drawAxisMarks();
         if (marks)
             drawMarks();
+    }
+
+    // detected axis lines and tick positions, in image coordinates
+    function drawAxisMarks() {
+        ctx.lineWidth = MARK_LINE / scale;
+        ctx.strokeStyle = MARK_COLORS.axis;
+        const m = AXIS_TICK_MARK / scale;
+        ctx.beginPath();
+        for (const a of axisMarks) {
+            if (a.pos !== null) {
+                if (a.dir === 'h') {
+                    ctx.moveTo(a.from, a.pos);
+                    ctx.lineTo(a.to, a.pos);
+                }
+                else {
+                    ctx.moveTo(a.pos, a.from);
+                    ctx.lineTo(a.pos, a.to);
+                }
+            }
+            for (const t of a.ticks) {
+                const at = a.pos ?? a.at;
+                if (a.dir === 'h') {
+                    ctx.moveTo(t, at - m);
+                    ctx.lineTo(t, at + m);
+                }
+                else {
+                    ctx.moveTo(at - m, t);
+                    ctx.lineTo(at + m, t);
+                }
+            }
+        }
+        ctx.stroke();
     }
 
     // dot outlines and centers in image coordinates, line widths constant in CSS px
@@ -175,6 +211,11 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
                 fit();
         },
         fit,
+        /** Axes to draw: [{ dir, pos (null: no line), at (where to mark ticks then), from, to, ticks }], or null. */
+        setAxisMarks(a) {
+            axisMarks = a;
+            draw();
+        },
         /** Dots to outline over the image, or null. */
         setMarks(m) {
             marks = m;

@@ -27,12 +27,33 @@ import { createDotModel, solidImage, toRgba, gaussianKernel, blurRect } from './
  */
 
 /**
+ * @typedef {object} AxisSpec
+ * @property {number} pos        px: y of an x axis, x of a y axis (line center)
+ * @property {number} from       px, start of the line along the axis
+ * @property {number} to         px, end
+ * @property {number[]} ticks    px positions along the axis
+ */
+
+/**
+ * @typedef {object} AxesSpec
+ * @property {AxisSpec} [x]
+ * @property {AxisSpec} [y]
+ * @property {number} [width]       px, line and tick stroke width (default 2)
+ * @property {number} [tickLength]  px, outward (below an x axis, left of a y axis; default 8)
+ * @property {number[]} [color]     default [0, 0, 0]
+ * @property {number[]} [label]     [w, h] px of a solid block standing in for each tick's label (default [14, 10]);
+ *                                  centered on the tick, LABEL_GAP px beyond its end
+ */
+
+/**
  * @typedef {object} GraphSpec
  * @property {number} width
  * @property {number} height
  * @property {number[]} background
  * @property {FamilySpec[]} families  composited in order, each over the result of the previous ones
  * @property {LineSpec[]} [lines]     drawn over all dots
+ * @property {LineSpec[]} [gridlines] drawn under the dots
+ * @property {AxesSpec} [axes]        axis lines, ticks and label blocks, drawn over everything
  * @property {number} [scale]         native resolution is 1/scale of the final size (default 1)
  * @property {number} [blur]          px, Gaussian sd applied after upsampling (default 0)
  * @property {number} [noise]         sd of Gaussian noise added before rounding, 0–255 units (default 0)
@@ -158,6 +179,65 @@ function drawLine(image, line) {
     }
 }
 
+// axis lines and tick strokes as polylines (final px)
+function axisLines(axes) {
+    if (!axes)
+        return [];
+    const width = axes.width ?? 2;
+    const len = axes.tickLength ?? 8;
+    const color = axes.color ?? [0, 0, 0];
+    const out = [];
+    if (axes.x) {
+        const { pos, from, to, ticks } = axes.x;
+        out.push({ points: [[from, pos], [to, pos]], width, color });
+        for (const t of ticks)
+            out.push({ points: [[t, pos], [t, pos + width / 2 + len]], width, color });
+    }
+    if (axes.y) {
+        const { pos, from, to, ticks } = axes.y;
+        out.push({ points: [[pos, from], [pos, to]], width, color });
+        for (const t of ticks)
+            out.push({ points: [[pos, t], [pos - width / 2 - len, t]], width, color });
+    }
+    return out;
+}
+
+// px between a tick's end and its label block: real labels leave a gap (at 4 px the round cap and blur joined the
+// tick to its block)
+const LABEL_GAP = 6;
+
+/** Label blocks [x0, y0, x1, y1) in final px: centered on each tick, beyond its end. */
+export function labelBlocks(axes) {
+    if (!axes)
+        return [];
+    const width = axes.width ?? 2;
+    const len = axes.tickLength ?? 8;
+    const [w, h] = axes.label ?? [14, 10];
+    const out = [];
+    if (axes.x) {
+        for (const t of axes.x.ticks)
+            out.push([t - w / 2, axes.x.pos + width / 2 + len + LABEL_GAP, t + w / 2, axes.x.pos + width / 2 + len + LABEL_GAP + h]);
+    }
+    if (axes.y) {
+        for (const t of axes.y.ticks)
+            out.push([axes.y.pos - width / 2 - len - LABEL_GAP - w, t - h / 2, axes.y.pos - width / 2 - len - LABEL_GAP, t + h / 2]);
+    }
+    return out;
+}
+
+// solid rectangle with exact area coverage at its edges
+function fillRect(image, [x0, y0, x1, y1], color) {
+    for (let y = Math.max(0, Math.floor(y0)); y < Math.min(image.height, Math.ceil(y1)); y++) {
+        const cy = Math.min(y + 1, y1) - Math.max(y, y0);
+        for (let x = Math.max(0, Math.floor(x0)); x < Math.min(image.width, Math.ceil(x1)); x++) {
+            const m = cy * (Math.min(x + 1, x1) - Math.max(x, x0));
+            const p = 3 * (y * image.width + x);
+            for (let ch = 0; ch < 3; ch++)
+                image.data[p + ch] += (color[ch] - image.data[p + ch]) * m;
+        }
+    }
+}
+
 // Bilinear resampling to a new size, pixel centers aligned: destination center (i + ½) samples the source at
 // (i + ½)/scale − ½ in source pixel indices, as browsers and most image tools do.
 function resample(src, width, height) {
@@ -200,6 +280,9 @@ export function synthGraph(spec) {
     const sx = nw / spec.width;
     const sy = nh / spec.height;
     let im = solidImage(nw, nh, spec.background);
+    const native = line => ({ ...line, points: line.points.map(([x, y]) => [x * sx, y * sy]), width: line.width * sx, dash: line.dash?.map(v => v * sx) });
+    for (const line of spec.gridlines ?? [])
+        drawLine(im, native(line));
     const truth = [];
     spec.families.forEach((f, k) => {
         const model = createDotModel(im, { color: f.color, alpha: f.alpha, radius: f.radius * sx });
@@ -209,7 +292,11 @@ export function synthGraph(spec) {
             truth.push({ x: p.x, y: p.y, family: k });
     });
     for (const line of spec.lines ?? [])
-        drawLine(im, { ...line, points: line.points.map(([x, y]) => [x * sx, y * sy]), width: line.width * sx, dash: line.dash?.map(v => v * sx) });
+        drawLine(im, native(line));
+    for (const line of axisLines(spec.axes))
+        drawLine(im, native(line));
+    for (const [x0, y0, x1, y1] of labelBlocks(spec.axes))
+        fillRect(im, [x0 * sx, y0 * sy, x1 * sx, y1 * sy], spec.axes.color ?? [0, 0, 0]);
     if (nw !== spec.width || nh !== spec.height)
         im = resample(im, spec.width, spec.height);
     if (spec.blur > 0) {

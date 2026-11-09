@@ -33,9 +33,10 @@ index.html              layout, loads src/ui/main.js as a module
 styles.css
 src/core/               pure algorithms: image.js (hash, pixel access), render.js (forward model), style.js (dot
                         style), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
-                        dots), metrics.js (matching against ground truth), fit.js (the fit), rng.js;
-                        planned: axes.js
-src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot marks), overlays.js, input.js
+                        dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
+                        ticks, labels, scales), rng.js
+src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
+                        axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
 src/fit-worker.js       module Web Worker wrapping the fit
 testgraphs/             test images, index.json, ground truth in truth/<name>.json: LOCAL ONLY, git ignores all

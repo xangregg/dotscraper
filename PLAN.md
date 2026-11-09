@@ -205,7 +205,8 @@ as poorly determined rather than silently placed or dropped.
 1. ~~Test image licensing.~~ **Decided:** `testgraphs/` stays local and git-ignored (all but its README), with
    everything derived from the images (ground truth, crops, `index.json`). The deployed site will offer synthetic
    examples instead, and a benchmark on the real images runs only on machines that have them.
-2. **OCR for tick labels.** tesseract.js would be a runtime dependency (large, with a WASM file); a small
+2. **OCR for tick labels.** Still open after phase 4: label crops beside the value boxes make typing quick.
+   tesseract.js would be a runtime dependency (large, with a WASM file); a small
    recognizer for digits, minus signs, decimal points and commas (single font per image, so glyphs can be
    clustered and the user labels a cluster once) would not. Start with typed values; decide after phase 4.
 3. ~~Compositing space.~~ **Decided: sRGB values** (phase 0 measurements below). Recheck against canvas renders in
@@ -239,7 +240,7 @@ src/core/render.js      exact pixel coverage of a disc and ring, blur, compositi
 src/core/style.js       background, family candidates, overlap levels → α, c, level table, count image D, radius, blur
 src/core/layers.js      pixel classes, distance transform and morphology, thin marks, mask (later: background field)
 src/core/fit.js         objective, Hough candidates, compass refinement, births/deaths/merges, radius refit, assess
-src/core/axes.js        plot area, axis lines, ticks, gridlines, scale fitting, pixel ↔ data
+src/core/axes.js        lines, ticks, labels, gridline ticks, scale fitting, pixel ↔ data
 src/core/synth.js       synthetic graphs with known dots
 src/core/metrics.js     assignment, precision/recall, RMSE
 src/core/rng.js         seeded random numbers
@@ -454,9 +455,55 @@ What the fit needed, found on the way:
   given λ, but it is not reported either.
 
 ### Phase 4 — Scales
-- [ ] `axes.js`: plot area, axis lines, ticks, gridlines; typed tick values with guesses; linear, log and
-      categorical scales; pixel ↔ data. Tests on synthetic axes and the test images' axes.
-- [ ] Axes step in the UI; data coordinates in the table and export; pixel resolution in the fine print.
+- [x] `axes.js`: background colors (any color on ≥ 5% of the image, so panels count), gray ink, long thin straight
+      lines (`findLines`), ticks along dark lines (`findTicks`: dark-cored perpendicular strokes, the majority side,
+      corner strokes kept only with a label), label words (`findLabels`), gridlines standing in for ticks with a
+      baseline in step and labels at the lines' common end, and `fitScale`, `toData`, `toPixel`, `resolution`,
+      `guessValues` (linear and log). Tests: synthetic L axes (lines and ticks within 0.2 px, label boxes),
+      gridline-only y axis with a baseline, scale math, guesses, and the test images (regressions below).
+- [x] Axes panel (`src/ui/axes-panel.js`): per axis a type menu (linear, log, categories), a row per tick with its
+      label crop, a value box with guesses after two values, the pixel position, and a summary (data units per px,
+      typed ticks' max distance from the fitted scale, flagged beyond 1 px); values remembered per image (pixel
+      hash) in localStorage; axis and tick marks drawn on the view. Data coordinates in the Pixel readout, the dot
+      hover and the CSV (`x`, `y`, `se_noise_x`, `se_noise_y`).
+- [ ] OCR of tick labels (open question 2) is still deferred; the label crops make typing quick.
+
+**Measured (phase 4).** Detection takes 5–125 ms.
+
+| image | x axis | y axis |
+|---|---|---|
+| dog-ages | 6 ticks, 88.94 px apart, labeled | 6 ticks, 147.61 px apart, labeled |
+| dog-ages-actual-size | 6 ticks, 29.63 px | 6 ticks, 49.20 px |
+| fibers | 4 ticks | 7 ticks |
+| pathogen | 5 ticks | 8 ticks, log (64 … 1, and a 0 row), uneven |
+| economist | 11 ticks, labels between them (left unassigned) | no line: 3 gridlines plus the zero baseline, labels at their right ends |
+| Laser | 3 category ticks (rotated labels only partly boxed) | 6 ticks, including the zero line crossing the axis |
+| cantons | 4 category ticks | 5 ticks |
+| violin | 4 category ticks | 5 ticks (frame) |
+| beeswarm-boxplot | none (no bottom axis line) | 9 ticks (top label cut off by the image edge) |
+| nicest language | 6 ticks (axis inside a beige panel) | none (no y scale) |
+
+What the test images taught:
+
+- **Thin antialiased axes are light on average.** cantons, violin and beeswarm-boxplot axes averaged lighter than
+  the dark threshold; a line's luminance is now its darkest row's. Ticks may be any gray but need a dark core:
+  pathogen's light gridline stubs inside the frame were taken for ticks.
+- **Words, not glyphs:** labels are merged into words before being assigned to ticks. Glyphs merge only if most
+  of their heights overlap and their heights are within 2.5×. Ink touching the image border never joins a label
+  (pathogen: a 1 px border line chained all x labels and the title into one box). A word must sit in the nearest
+  column or row of labels (rotated axis titles in cantons and pathogen).
+- **Gridline labels share an end:** economist's zero line took a dot rim at its left end until each gridline
+  took its label from the end most gridlines use.
+- **Tick positions are only as good as the renderer's pixel snapping.** dog-ages-actual-size's ticks are 29.3–30.0
+  px apart, so a scale from two typed ticks can be off by a few tenths of a px (enlarged dog-ages: 0.59 px with 0,
+  3 and 15 typed). Typing every tick averages it out; the summary shows the residual.
+- **The dots' standard errors understate the real error.** Fitted separately and calibrated from their own
+  ticks, dog-ages and dog-ages-actual-size agree on all 95 dots within 0.011 years RMS in x and 0.052 in y
+  (0–100). That's about 0.1 native px, against noise-only standard errors of 0.0005 and 0.0018 (big) and 0.0027
+  and 0.011 (native). The app labels them "noise only" and says the real error is a few tenths of a px.
+- **Native or enlarged dog-ages:** the native image fits in 2.4 s against 8.2 s, and its ticks are cleaner, but it
+  shows only 2 overlap levels against 5. So α is less certain (0.332 against 0.310) and more dots are flagged
+  deep (44 against 15). In data units the results agree to the precision above, so neither is more accurate.
 
 ### Phase 5 — Generalize to the other test images
 - [ ] Several families and drawing order (economist, Laser-Asyllable, cantons, nicest-language).
