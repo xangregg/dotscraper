@@ -13,7 +13,7 @@ function prepare(spec) {
     const { image, truth } = synthGraph(spec);
     const est = estimateStyle(image);
     const layers = buildMask(image, est);
-    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D };
+    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
     return { image, truth, est, layers, input };
 }
 
@@ -88,19 +88,22 @@ test('a dot mostly under an opaque line is flagged hidden; open dots are not fla
         assert.ok(d.seX > 0 && d.seX < 0.5 && d.seY > 0 && d.seY < 0.5, `se ${d.seX}, ${d.seY}`);
 });
 
+// separate dots, enough for a family that never overlaps (an opaque one: at least 4 whole dots)
+const SEPARATE = [{ x: 30, y: 30 }, { x: 190, y: 30 }, { x: 30, y: 150 }, { x: 190, y: 150 }, { x: 110, y: 30 }];
+
 test('fitDots refuses to run without a radius', () => {
-    const { input } = prepare(spec([{ x: 50, y: 50 }]));
+    const { input } = prepare(spec(SEPARATE));
     assert.throws(() => fitDots({ ...input, style: { ...input.style, radius: null } }), /radius/);
 });
 
 test('refitNear: an added dot near another settles where the image has one; a removed one stays removed', () => {
-    const points = [{ x: 60, y: 60 }, { x: 140, y: 100 }];
+    const points = [{ x: 60, y: 90 }, { x: 140, y: 100 }, ...SEPARATE];
     const { input } = prepare(spec(points));
     // the user clicks 4 px from the true center of a dot the fit "missed"
-    const res = refitNear(input, [{ x: 60, y: 60 }, { x: 143, y: 97 }], 143, 97);
+    const res = refitNear(input, [...points.filter(p => p.x !== 140), { x: 143, y: 97 }], 143, 97);
     const moved = res.dots.find(d => Math.hypot(d.x - 140, d.y - 100) < 1);
     assert.ok(moved, `refined to ${JSON.stringify(res.dots)}`);
-    assert.equal(res.dots.length, 2);
+    assert.equal(res.dots.length, points.length);
 });
 
 test('regression: a missing dot whose neighbors drifted into its place is born (births re-settle neighbors)', () => {

@@ -150,3 +150,25 @@ test('dog-ages: curve, dashes and text masked; dots and background not', { skip:
     }
     assert.ok(n > 3000, `${n} line pixels checked`);
 });
+
+test('nearestTransform finds a nearest mask pixel (same distance as brute force)', async () => {
+    const { nearestTransform } = await import('../src/core/layers.js');
+    const rng = createRng(12);
+    for (const [w, h, density] of [[23, 17, 0.04], [9, 31, 0.2], [6, 6, 0]]) {
+        const mask = new Uint8Array(w * h);
+        for (let p = 0; p < w * h; p++)
+            mask[p] = rng.uniform() < density ? 1 : 0;
+        const near = nearestTransform(mask, w, h);
+        const d2 = distanceTransform(mask, w, h);
+        for (let p = 0; p < w * h; p++) {
+            if (d2[p] === Infinity) {
+                assert.equal(near[p], -1);
+                continue;
+            }
+            assert.equal(mask[near[p]], 1);
+            const dx = near[p] % w - p % w;
+            const dy = Math.floor(near[p] / w) - Math.floor(p / w);
+            assert.equal(dx * dx + dy * dy, d2[p]);
+        }
+    }
+});

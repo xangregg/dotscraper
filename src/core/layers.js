@@ -10,7 +10,8 @@ export const CLASS_BACKGROUND = 0;
 export const CLASS_FAMILY = 1;
 export const CLASS_OTHER = 2;
 
-// Opaque marks in the family's full color (the economist trend lines) are saturated: within a few units of c.
+// Opaque marks in the family's full color (the economist trend lines) are saturated: within a few units of c. For
+// an opaque family every pixel of its color is a candidate, and the opening and length tests alone decide.
 // Translucent dots get that close only in deep stacks (α 0.3: about 10 dots), and such piles are compact, while a
 // line is long and narrower than a dot. A "deep" pixel is saturated and beyond the measured levels; deep pixels
 // that an opening removes, in components long enough to be lines, are thin marks.
@@ -22,6 +23,10 @@ const DEEP_EXTRA_LEVELS = 2; // deep pixels are also at least this many levels b
 const OPEN_RADIUS_FRACTION = 0.75; // × dot radius: the opening removes marks narrower than 1.5 radii (economist
                                    // trend lines are ~9 px wide, r 8.4)
 const THIN_MIN_LENGTH_RADII = 3; // × dot radius, the larger side of a thin component's bounding box
+// The opening also shaves one-pixel slivers off jagged rims, and where opaque dots touch in a chain the slivers
+// join into long components (synthetic swarm: 8 of 84 dots masked). Lines are at least 2 px wide: a second, 1 px
+// opening of the candidates removes the slivers.
+const SLIVER_OPENING = 1; // px
 const MASK_DILATE_BASE = 1; // px
 const MASK_DILATE_BLURS = 2; // px per px of edge blur
 // Stand-in for an infinite distance in the transform: finite so the parabola intersections stay exact (q² ≤ ~10⁷
@@ -83,6 +88,79 @@ export function distanceTransform(mask, width, height) {
         dt1(width);
         for (let x = 0; x < width; x++)
             out[y * width + x] = d[x] >= FAR / 2 ? Infinity : d[x];
+    }
+    return out;
+}
+
+/**
+ * Index of the nearest pixel where mask is 1 (Euclidean; −1 if there is none): the distance transform's parabola
+ * envelope, keeping which parabola wins. O(pixels).
+ *
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @returns {Int32Array}
+ */
+export function nearestTransform(mask, width, height) {
+    const n = Math.max(width, height);
+    const f = new Float64Array(n);
+    const v = new Int32Array(n);
+    const z = new Float64Array(n + 1);
+    const colD = new Float64Array(width * height);
+    const colRow = new Int32Array(width * height).fill(-1);
+    const out = new Int32Array(width * height).fill(-1);
+    const arg = new Int32Array(n);
+
+    // per line: for each q, the p minimizing (q − p)² + f[p]; writes arg[q] and returns nothing (f FAR = none)
+    function nearest1(len) {
+        let k = 0;
+        v[0] = 0;
+        z[0] = -Infinity;
+        z[1] = Infinity;
+        for (let q = 1; q < len; q++) {
+            let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+            while (s <= z[k]) {
+                k--;
+                s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+            }
+            k++;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = Infinity;
+        }
+        k = 0;
+        for (let q = 0; q < len; q++) {
+            while (z[k + 1] < q)
+                k++;
+            arg[q] = v[k];
+        }
+    }
+
+    for (let x = 0; x < width; x++) {
+        for (let y = 0; y < height; y++)
+            f[y] = mask[y * width + x] ? 0 : FAR;
+        nearest1(height);
+        for (let y = 0; y < height; y++) {
+            const r = arg[y];
+            if (mask[r * width + x]) {
+                colRow[y * width + x] = r;
+                colD[y * width + x] = (y - r) ** 2;
+            }
+            else {
+                colD[y * width + x] = FAR;
+            }
+        }
+    }
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++)
+            f[x] = colD[y * width + x];
+        nearest1(width);
+        for (let x = 0; x < width; x++) {
+            const c = arg[x];
+            const r = colRow[y * width + c];
+            if (r >= 0)
+                out[y * width + x] = r * width + c;
+        }
     }
     return out;
 }
@@ -195,16 +273,29 @@ export function buildMask(image, estimate, opts = {}) {
         const beyond = (estimate.familyMeasure?.beyond ?? []).filter(L => dist(L.color, style.color) <= ANCHOR_MAX_OFFSET);
         const anchor = beyond.length ? beyond.reduce((a, b) => (dist(a.color, style.color) <= dist(b.color, style.color) ? a : b)).color : style.color;
         const d = image.data;
+        const opaque = style.alpha >= 1;
         for (let p = 0; p < n; p++) {
+            // opaque families: every pixel of the family's color is "deep" (Laser's bar outlines are drawn in the
+            // dot colors, about 6 px wide against dots 11 px across)
+            if (opaque) {
+                deep[p] = classes[p] === CLASS_FAMILY && D[p] > 0.5 ? 1 : 0;
+                continue;
+            }
             if (classes[p] !== CLASS_FAMILY || D[p] < limit)
                 continue;
             const e = Math.hypot(d[4 * p] - anchor[0], d[4 * p + 1] - anchor[1], d[4 * p + 2] - anchor[2]);
             deep[p] = e <= SATURATION_TOL ? 1 : 0;
         }
-        const kept = opening(deep, width, height, OPEN_RADIUS_FRACTION * style.radius);
-        const candidate = new Uint8Array(n);
+        // Other marks may hide the rest of a dot: open the family's pixels together with them, so a dot cut in two by
+        // a line over it stays whole (synthetic swarm: half-discs along the median lines joined into "thin" marks)
+        const withOther = new Uint8Array(n);
         for (let p = 0; p < n; p++)
-            candidate[p] = deep[p] && !kept[p] ? 1 : 0;
+            withOther[p] = deep[p] || classes[p] === CLASS_OTHER ? 1 : 0;
+        const kept = opening(withOther, width, height, OPEN_RADIUS_FRACTION * style.radius);
+        const raw = new Uint8Array(n);
+        for (let p = 0; p < n; p++)
+            raw[p] = deep[p] && !kept[p] ? 1 : 0;
+        const candidate = opening(raw, width, height, SLIVER_OPENING);
         for (const comp of components8(candidate, width, height)) {
             if (Math.max(comp.x1 - comp.x0, comp.y1 - comp.y0) + 1 < THIN_MIN_LENGTH_RADII * style.radius)
                 continue;

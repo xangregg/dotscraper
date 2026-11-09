@@ -93,7 +93,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         marks.dots.forEach((d, i) => {
             ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected : (d.flags?.length ? MARK_COLORS.flagged : MARK_COLORS.ok);
             ctx.beginPath();
-            ctx.arc(d.x, d.y, marks.radius, 0, 2 * Math.PI);
+            ctx.arc(d.x, d.y, d.r ?? marks.radius, 0, 2 * Math.PI);
             ctx.moveTo(d.x - c, d.y);
             ctx.lineTo(d.x + c, d.y);
             ctx.moveTo(d.x, d.y - c);

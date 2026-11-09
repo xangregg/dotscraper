@@ -116,11 +116,12 @@ test('economist: red and blue families, red first, its trend line beyond its lev
     near(est.style.radius, 8.37, 0.1, 'red radius');
 });
 
-test('regression: translucent dots that never overlap give one level, a two-entry table and a radius', () => {
-    // sparse preset seed 3 has no overlapping dots; its table once repeated the level, so every dot read as 13 deep
+test('regression: translucent dots that never overlap form an opaque family with a two-entry table and a radius', () => {
+    // sparse preset seed 3 has no overlapping dots: α can't be measured. Its table once repeated the level, so every
+    // dot read as 13 deep; then its color (5.9% of the image) was taken for a background and the family was lost.
     const est = estimateStyle(synthGraph(SYNTH_PRESETS.sparse(3)).image);
+    assert.equal(est.familyMeasure.kind, 'opaque');
     assert.equal(est.style.measuredLevels, 1);
     assert.equal(est.style.levels.length, 2);
     near(est.style.radius, 10, 0.05, 'radius');
-    assert.ok(est.notes.some(n => n.includes('one level')));
 });

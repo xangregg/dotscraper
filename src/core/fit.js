@@ -48,6 +48,21 @@ const BIRTH_TABU_RADII = 0.5; // × r: failed birth sites are not retried within
 // Their moves are limited so a snapshot of the neighborhood can undo a rejected birth.
 const BIRTH_NEIGHBOR_MOVE_RADII = 0.5; // × r, max distance a neighbor may move while a birth is judged
 const MAX_BIRTHS_PER_ROUND = 200;
+// An opaque dot less visible than this is supported by too little of itself to report: faint antialiased rims of
+// another family's dots made 2–12% visible phantoms (synthetic swarm). Not applied to translucent families, whose
+// rims are read along their own color line: dots under the curve preset's black line, under 15% visible but
+// correctly found from their rims, were lost when it was.
+const MIN_VISIBLE_OPAQUE = 0.15;
+// An opaque dot's visible interior must be filled: text in a dot family's color (Laser: black labels, "0", "O",
+// "S") explained enough of a glyph's ring for a dot to pay for itself, but glyphs are hollow.
+const FILL_RADII = 0.75; // × r, the interior checked
+const MIN_FILL_OPAQUE = 0.85; // share of its visible pixels at least FILL_LEVEL of the dot's color
+// a dot's interior reads near 1; another family's dot that is a blend of this one's color with the background
+// reads part way (nicest language: pink is red at 0.47 on beige, and red dots were fitted on pink ones)
+const FILL_LEVEL = 0.75;
+// The check needs this many visible interior pixels; a share of the interior was too lenient (nicest language:
+// phantom gray dots on its antialiased title were 22–34% visible and skipped the check)
+const FILL_MIN_SEEN = 8; // px
 const MERGE_RADII = 0.35; // × r: dots closer than this are tried as one
 const RADIUS_SEARCH = 1; // px either side of the estimated radius
 const RADIUS_TOL = 0.01; // px
@@ -182,16 +197,19 @@ function blurPlane(src, width, height, sigma) {
  * @param {object} input.style   render style with levels (from style.estimateStyle, overrides applied)
  * @param {{B: number[], u: number[]}} input.line  the family's color line
  * @param {Uint8Array} input.mask  1 = ignore
+ * @param {Float32Array} [input.imgT]  the image's values to compare, if not its projection on the line (opaque
+ *                                     families: coverage against the local background, in color units)
  */
 export function createFit(input) {
     const { image, line, mask } = input;
     const { width, height } = image;
     const n = width * height;
     const { B, u } = line;
-    const imgT = new Float32Array(n);
+    const imgT = input.imgT ? Float32Array.from(input.imgT) : new Float32Array(n);
     const weight = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
-        imgT[p] = (B[0] - image.data[4 * p]) * u[0] + (B[1] - image.data[4 * p + 1]) * u[1] + (B[2] - image.data[4 * p + 2]) * u[2];
+        if (!input.imgT)
+            imgT[p] = (B[0] - image.data[4 * p]) * u[0] + (B[1] - image.data[4 * p + 1]) * u[1] + (B[2] - image.data[4 * p + 2]) * u[2];
         weight[p] = mask[p] ? 0 : 1;
     }
     const background = solidImage(width, height, B);
@@ -200,6 +218,9 @@ export function createFit(input) {
     // the fit renders along the color line only (one value per pixel); modelImage() renders RGB for display
     const lineStyle = st => ({ ...st, project: line });
     let model = createDotModel(background, lineStyle(style));
+    const opaque = style.alpha >= 1;
+    const minVisible = opaque ? MIN_VISIBLE_OPAQUE : 0;
+    const fillT = FILL_LEVEL * Math.hypot(B[0] - style.color[0], B[1] - style.color[1], B[2] - style.color[2]);
     const pos = new Map(); // id → { x, y }
 
     function modelT(p) {
@@ -307,6 +328,44 @@ export function createFit(input) {
         return MAX_SWEEPS;
     }
 
+    // share of the dot's disc the fit can see (unmasked)
+    function visibleFraction(x, y) {
+        const r = style.radius;
+        let inDisc = 0;
+        let seen = 0;
+        for (let yy = Math.max(0, Math.floor(y - r)); yy < Math.min(height, Math.ceil(y + r)); yy++) {
+            for (let xx = Math.max(0, Math.floor(x - r)); xx < Math.min(width, Math.ceil(x + r)); xx++) {
+                if ((xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 <= r * r) {
+                    inDisc++;
+                    seen += weight[yy * width + xx];
+                }
+            }
+        }
+        return inDisc ? seen / inDisc : 0;
+    }
+
+    // opaque dots only: is the visible interior mostly the dot's color? (true when too little of it is visible)
+    function filled(x, y) {
+        if (!opaque)
+            return true;
+        const rf = FILL_RADII * style.radius;
+        let seen = 0;
+        let on = 0;
+        for (let yy = Math.max(0, Math.floor(y - rf)); yy < Math.min(height, Math.ceil(y + rf)); yy++) {
+            for (let xx = Math.max(0, Math.floor(x - rf)); xx < Math.min(width, Math.ceil(x + rf)); xx++) {
+                if ((xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 > rf * rf)
+                    continue;
+                const p = yy * width + xx;
+                if (!weight[p])
+                    continue;
+                seen++;
+                if (imgT[p] >= fillT)
+                    on++;
+            }
+        }
+        return seen < FILL_MIN_SEEN || on >= MIN_FILL_OPAQUE * seen;
+    }
+
     function near(x, y, d) {
         return [...pos].filter(([, p]) => Math.hypot(p.x - x, p.y - y) <= d).map(([id]) => id);
     }
@@ -317,11 +376,12 @@ export function createFit(input) {
         return without - withDot;
     }
 
-    // dots whose removal costs less than λ go
+    // dots whose removal costs less than λ go, and dots too hidden to report
     function deaths() {
         let removed = 0;
         for (const id of [...pos.keys()]) {
-            if (removalGain(id) < lambda) {
+            const p = pos.get(id);
+            if (visibleFraction(p.x, p.y) < minVisible || !filled(p.x, p.y) || removalGain(id) < lambda) {
                 remove(id);
                 removed++;
             }
@@ -480,7 +540,8 @@ export function createFit(input) {
             for (const nid of neighbors)
                 refineDot(nid, RESWEEP_FIRST_STEP, slack);
             refineDot(id, RESWEEP_FIRST_STEP, slack);
-            if (before - loss(scoreRect) > lambda) {
+            const born = pos.get(id);
+            if (before - loss(scoreRect) > lambda && visibleFraction(born.x, born.y) >= minVisible && filled(born.x, born.y)) {
                 added++;
                 fillResidual(scoreRect);
                 fillMeans(grow(scoreRect, h));
@@ -594,23 +655,11 @@ export function createFit(input) {
                 model.restore(snap);
                 curv.push((Lp + Lm - 2 * L0) / UNCERTAINTY_STEP ** 2);
             }
-            // visible fraction of the disc
-            let inDisc = 0;
-            let seen = 0;
-            const r = style.radius;
-            for (let y = Math.max(0, Math.floor(p.y - r)); y < Math.min(height, Math.ceil(p.y + r)); y++) {
-                for (let x = Math.max(0, Math.floor(p.x - r)); x < Math.min(width, Math.ceil(p.x + r)); x++) {
-                    if ((x + 0.5 - p.x) ** 2 + (y + 0.5 - p.y) ** 2 <= r * r) {
-                        inDisc++;
-                        seen += weight[y * width + x];
-                    }
-                }
-            }
+            const visible = visibleFraction(p.x, p.y);
             const cp = Math.min(height - 1, Math.max(0, Math.floor(p.y))) * width + Math.min(width - 1, Math.max(0, Math.floor(p.x)));
             const T = model.transmittance[cp];
             const depth = q > 0 && T > 0 ? Math.log(T) / Math.log(q) : 1;
             const margin = removalGain(id) / lambda;
-            const visible = inDisc ? seen / inDisc : 0;
             const flags = [];
             if (margin < FLAG_MARGIN)
                 flags.push('weak');

@@ -506,10 +506,76 @@ What the test images taught:
   deep (44 against 15). In data units the results agree to the precision above, so neither is more accurate.
 
 ### Phase 5 — Generalize to the other test images
-- [ ] Several families and drawing order (economist, Laser-Asyllable, cantons, nicest-language).
-- [ ] Opaque dots with occlusion (the beeswarms); packing initializer.
-- [ ] Outlines and per-dot fill color (pathogen, beeswarm-boxplot outliers).
-- [ ] Varying background and translucent overlays (fibers' CI band, violin shading, pathogen's band).
+Done in milestones, each stopped for review.
+
+**Milestone 1: opaque dots and several families.**
+
+- [x] Opaque families (`style.js`): color clusters (8-unit bins, 3×3×3 smoothing) rather than directions, since a
+      swarm's dots and the violin shading under them share a hue. Each cluster's pixels are read as coverage against
+      the background where they are: the nearest pixel of a background color or another family's color
+      (`nearestTransform`, a feature transform in `layers.js`). Its usual background is the most common color around
+      its thick parts. Radius comes from isolated dots, else distance-transform peaks; blur from isolated dots, else
+      the boundary profile. A cluster is a dot family if r ≥ 3, at least 3 filled centers see 75% of their edge, and
+      either the discs explain ≥ 35% of its pixels or it has ≥ 3 isolated whole dots. Translucent families come
+      first, then opaque ones; antialiased blends of a family with its background are not families.
+- [x] The fit for opaque families compares coverage (in color units) with the renderer's two-entry table at α = 1
+      (`createFit` takes `imgT`). An opaque dot must be at least 15% visible and have a filled interior (85% of its
+      visible interior at ≥ 0.75 of the dot color). Thin marks for opaque families: every family pixel is a
+      candidate, opened together with other marks (which may hide the rest of a dot), with 1 px slivers removed.
+- [x] Several families: each fitted in turn, the others masked (they are off its color line, or other colors).
+      The worker takes a list; the panel shows per-family counts and radii; dots carry their family and radius;
+      edits, the model and residual overlays act on the current family; the CSV gets a family column.
+- [x] Synthetic `beeswarm` preset (three opaque swarm columns, touching dots, median lines over them) and
+      family-aware benchmark rows.
+- [ ] Drawing order and compositing of several *translucent* families (economist: red over blue). Each is still
+      fitted alone, so mixed pixels are masked and many dots are flagged.
+
+**Measured (milestone 1).** Benchmark, 5 seeds each: sparse, dense and curve are unchanged (precision and recall
+1.000). beeswarm (3 opaque families, 84 dots) has precision and recall 1.000, count error 0, position RMSE
+0.028–0.033 px, 0.6–1.0 s. Real images, no ground truth:
+
+| image | families found | dots | time |
+|---|---|---|---|
+| cantons | 4 (r 6.36–6.39) | 60 + 60 + 60 + 59 = 239, none flagged | 2.4 s in the page |
+| Laser | 3 (r 5.69) | 32 + 23 + 25, 1 flagged | 7 s |
+| nicest language | 4 of 5: gray, pink, dark blue, red (r 8.4–8.5) | 69 + 61 + 10 + 9, 2 flagged | 7.7 s |
+| violin | 1 (r 7.57) | 734, 17 flagged | 19 s |
+| economist | 2 translucent | 110 + 85, 90 flagged (see above) | 4.8 s |
+| dog-ages | 1 translucent | 95, unchanged | 8.7 s |
+
+Not yet: nicest language's light blue dots (soft edges: only 2 centers see 75% of their edge; Pick finds them
+manually). beeswarm-boxplot and pathogen (outlined dots, milestone 2). fibers is found as an opaque family on its
+band (milestone 3 will treat the band).
+
+What the images taught, in the order it came up:
+
+- **Text shares dot colors.** Black and gray text (and its antialiasing) form color clusters, and round glyphs pass
+  a Hough vote. Text is told apart by hollowness (a filled-disc test on each center), thinness (thick parts for the
+  background, distance peaks ≥ 3 for the radius), coverage, and in the fit by the filled-interior test (Laser's
+  black family drew 118 dots on labels and bars before it, 23 after).
+- **Blends look like coverage.** The antialiased rim of one family's dots, or a lighter family that is a blend of
+  another with the background (nicest's pink is its red at 0.47 on beige), reads as partial coverage. Remedies:
+  blend clusters are not families; off-mix tolerance relative to the distance along the mix (12%, with a floor of
+  2.5× the family's color noise for compressed images); other families' colors away from the family are unknown;
+  dots must be filled at 0.75 of the color and at least 15% visible.
+- **A line over a dot is not its background.** Only background colors and other families' colors may be a local
+  background; otherwise a median line across a dot read as "no dot" and the dot failed the fill test.
+- **A cut dot is not a thin mark.** Opening the family together with other marks keeps half-discs on either side
+  of a line as dots.
+- **Thresholds are close on small families.** violin's coverage is 0.43–0.44 and nicest's red has 3 strong
+  centers. The family test is a heuristic tuned on these images; Pick remains the way to add a family it misses.
+- The test suite now takes about 20 s (the opaque fits, Laser among them).
+
+**Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers).
+
+- [ ] Outlined dots: a two-part template (ring and fill), and a fill that varies per dot.
+
+**Milestone 3: varying backgrounds and translucent overlays** (fibers' CI band, violin shading, pathogen's band).
+
+- [ ] Background field under the dots; translucent layers over them.
+
+**Milestone 4.**
+
 - [ ] Ground truth and benchmark rows for each test image.
 
 ### Phase 6 — Polish and deploy

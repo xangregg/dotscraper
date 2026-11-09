@@ -71,11 +71,13 @@ import { createDotModel, solidImage, toRgba, gaussianKernel, blurRect } from './
  * @param {object} opts
  * @param {number} opts.n
  * @param {number[]} opts.box               [x0, y0, x1, y1], px
- * @param {string} [opts.layout]            'uniform' (default), 'curve' or 'clusters'
+ * @param {string} [opts.layout]            'uniform' (default), 'curve', 'clusters' or 'beeswarm'
  * @param {function(number): number} [opts.curve]  u in [0, 1] → height fraction in [0, 1], 1 at the top
  * @param {number} [opts.curveSd]           scatter about the curve, fraction of the box height
  * @param {number} [opts.clusters]          number of clusters
  * @param {number} [opts.clusterSd]         px
+ * @param {number} [opts.radius]            beeswarm: dot radius, px
+ * @param {number} [opts.gap]               beeswarm: distance between centers as a multiple of 2r (default 1.05)
  * @param {number} [opts.ties]              fraction 0–1
  * @param {number} [opts.tieJitter]         px
  * @returns {{x: number, y: number}[]}
@@ -98,6 +100,29 @@ export function scatterPoints(rng, opts) {
         for (let i = 0; i < n; i++) {
             const u = rng.uniform();
             pts.push(clampPt(x0 + w * u, y1 - h * (f(u) + sd * rng.normal())));
+        }
+    }
+    else if (layout === 'beeswarm') {
+        // values (y) normal about the box's middle; each dot, in order of value, goes as close to the column's center
+        // as it can without coming nearer than gap·2r to a placed dot (the usual swarm plot construction)
+        const r = opts.radius ?? 8;
+        const d = 2 * r * (opts.gap ?? 1.05);
+        const cx = (x0 + x1) / 2;
+        const ys = Array.from({ length: n }, () => Math.min(y1, Math.max(y0, (y0 + y1) / 2 + 0.22 * h * rng.normal()))).sort((a, b) => a - b);
+        for (const y of ys) {
+            const near = pts.filter(p => Math.abs(p.y - y) < d);
+            let best = null;
+            for (let k = 0; k < 4 * n && best === null; k++) {
+                // candidate offsets 0, +s, −s, +2s, … where a dot just clears each neighbor
+                const cands = [0];
+                for (const p of near) {
+                    const dx = Math.sqrt(Math.max(0, d * d - (p.y - y) ** 2));
+                    cands.push(p.x - cx + dx, p.x - cx - dx);
+                }
+                cands.sort((a, b) => Math.abs(a) - Math.abs(b));
+                best = cands.find(c => near.every(p => Math.hypot(p.x - (cx + c), p.y - y) >= d - 1e-6)) ?? null;
+            }
+            pts.push({ x: cx + best, y });
         }
     }
     else if (layout === 'clusters') {
@@ -334,6 +359,23 @@ export const SYNTH_PRESETS = {
                 points: scatterPoints(rng, { n: 150, box: [30, 30, 470, 370], layout: 'clusters', clusters: 5, clusterSd: 35, ties: 0.08, tieJitter: 2 }),
             }],
         };
+    },
+    // opaque swarm columns in three colors (cantons-like), with a black median line over each; dots touch
+    beeswarm(seed) {
+        const rng = createRng(seed);
+        const r = 8;
+        const colors = [[197, 193, 194], [122, 148, 179], [131, 22, 60]];
+        const families = colors.map((color, k) => ({
+            color, alpha: 1, radius: r,
+            points: scatterPoints(rng, { n: 28, box: [60 + 140 * k, 40, 160 + 140 * k, 300], layout: 'beeswarm', radius: r, gap: 1.02 }),
+        }));
+        const lines = families.map(f => {
+            const ys = f.points.map(p => p.y).sort((a, b) => a - b);
+            const med = ys[Math.floor(ys.length / 2)];
+            const cx = f.points.reduce((t, p) => t + p.x, 0) / f.points.length;
+            return { points: [[cx - 40, med], [cx + 40, med]], width: 2, color: [0, 0, 0] };
+        });
+        return { width: 480, height: 340, background: [255, 255, 255], blur: 0.6, noise: 0.4, seed, families, lines };
     },
     curve(seed) {
         const rng = createRng(seed);

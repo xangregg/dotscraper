@@ -69,15 +69,47 @@ function currentStyle() {
     return { ...s, ...state.overrides };
 }
 
-/** The style the fitted dots were drawn with: the style in effect, with the fit's radius. */
-function fittedStyle() {
-    const style = currentStyle();
-    return style && state.fit ? { ...style, radius: state.fit.radius } : style;
+/** The family the panel shows: a candidate index, or −1 for a picked color. */
+function currentFamily() {
+    return state.seed ? -1 : state.family;
 }
 
-function fitInput() {
+/** One family's fit result, or null. */
+function familyFit(k = currentFamily()) {
+    return state.fit?.families.find(f => f.family === k) ?? null;
+}
+
+/** Set the fit from per-family results; every dot carries its family and radius. */
+function setFits(families, extra = {}) {
+    const dots = families.flatMap(f => f.dots.map(d => ({ ...d, family: f.family, r: f.radius })));
+    state.fit = { families, dots, ...extra };
+}
+
+/** The style the current family's fitted dots were drawn with: the style in effect, with the fit's radius. */
+function fittedStyle() {
     const style = currentStyle();
-    return { image: state.image, style, line: state.estimate.familyMeasure.line, mask: state.layers.mask, D: state.estimate.D };
+    const f = familyFit();
+    return style && f ? { ...style, radius: f.radius } : style;
+}
+
+/** What the fit needs for one family: the current one as shown (overrides applied), others as estimated. */
+function fitInputFor(k) {
+    if (k === currentFamily()) {
+        return {
+            image: state.image, style: currentStyle(), line: state.estimate.familyMeasure.line,
+            mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT,
+        };
+    }
+    const est = estimateStyle(state.image, { family: k, candidates: state.estimate.candidates });
+    const layers = buildMask(state.image, est);
+    return { image: state.image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
+}
+
+function familyLabel(k) {
+    if (k < 0)
+        return 'picked color';
+    const c = state.estimate?.candidates[k]?.seed;
+    return c ? `family ${k + 1} (${c.map(Math.round).join(', ')})` : `family ${k + 1}`;
 }
 
 /** The scales in effect: { x, y }, each from axisScale or null. */
@@ -97,14 +129,13 @@ function dataAt(x, y) {
     };
 }
 
-function nearestDot(x, y, within) {
-    if (!state.fit)
-        return -1;
+// index of the nearest dot within `within` × its radius, among `dots`
+function nearestDot(dots, x, y, within = 1) {
     let best = -1;
-    let bestD = within;
-    state.fit.dots.forEach((d, i) => {
+    let bestD = Infinity;
+    dots.forEach((d, i) => {
         const dd = Math.hypot(d.x - x, d.y - y);
-        if (dd <= bestD) {
+        if (dd <= within * d.r && dd < bestD) {
             bestD = dd;
             best = i;
         }
@@ -133,19 +164,20 @@ function showPixel(x, y) {
     }
     const pd = dataAt(x + 0.5, y + 0.5);
     $('pixel-data').textContent = pd.x === null && pd.y === null ? '–' : `${formatData(pd.x, pd.resX)}, ${formatData(pd.y, pd.resY)}`;
-    const i = state.fit ? nearestDot(x + 0.5, y + 0.5, state.fit.radius) : -1;
+    const i = state.fit ? nearestDot(state.fit.dots, x + 0.5, y + 0.5) : -1;
     if (i < 0) {
         $('pixel-dot').textContent = '–';
         return;
     }
     const d = state.fit.dots[i];
+    const fam = state.fit.families.length > 1 ? `${familyLabel(d.family)}: ` : '';
     // the curvature standard errors reflect pixel noise only; systematic error (resampled rims, model mismatch) is
     // several times larger (PLAN.md phase 4: two renderings of dog-ages differ by 3–6× these), so say so
     const se = d.seX === undefined ? '' : ` ± ${d.seX.toFixed(2)}, ${d.seY.toFixed(2)} (noise only)`;
     const extra = d.visible === undefined ? '' : `; ${Math.round(100 * d.visible)}% visible, depth ${d.depth}, margin ${d.margin.toFixed(0)}λ`;
     const dd = dataAt(d.x, d.y);
     const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
-    $('pixel-dot').textContent = `${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    $('pixel-dot').textContent = `${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
 }
 
 function showMessage(text, isError = false) {
@@ -163,16 +195,21 @@ function displayImage() {
         return maskOverlay(image, layers.mask);
     if (state.overlay === 'classes' && layers)
         return classOverlay(layers.classes, layers.thin, image.width, image.height);
-    if ((state.overlay === 'model' || state.overlay === 'residual') && state.fit) {
+    const fam = familyFit();
+    if ((state.overlay === 'model' || state.overlay === 'residual') && fam) {
+        // the current family only: each family is fitted, and compared, along its own color line
         const style = fittedStyle();
-        const bg = solidImage(image.width, image.height, estimate.background.color);
-        if (state.overlay === 'model')
-            return rgbOverlay(renderDots(bg, state.fit.dots, style));
         const line = estimate.familyMeasure.line;
-        const modelT = renderDots(bg, state.fit.dots, { ...style, project: line }).data;
-        const imgT = new Float32Array(image.width * image.height);
-        for (let p = 0; p < imgT.length; p++)
-            imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - image.data[4 * p + ch]) * line.u[ch], 0);
+        const bg = solidImage(image.width, image.height, line.B);
+        if (state.overlay === 'model')
+            return rgbOverlay(renderDots(bg, fam.dots, style));
+        const modelT = renderDots(bg, fam.dots, { ...style, project: line }).data;
+        let imgT = estimate.fitT;
+        if (!imgT) {
+            imgT = new Float32Array(image.width * image.height);
+            for (let p = 0; p < imgT.length; p++)
+                imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - image.data[4 * p + ch]) * line.u[ch], 0);
+        }
         return residualOverlay(imgT, modelT, layers.mask, image.width, image.height);
     }
     return image;
@@ -184,8 +221,8 @@ function refreshView(keepTransform) {
 }
 
 function refreshMarks(dots = state.fit?.dots) {
-    const style = fittedStyle();
-    view.setMarks(state.showDots && dots && style ? { dots, radius: state.fit?.radius ?? style.radius } : null);
+    const style = currentStyle();
+    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius } : null);
 }
 
 /** Estimate the style (with the current seed or family) and rebuild the mask. */
@@ -215,9 +252,9 @@ function renderStylePanel() {
     const select = $('family');
     select.replaceChildren();
     est.candidates.forEach((c, i) => {
-        const label = c.translucent
-            ? `${i + 1}: α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`
-            : `${i + 1}: one level (opaque?)`;
+        const label = c.kind === 'opaque'
+            ? `${i + 1}: opaque, r ${fmt(c.radius, 1)}`
+            : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`;
         select.add(new Option(label, String(i)));
     });
     if (state.seed)
@@ -241,7 +278,9 @@ function renderStylePanel() {
     $('style-c').textContent = style ? style.color.map(v => v.toFixed(1)).join(', ') : '–';
     $('style-levels').textContent = style ? `${style.measuredLevels} measured` : '–';
     const fam = est.familyMeasure;
-    if (fam?.fit?.underdetermined)
+    if (fam?.kind === 'opaque')
+        $('style-fit').textContent = 'opaque: overlaps aren’t seen, α = 1';
+    else if (fam?.fit?.underdetermined)
         $('style-fit').textContent = 'one level: α not measured, 1 assumed';
     else
         $('style-fit').textContent = fam?.fit ? `rms ${fmt(fam.fit.rms, 2)}, max ${fmt(fam.fit.maxAbs, 2)}` : '–';
@@ -367,14 +406,16 @@ function renderFitPanel(progress) {
     const fit = state.fit;
     const running = state.worker !== null;
     $('fit-run').disabled = running || !currentStyle()?.radius;
-    $('fit-run').title = currentStyle()?.radius ? 'Find the dots' : 'Set the dot radius first';
+    $('fit-run').title = currentStyle()?.radius
+        ? (state.seed ? 'Find the dots of the picked color' : 'Find the dots of every family')
+        : 'Set the dot radius first';
     $('fit-stop').disabled = !running;
-    $('fit-edit').disabled = !fit || running;
+    $('fit-edit').disabled = !familyFit() || running;
     $('copy-csv').disabled = !fit || running;
     $('save-truth').disabled = !fit || running;
     if (running && progress) {
         const secs = ((performance.now() - state.fitStart) / 1000).toFixed(1);
-        $('fit-status').textContent = `${progress.stage}, round ${progress.round}: ${progress.dots.length} dots, ${secs} s`;
+        $('fit-status').textContent = `${familyLabel(progress.family)}: ${progress.stage}, round ${progress.round}: ${progress.dots.length} dots, ${secs} s`;
     }
     if (!fit) {
         for (const id of ['fit-count', 'fit-flags', 'fit-radius', 'fit-sigma'])
@@ -389,10 +430,12 @@ function renderFitPanel(progress) {
             counts[f] = (counts[f] ?? 0) + 1;
     }
     const flagged = fit.dots.filter(d => d.flags.length).length;
-    $('fit-count').textContent = String(fit.dots.length);
+    const many = fit.families.length > 1;
+    $('fit-count').textContent = many ? `${fit.dots.length} (${fit.families.map(f => f.dots.length).join(' + ')})` : String(fit.dots.length);
     $('fit-flags').textContent = flagged ? `${flagged} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')})` : '0';
-    $('fit-radius').textContent = `${fit.radius.toFixed(2)} px`;
-    $('fit-sigma').textContent = fit.sigma.toFixed(2);
+    $('fit-radius').textContent = `${fit.families.map(f => f.radius.toFixed(2)).join(', ')} px`;
+    const cur = familyFit();
+    $('fit-sigma').textContent = cur ? fmt(cur.sigma, 2) + (many ? ' (current family)' : '') : '–';
     if (!running) {
         $('fit-status').textContent = `${fit.partial ? 'Stopped early: partial result, not assessed. ' : ''}`
             + `${fit.edited ? 'Edited by hand. ' : ''}${fit.ms ? `Fit in ${(fit.ms / 1000).toFixed(1)} s. ` : ''}`
@@ -400,18 +443,37 @@ function renderFitPanel(progress) {
     }
 }
 
+// Fit every dot family (or just the picked color), one after another in the worker.
 function runFit() {
     stopFit();
     state.fitStart = performance.now();
-    state.worker = new Worker(new URL('../fit-worker.js', import.meta.url), { type: 'module' });
-    state.fit = null;
+    const ks = state.seed ? [-1] : state.estimate.candidates.map((_, k) => k);
+    const inputs = [];
+    const skipped = [];
+    for (const k of ks) {
+        const input = fitInputFor(k);
+        if (input.style?.radius > 0)
+            inputs.push({ family: k, input });
+        else
+            skipped.push(k);
+    }
+    const done = [];
     let last = null;
+    state.fit = null;
+    state.worker = new Worker(new URL('../fit-worker.js', import.meta.url), { type: 'module' });
+    const radiusOf = k => inputs.find(i => i.family === k).input.style.radius;
     state.worker.onmessage = e => {
         const msg = e.data;
         if (msg.type === 'progress') {
-            last = msg.progress;
-            refreshMarks(last.dots);
-            renderFitPanel(last);
+            last = msg;
+            const r = radiusOf(msg.family);
+            refreshMarks([...done.flatMap(f => f.dots.map(d => ({ ...d, r: f.radius }))), ...msg.progress.dots.map(d => ({ ...d, r }))]);
+            renderFitPanel({ ...msg.progress, family: msg.family });
+            return;
+        }
+        if (msg.type === 'family') {
+            done.push({ ...msg.result, family: msg.family });
+            last = null;
             return;
         }
         state.worker.terminate();
@@ -421,7 +483,7 @@ function runFit() {
             renderFitPanel();
             return;
         }
-        state.fit = msg.result;
+        setFits(done, { ms: performance.now() - state.fitStart, skipped });
         renderFitPanel();
         refreshView(true);
     };
@@ -430,9 +492,15 @@ function runFit() {
         state.worker = null;
         renderFitPanel();
     };
-    state.stopFit = () => last;
-    state.worker.postMessage({ input: fitInput(), opts: {} });
-    renderFitPanel({ stage: 'starting', round: 0, dots: [] });
+    // a stopped fit keeps the finished families and what the running one had reached
+    state.stopFit = () => {
+        const partial = [...done];
+        if (last)
+            partial.push({ family: last.family, dots: last.progress.dots.map(d => ({ ...d, flags: [] })), radius: radiusOf(last.family), sigma: NaN });
+        return partial;
+    };
+    state.worker.postMessage({ inputs, opts: {} });
+    renderFitPanel({ stage: 'starting', round: 0, dots: [], family: inputs[0]?.family ?? 0 });
 }
 
 function stopFit() {
@@ -440,25 +508,28 @@ function stopFit() {
         return;
     state.worker.terminate();
     state.worker = null;
-    const last = state.stopFit?.();
-    // keep what the worker had reached, unassessed (no standard errors or flags)
-    if (last) {
-        state.fit = { dots: last.dots.map(d => ({ ...d, flags: [] })), radius: currentStyle().radius, sigma: NaN, partial: true };
-    }
+    const partial = state.stopFit?.() ?? [];
+    if (partial.length)
+        setFits(partial, { partial: true });
     renderFitPanel();
     refreshView(true);
 }
 
+// add or remove a dot of the current family, then refit its neighbors
 function editAt(x, y) {
-    const r = state.fit.radius;
-    const i = nearestDot(x, y, EDIT_HIT_RADII * r);
-    const dots = state.fit.dots.map(d => ({ x: d.x, y: d.y }));
+    const f = familyFit();
+    if (!f)
+        return;
+    const own = f.dots.map(d => ({ ...d, r: f.radius }));
+    const i = nearestDot(own, x, y, EDIT_HIT_RADII);
+    const dots = f.dots.map(d => ({ x: d.x, y: d.y }));
     if (i >= 0)
         dots.splice(i, 1);
     else
         dots.push({ x, y });
-    const res = refitNear({ ...fitInput(), style: fittedStyle() }, dots, x, y);
-    state.fit = { ...state.fit, dots: res.dots, sigma: res.sigma, edited: true };
+    const res = refitNear({ ...fitInputFor(currentFamily()), style: fittedStyle() }, dots, x, y);
+    const families = state.fit.families.map(g => (g === f ? { ...f, dots: res.dots, sigma: res.sigma } : g));
+    setFits(families, { ...state.fit, families: undefined, dots: undefined, edited: true });
     renderFitPanel();
     refreshView(true);
 }
@@ -475,13 +546,15 @@ function dotsCsv() {
     const s = scales();
     const hasData = s.x?.kind === 'numeric' || s.x?.kind === 'category' || s.y?.kind === 'numeric' || s.y?.kind === 'category';
     // se_noise: standard errors from pixel noise alone; the real error is larger (see the Axes note)
-    const head = ['x_px', 'y_px', 'se_noise_x_px', 'se_noise_y_px'];
+    const head = ['family', 'x_px', 'y_px', 'se_noise_x_px', 'se_noise_y_px'];
     if (hasData)
         head.push('x', 'y', 'se_noise_x', 'se_noise_y');
     head.push('visible', 'depth', 'flags');
     const rows = [head.join('\t')];
     for (const d of state.fit.dots) {
-        const row = [d.x.toFixed(3), d.y.toFixed(3), d.seX?.toFixed(3) ?? '', d.seY?.toFixed(3) ?? ''];
+        const color = d.family >= 0 ? state.estimate.candidates[d.family]?.seed : state.seed;
+        const fam = `${d.family + 1}${color ? ' #' + color.map(v => Math.round(v).toString(16).padStart(2, '0')).join('') : ''}`;
+        const row = [fam, d.x.toFixed(3), d.y.toFixed(3), d.seX?.toFixed(3) ?? '', d.seY?.toFixed(3) ?? ''];
         if (hasData) {
             const dd = dataAt(d.x, d.y);
             // standard errors in data units: the px error times the local data units per px
@@ -534,9 +607,10 @@ function refreshAxisMarks() {
 
 function saveTruth() {
     const truth = {
-        image: state.name, hash: state.hash, radius: state.fit.radius,
+        image: state.name, hash: state.hash,
         note: 'Dot centers in image px. Review every dot before using this as ground truth.',
-        dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2) })),
+        families: state.fit.families.map(f => ({ family: f.family, color: f.family >= 0 ? state.estimate.candidates[f.family].seed : state.seed, radius: f.radius })),
+        dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2), family: d.family })),
     };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(truth, null, 1) + '\n'], { type: 'application/json' }));
