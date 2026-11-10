@@ -228,6 +228,138 @@ gb << save picture("gradient-dots-stroke.jpg", "jpg");
 gb << close window;
 
 gb = Graph Builder(
+	Transform Column(
+		"cc",
+		Formula( Mean( :Score, :Response ) + Mod(Row(), 37) )
+	),
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :cc ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Type Properties(
+					0,
+					"Gradient",
+					{gradient( {Color Theme( "Muted Yellow to Red" )} )}
+				),
+				Properties(
+					0,
+					{gradient( {Color Theme( "Muted Yellow to Red" )} )},
+					Item ID( "Avg[Score,Response]", 1 )
+				),
+				Properties(
+					1,
+					{Marker( "FilledCircle" ), Marker Size( 9 )},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("gradient-opaque.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response )),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties(
+					1,
+					{Marker( "FilledCircle" ), Marker Size( 9 ), Line Color("purple")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("solid-opaque.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Transform Column(
+		"cc",
+		Formula( Mean( :Score, :Response ) + Mod(Row(), 37) )
+	),
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :cc ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Type Properties(
+					0,
+					"Gradient",
+					{gradient( {Color Theme( "Muted Yellow to Red" )} )}
+				),
+				Properties(
+					0,
+					{gradient( {Color Theme( "Muted Yellow to Red" )} )},
+					Item ID( "Avg[Score,Response]", 1 )
+				),
+				Properties(
+					1,
+					{Marker( "FilledCircle" ), Marker Size( 9 )},
+					Item ID( "Response", 1 )
+				)
+			)}
+		),
+		Dispatch( {}, "Graph Builder", FrameBox,
+			{Marker Drawing Mode( "Outlined" ), Grid Line Order( 2 ),
+			Reference Line Order( 3 ), Border Graph Order( 1 )}
+		)
+	)
+);
+
+gb << save picture("gradient-opaque-stroke.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response )),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties(
+					1,
+					{Marker( "FilledCircle" ), Marker Size( 9 ), Line Color("purple")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		),
+		Dispatch( {}, "Graph Builder", FrameBox,
+			{Marker Drawing Mode( "Outlined" ), Grid Line Order( 2 ),
+			Reference Line Order( 3 ), Border Graph Order( 1 )}
+		)
+	)
+);
+
+gb << save picture("solid-opaque-stroke.png", "png");
+gb << close window;
+
+gb = Graph Builder(
 	Size( 598, 511 ),
 	Show Control Panel( 0 ),
 	Show Legend( 0 ),

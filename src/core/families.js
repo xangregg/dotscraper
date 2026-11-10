@@ -83,7 +83,7 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
 
 /**
  * The estimate for dots colored by a continuous scale, fitted on the virtual image (colormap.rayImage), or null
- * when the image has no such family.
+ * when the image has no such family. `scale` marks it: its style's color is the virtual family's, which no dot has.
  */
 function colormapEstimate(image, jpeg) {
     const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
@@ -95,7 +95,7 @@ function colormapEstimate(image, jpeg) {
     const measured = measureFamily(virtual, B, P, flatMask(virtual, tol), tol);
     const est = estimateStyle(virtual, { family: 0, candidates: [colormapCandidate(measured, B, P, cm.alpha)], jpeg });
     const note = `Dots colored by a continuous scale (${cm.points.length} colors sampled): each pixel is counted along its own direction from the background, so the fit sees one family. Outlines are fitted as part of the dot.`;
-    return { ...est, image: virtual, notes: [note, ...est.notes] };
+    return { ...est, image: virtual, scale: true, notes: [note, ...est.notes] };
 }
 
 /**

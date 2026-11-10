@@ -160,7 +160,11 @@ async function main() {
         }
         await cdp.send('Target.setAutoAttach',
             { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, pageSession);
-        await cdp.send('Page.navigate', { url: opts.url }, pageSession);
+        // A page that never loads (no server) leaves Chrome's error page, which reaches readyState "complete" with
+        // no console error, so the default --until passed it as OK.
+        const nav = await cdp.send('Page.navigate', { url: opts.url }, pageSession);
+        if (nav.errorText)
+            problems.push(`[load] ${opts.url}: ${nav.errorText}`);
 
         const evaluate = async expression => {
             const r = await cdp.send('Runtime.evaluate',

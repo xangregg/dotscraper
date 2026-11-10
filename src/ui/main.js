@@ -292,7 +292,8 @@ function renderStylePanel() {
 
     const swatches = $('levels');
     swatches.replaceChildren();
-    if (style) {
+    // a color scale is fitted as a virtual family whose color and levels no dot has: don't show them as the dots'
+    if (style && !est.scale) {
         const K = style.measuredLevels;
         style.levels.slice(1, K + 1 + EXTRAPOLATED_SWATCHES).forEach((c, i) => {
             const el = document.createElement('span');
@@ -302,8 +303,9 @@ function renderStylePanel() {
             swatches.append(el);
         });
     }
-    $('family-swatch').style.background = style ? cssColor(style.color) : 'transparent';
-    $('style-c').textContent = style ? style.color.map(v => v.toFixed(1)).join(', ') : '–';
+    $('family-swatch').style.background = style && !est.scale ? cssColor(style.color) : 'transparent';
+    $('style-c').textContent = !style ? '–' : est.scale ? 'varies by dot (color scale)' : style.color.map(v => v.toFixed(1)).join(', ');
+    $('style-c').title = style && est.scale ? `fitted as one virtual family of color ${style.color.map(v => v.toFixed(1)).join(', ')}` : '';
     $('style-levels').textContent = style ? `${style.measuredLevels} measured` : '–';
     const fam = est.familyMeasure;
     if (fam?.kind === 'opaque')
@@ -337,6 +339,8 @@ function renderSample() {
     const x0 = Math.max(0, Math.floor(dot.cx) - half);
     const y0 = Math.max(0, Math.floor(dot.cy) - half);
     const size = Math.min(2 * half + 1, state.image.width - x0, state.image.height - y0);
+    // a color scale's model is in the virtual family's color, so it is compared with the virtual image it was fitted on
+    const seen = est.scale ? analysisImage() : state.work;
     const model = renderDots(solidImage(size, size, est.background.color), [{ x: dot.cx - x0, y: dot.cy - y0 }], style);
     const real = new ImageData(size, size);
     const mod = new ImageData(size, size);
@@ -345,13 +349,13 @@ function renderSample() {
     let sumDiff = 0;
     for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-            const src = 4 * ((y0 + y) * state.work.width + x0 + x);
+            const src = 4 * ((y0 + y) * seen.width + x0 + x);
             const p = y * size + x;
             let worst = 0;
             for (let ch = 0; ch < 3; ch++) {
-                real.data[4 * p + ch] = state.work.data[src + ch];
+                real.data[4 * p + ch] = seen.data[src + ch];
                 mod.data[4 * p + ch] = Math.round(model.data[3 * p + ch]);
-                worst = Math.max(worst, Math.abs(state.work.data[src + ch] - model.data[3 * p + ch]));
+                worst = Math.max(worst, Math.abs(seen.data[src + ch] - model.data[3 * p + ch]));
             }
             maxDiff = Math.max(maxDiff, worst);
             sumDiff += worst;
@@ -367,7 +371,7 @@ function renderSample() {
         c.style.width = c.style.height = `${SAMPLE_SIZE}px`;
         c.getContext('2d').putImageData(data, 0, 0);
     }
-    $('sample-caption').textContent = `Dot at ${dot.cx.toFixed(1)}, ${dot.cy.toFixed(1)} px: image${state.jpeg ? ' (chroma restored)' : ''}, model, |difference| × ${SAMPLE_DIFF_GAIN} (mean ${(sumDiff / (size * size)).toFixed(2)}, max ${maxDiff.toFixed(1)}, 0–255)`;
+    $('sample-caption').textContent = `Dot at ${dot.cx.toFixed(1)}, ${dot.cy.toFixed(1)} px: ${est.scale ? 'image as one virtual family (counts along each pixel’s color)' : 'image'}${state.jpeg ? ' (chroma restored)' : ''}, model, |difference| × ${SAMPLE_DIFF_GAIN} (mean ${(sumDiff / (size * size)).toFixed(2)}, max ${maxDiff.toFixed(1)}, 0–255)`;
 }
 
 function renderLayersPanel() {
