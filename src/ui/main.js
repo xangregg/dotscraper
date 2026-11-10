@@ -7,7 +7,8 @@
 
 import { pixelAt, pixelHash } from '../core/image.js';
 import { restoreChroma } from '../core/jpeg.js';
-import { estimateStyle } from '../core/style.js';
+import { estimateStyle, JPEG_TOLERANCES, EXACT_TOLERANCES } from '../core/style.js';
+import { unmixEstimates } from '../core/unmix.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
 import { refitNear } from '../core/fit.js';
@@ -35,6 +36,9 @@ const state = {
     image: null, // RgbaImage
     jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type, or set by the user)
     work: null, // the image the analysis sees: for a JPEG, its chroma restored (src/core/jpeg.js); else the image
+    // every family's estimate when two or more are translucent, each with its unmixed image (src/core/unmix.js);
+    // else null, and each family is fitted on state.work
+    familyEstimates: null,
     hash: null,
     estimate: null, // from estimateStyle
     seed: null, // a user-picked family color, or null
@@ -97,17 +101,23 @@ function fittedStyle() {
     return style && f ? { ...style, radius: f.radius } : style;
 }
 
+/** The image the current family is analyzed on: its unmixed image when there is one, else state.work. */
+function analysisImage() {
+    return state.estimate?.image ?? state.work;
+}
+
 /** What the fit needs for one family: the current one as shown (overrides applied), others as estimated. */
 function fitInputFor(k) {
     if (k === currentFamily()) {
         return {
-            image: state.work, style: currentStyle(), line: state.estimate.familyMeasure.line,
+            image: analysisImage(), style: currentStyle(), line: state.estimate.familyMeasure.line,
             mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT,
         };
     }
-    const est = estimateStyle(state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
-    const layers = buildMask(state.work, est, { bounds: plotBounds(state.axes) });
-    return { image: state.work, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
+    const est = state.familyEstimates?.[k] ?? estimateStyle(state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
+    const image = est.image ?? state.work;
+    const layers = buildMask(image, est, { bounds: plotBounds(state.axes) });
+    return { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
 }
 
 function familyLabel(k) {
@@ -213,7 +223,7 @@ function displayImage() {
         if (!imgT) {
             imgT = new Float32Array(image.width * image.height);
             for (let p = 0; p < imgT.length; p++)
-                imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - state.work.data[4 * p + ch]) * line.u[ch], 0);
+                imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - analysisImage().data[4 * p + ch]) * line.u[ch], 0);
         }
         return residualOverlay(imgT, modelT, layers.mask, image.width, image.height);
     }
@@ -234,6 +244,13 @@ function refreshMarks(dots = state.fit?.dots) {
 function analyze() {
     const t0 = performance.now();
     state.estimate = estimateStyle(state.work, state.seed ? { seed: state.seed, jpeg: state.jpeg } : { family: state.family, jpeg: state.jpeg });
+    state.familyEstimates = null;
+    const cands = state.estimate.candidates;
+    if (!state.seed && cands.filter(c => c.kind === 'translucent').length >= 2) {
+        const ests = cands.map((_, k) => (k === state.family ? state.estimate : estimateStyle(state.work, { family: k, candidates: cands, jpeg: state.jpeg })));
+        state.familyEstimates = unmixEstimates(state.work, ests, state.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES);
+        state.estimate = state.familyEstimates[state.family];
+    }
     const t1 = performance.now();
     rebuildMask();
     const t2 = performance.now();
@@ -247,7 +264,7 @@ function rebuildMask() {
     state.fit = null;
     const style = currentStyle();
     const opts = { bounds: plotBounds(state.axes), ...(state.dilate === null ? {} : { dilate: state.dilate }) };
-    state.layers = style ? buildMask(state.work, { ...state.estimate, style }, opts) : null;
+    state.layers = style ? buildMask(analysisImage(), { ...state.estimate, style }, opts) : null;
     renderLayersPanel();
     renderFitPanel();
 }

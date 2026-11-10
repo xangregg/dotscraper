@@ -556,8 +556,8 @@ Done in milestones, each stopped for review.
       edits, the model and residual overlays act on the current family; the CSV gets a family column.
 - [x] Synthetic `beeswarm` preset (three opaque swarm columns, touching dots, median lines over them) and
       family-aware benchmark rows.
-- [ ] Drawing order and compositing of several *translucent* families (economist: red over blue). Each is still
-      fitted alone, so mixed pixels are masked and many dots are flagged.
+- [x] Drawing order and compositing of several *translucent* families (economist: red over blue): unmixed pixel
+      by pixel (`unmix.js`, below), each family then fitted alone on its own image.
 
 **Measured (milestone 1).** Benchmark, 5 seeds each: sparse, dense and curve are unchanged (precision and recall
 1.000). beeswarm (3 opaque families, 84 dots) has precision and recall 1.000, count error 0, position RMSE
@@ -742,6 +742,48 @@ right; bench3: left only (its category axis has no tick marks). Measured: bench2
 1.000); every other bench row and every real image's dot counts unchanged (Laser 32 + 23 + 25 in 4.1 s instead of
 7.7 s). In the browser, bench2 tiny-dots masks 19.0% of the image beyond the axes and finds the 204 dots
 (0.032 px RMSE against the truth).
+
+**Several translucent families.** Each family was fitted alone, so pixels where a red and a blue dot overlap
+(on neither family's color line) were masked for both, and a coincident red–blue pair had no dot in either.
+
+- *Drawing order interleaves the families.* At every red–blue overlap in bench1 and bench2 group (11 and 33 of
+  them) the dot of the later data row is on top; the two orders' predicted colors differ by about 69 units and the
+  observed color matches one within 0.5. So no family-wide order (all blue, then all red) holds.
+- *Unmixing* (`src/core/unmix.js`). With one or more dots of A and of B over a pixel, its color is B plus a
+  weighted sum of the two families' color offsets, whatever the order; the weights solve a 3 × 2 least-squares
+  problem from the pixel alone, so no prior fit is needed (the coincident pair has none). The order only changes
+  how the weights become transmittances, and only the true order gives whole dot counts inside a lens (one dot
+  each at α 0.5: 0.5 and 0.5 against 0.75 and 0.33), so each pixel takes the order nearer whole counts. Pixels on
+  one family's line belong to it alone; pixels nothing explains (text, lines, other marks, stacks of three or
+  more dots in both colors) are left as they are for the masks. Each translucent family then gets its own image
+  (its transmittance over B) and count image, and the existing mask and fit run on it unchanged. The app and the
+  bench do this when two or more families are translucent; the style panel says so.
+- *A flat pixel on one family's line must be a whole number of its dots* (within 0.3): blue dots over the light
+  steel-blue CI band read as 1.5 blue dots and made 20 phantom blue dots on bench2 group-smoother-ci. The same
+  test on pixels a pair explains changed nothing on the bench, so it isn't applied there.
+
+Measured (found / truth, recall, RMSE px):
+
+| chart | alone | unmixed |
+|---|---|---|
+| bench1 group, group-smoother, group-large | 98, 0.980 each | 100, 1.000 each (0.028–0.033) |
+| bench1 group-smoother.jpg | 90, 0.880 | 100, 1.000 (0.134) |
+| bench2 group | 193, 0.946 | 204, 1.000 (0.101) |
+| bench2 group-smoother | 193, 0.946 | 203, 0.995 (0.086) |
+| bench1 group-smoother-ci | 77, 0.770, precision 1.000 | 85, 0.840, precision 0.988 (1 phantom, flagged) |
+| bench2 group-smoother-ci | 163, 0.799, precision 1.000 | 190, 0.882, precision 0.947 (10 phantoms on the band, all flagged) |
+| bench2 group-large | no radius | no radius (no isolated dot at 204 large dots, in either family's image) |
+
+Every other bench row is unchanged (no other image has two translucent families). Positions near the other
+color are less precise than elsewhere: on bench2 group, 0.042 px RMSE for dots with no other-color neighbor
+against 0.186 for those with one (one dot in a crowd with four is off by 1.9 px). bench2 group-smoother.jpg is
+unchanged (131): its red family reads as opaque in the JPEG, so only one family is translucent. In the browser,
+bench2 group: 204 dots (113 + 91, the truth's group sizes), none flagged, 0.101 px RMSE.
+
+economist (no truth): 110 + 78 → 116 + 82 dots, flags 94 → 63. Of the dots that changed, the 18 lost red "dots"
+stacked along the red trend line were phantoms (all flagged weak, hidden and deep); the gains sit in the dense
+red–blue cluster, mostly on visible discs, but include a stack of 5 red dots at one spot where the two trend
+lines meet (all flagged weak and deep), likely phantoms.
 
 **Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers, bench1 stroked-dots).
 
