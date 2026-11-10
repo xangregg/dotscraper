@@ -1,10 +1,12 @@
 // Every dot family of an image, ready to fit (PLAN.md phase 5): the style estimates, the shaded regions under or
 // over the dots (background.js), overlays divided out, and each translucent family on its own image (unmix.js).
-// The bench and the app both go through here, so they fit the same thing.
+// The bench and the app both go through here, so they fit the same thing. Dots colored by a continuous scale are
+// one family on a virtual image of their counts (colormap.js).
 
-import { estimateStyle, measureFamily, JPEG_TOLERANCES, EXACT_TOLERANCES } from './style.js';
+import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCES, EXACT_TOLERANCES } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
+import { findColormap, rayImage, colormapCandidate } from './colormap.js';
 
 const DEFAULT_RADIUS = 5; // px, for the region test when no family has a radius yet
 // One translucent family over two backgrounds looks like two opaque families when it has too few overlaps to show
@@ -80,6 +82,23 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
 }
 
 /**
+ * The estimate for dots colored by a continuous scale, fitted on the virtual image (colormap.rayImage), or null
+ * when the image has no such family.
+ */
+function colormapEstimate(image, jpeg) {
+    const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
+    const B = backgroundColor(image).color;
+    const cm = findColormap(image, B, flatMask(image, tol), tol);
+    if (!cm)
+        return null;
+    const { image: virtual, P } = rayImage(image, B, cm);
+    const measured = measureFamily(virtual, B, P, flatMask(virtual, tol), tol);
+    const est = estimateStyle(virtual, { family: 0, candidates: [colormapCandidate(measured, B, P, cm.alpha)], jpeg });
+    const note = `Dots colored by a continuous scale (${cm.points.length} colors sampled): each pixel is counted along its own direction from the background, so the fit sees one family. Outlines are fitted as part of the dot.`;
+    return { ...est, image: virtual, notes: [note, ...est.notes] };
+}
+
+/**
  * @param {import('./image.js').RgbaImage} image  as analyzed (a JPEG's chroma already restored)
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]
@@ -89,6 +108,9 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
  */
 export function estimateFamilies(image, opts = {}) {
     const jpeg = !!opts.jpeg;
+    const scaled = colormapEstimate(image, jpeg);
+    if (scaled)
+        return { image, layers: null, estimates: [scaled] };
     let first = estimateStyle(image, { jpeg });
     if (!first.candidates.length)
         return { image, layers: null, estimates: [{ ...first, image }] };

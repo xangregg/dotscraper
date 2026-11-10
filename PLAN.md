@@ -788,7 +788,8 @@ lines meet (all flagged weak and deep), likely phantoms.
 **Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers, bench1 stroked-dots).
 
 - [x] Outlined dots with one fill: a two-part template (ring and fill).
-- [ ] A fill that varies per dot (pathogen).
+- [x] A fill that varies per dot, translucent (bench1–2 gradient-dots, `colormap.js`).
+- [ ] A fill that varies per dot, opaque (pathogen).
 
 **Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
 fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
@@ -811,6 +812,36 @@ stroked dots sit up-left of the data, the fill by 0.5 px and the ring by 0.13 px
 against the truth; plain dots are exact), and the fitted centers carry a mean offset of (−0.44, −0.44) px with
 0.03 px scatter around it. Other rows: three JPEG rows' RMSE moved by 0.001–0.007 px (a few JPEG dots now pass
 as ringed isolated dots); everything else, and every real image, unchanged. In the browser: 100 dots, no errors.
+
+**Translucent dots colored by a scale** (bench1–2 gradient-dots: JMP's "Muted Yellow to Red" on
+mean(Score, Response) + row mod 37, α 0.5; plain and JMP's "Outlined" marker mode, PNG and JPEG). Color scales are
+rare, so this is a side path (`colormap.js`, an early return in `families.js`) that leaves the main design alone.
+
+- *Model:* a translucent dot keeps its offset's direction from B, so a pixel's direction names its dot's color and
+  its distance over one dot's distance in that direction (m₁) counts the dots. Against the truth: medians 1.49–1.50
+  at two dots and 1.72–1.77 at three (1.5 and 1.75 expected); stacks of unlike colors stay within 0.02–0.04 of the
+  one-dot curve.
+- *Curve:* m₁ per direction cell from flat pixels within 4 px of the background (the outer, one-deep part of
+  dots); cells reading over 1.2 × their neighbors are coincident pairs (bench2: 123 against 85) and are dropped;
+  points link into a chain within 0.15 and 1.35 × in m₁ (bench2's lone darkest dot is 0.116 from the next color);
+  the scale is the largest chain, spanning at least 0.2 (gradients: 0.6). m₁ is a kernel regression over the points.
+- *JPEG:* directions are read from offsets summed over a 5 × 5 window; per-pixel chroma noise had spread the one-dot
+  level over 64–96. α comes from the ratio histogram (the second peak at 2 − α), since the level finder took a
+  shoulder of the broad first peak for level 2 (α 0.88).
+- *Fit:* the image is rewritten as one virtual family (each pixel B + r·(P − B)) and the usual pipeline runs on it.
+
+Measured (found / truth, recall, RMSE px): bench1 plain 100/100, 1.00, 0.035; JPEG 100/100, 1.00, 0.085; outlined
+101/100, 1.00, 0.116; outlined JPEG 104/100, 1.00, 0.154. bench2 plain 200/204, 0.98, 0.247 (median error 0.040 px;
+the 4 misses and the two worst positions, 2.6 and 1.9 px, are in clusters of 4–6 mixed-color dots); JPEG 196,
+0.956, 0.522; outlined 207, 0.971, 0.532; outlined JPEG 221, 0.951, 1.031. Every other bench row is unchanged, and
+the detector stays off on all ten testgraphs images.
+
+Tried and dropped: a ring less opaque than the fill (JMP's outlined markers are an outline-colored disc under a
+smaller fill, both α 0.5: fill radius 9.6, outline 11.3 px, measured correctly). It made bench2 outlined worse
+(211 found) and fitted a false 1 px ring on the plain JPEGs, so outlined markers are fitted as one disc at about
+the outline's radius (11.1). Not done: each dot's color isn't reported (a legend mapping would be needed to make it
+data); opaque scale-colored dots (pathogen) aren't detected; a scale sharing the plot with another family isn't
+handled. In the browser: not checked (the page check couldn't launch Chrome in this session's sandbox).
 
 **Not done, and why.**
 
