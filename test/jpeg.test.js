@@ -1,0 +1,63 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { restoreChroma } from '../src/core/jpeg.js';
+import { readImage } from '../tools/png.mjs';
+import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
+
+const BENCH = new URL('../bench1/', import.meta.url).pathname;
+const MEDIUM_R = 6.72; // px, bench1 medium-dots
+const EDGE_BAND = 1.5; // px either side of the rim
+
+// rms RGB difference between two images over the band [lo, hi] px from the centers of dots no other dot comes near
+function bandError(a, b, dots, r, lo, hi) {
+    const alone = dots.filter(d => !dots.some(e => e !== d && Math.hypot(e.x - d.x, e.y - d.y) < 2 * r + 4));
+    let sum = 0;
+    let count = 0;
+    for (const d of alone) {
+        for (let y = Math.floor(d.y - hi - 1); y <= d.y + hi + 1; y++) {
+            for (let x = Math.floor(d.x - hi - 1); x <= d.x + hi + 1; x++) {
+                const q = Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y);
+                if (q < lo || q > hi)
+                    continue;
+                const p = 4 * (y * a.width + x);
+                for (let ch = 0; ch < 3; ch++)
+                    sum += (a.data[p + ch] - b.data[p + ch]) ** 2;
+                count += 3;
+            }
+        }
+    }
+    return Math.sqrt(sum / count);
+}
+
+test('restoreChroma on a real JPEG: dot rims and interiors move toward the PNG of the same chart', { skip: !existsSync(BENCH + 'medium-dots.jpg') && 'bench1 absent' }, () => {
+    // measured: rims 12.0 → 6.2, interiors 5.5 → 4.1 (rms, 0–255 units)
+    const png = readImage(BENCH + 'medium-dots.png');
+    const raw = readImage(BENCH + 'medium-dots.jpg');
+    const restored = restoreChroma(raw);
+    const dots = truthPixels(readTruthCsv(BENCH + 'data.csv')).dots;
+    const rim = [MEDIUM_R - EDGE_BAND, MEDIUM_R + EDGE_BAND];
+    const inside = [0, MEDIUM_R - EDGE_BAND];
+    const rimBefore = bandError(raw, png, dots, MEDIUM_R, ...rim);
+    const rimAfter = bandError(restored, png, dots, MEDIUM_R, ...rim);
+    const inBefore = bandError(raw, png, dots, MEDIUM_R, ...inside);
+    const inAfter = bandError(restored, png, dots, MEDIUM_R, ...inside);
+    assert.ok(rimAfter < 0.6 * rimBefore, `rims ${rimBefore.toFixed(2)} → ${rimAfter.toFixed(2)}`);
+    assert.ok(inAfter < 0.85 * inBefore, `interiors ${inBefore.toFixed(2)} → ${inAfter.toFixed(2)}`);
+});
+
+test('restoreChroma leaves a flat image and a two-color edge as they are (±1 for rounding)', () => {
+    const width = 40;
+    const height = 20;
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const c = x < 20 ? [255, 255, 255] : [242, 185, 130];
+            data.set([...c, 255], 4 * (y * width + x));
+        }
+    }
+    const image = { width, height, data };
+    const out = restoreChroma(image);
+    for (let i = 0; i < data.length; i++)
+        assert.ok(Math.abs(out.data[i] - data[i]) <= 1, `value ${i}: ${out.data[i]} vs ${data[i]}`);
+});

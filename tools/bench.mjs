@@ -14,6 +14,7 @@ import { estimateStyle } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
+import { restoreChroma } from '../src/core/jpeg.js';
 import { readTruthCsv, truthPixels } from './truth-csv.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,9 +39,12 @@ function parseArgs(argv) {
     return opts;
 }
 
-/** Style, mask and fit for one family of an image (the first by default); also the Hough candidates alone. */
-export function extract(image, family = 0, candidates = undefined) {
-    const est = estimateStyle(image, { family, candidates });
+/**
+ * Style, mask and fit for one family of an image (the first by default); also the Hough candidates alone. For a
+ * JPEG, pass the image through restoreChroma first and set `jpeg` (style.js JPEG_TOLERANCES).
+ */
+export function extract(image, family = 0, candidates = undefined, jpeg = false) {
+    const est = estimateStyle(image, { family, candidates, jpeg });
     if (!est.style)
         throw new Error(est.notes.join(' '));
     const layers = buildMask(image, est);
@@ -51,11 +55,13 @@ export function extract(image, family = 0, candidates = undefined) {
 }
 
 /** Every dot family of an image, each fitted with the others masked. */
-export function extractAll(image) {
-    const first = extract(image, 0);
+export function extractAll(image, jpeg = false) {
+    if (jpeg)
+        image = restoreChroma(image);
+    const first = extract(image, 0, undefined, jpeg);
     const out = [first];
     for (let k = 1; k < first.est.candidates.length; k++)
-        out.push(extract(image, k, first.est.candidates));
+        out.push(extract(image, k, first.est.candidates, jpeg));
     return out;
 }
 
@@ -235,7 +241,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const t0 = Date.now();
             let results;
             try {
-                results = extractAll(image);
+                results = extractAll(image, /\.jpe?g$/i.test(file));
             }
             catch (e) {
                 console.log(`${label}: ${e.message}`);

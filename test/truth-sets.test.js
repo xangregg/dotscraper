@@ -8,7 +8,8 @@ import { detectAxes } from '../src/core/axes.js';
 import { matchDots } from '../src/core/metrics.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, plotAreaMapping } from '../tools/truth-csv.mjs';
-import { extractAll, laneRow } from '../tools/bench.mjs';
+import { extractAll } from '../tools/bench.mjs';
+import { estimateStyle } from '../src/core/style.js';
 
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
 const skip = set => !existsSync(dir(set) + 'data.csv') && `${set} absent`;
@@ -18,7 +19,7 @@ const TICK_SNAP_TOL = 0.5; // px: JMP draws ticks on whole pixels
 function score(set, name) {
     const truth = readTruthCsv(dir(set) + 'data.csv');
     const px = truthPixels(truth);
-    const results = extractAll(readImage(dir(set) + name));
+    const results = extractAll(readImage(dir(set) + name), /\.jpg$/.test(name));
     const found = results.flatMap(r => r.fit.dots);
     return { truth, px, results, found, m: matchDots(px.dots, found, 1) };
 }
@@ -67,4 +68,15 @@ test('bench1 smoother: no dots on the black text of a 50% black family', { skip:
     const { found, m } = score('bench1', 'smoother.png');
     assert.equal(found.length, 100);
     assert.equal(m.recall, 1);
+});
+
+test('regression: JPEG dots are found (chroma restored, noise-tolerant thresholds)', { skip: skip('bench1') }, () => {
+    // before: "No dot family found" (6 of 3246 pixels inside isolated dots had a flat 3×3 neighborhood)
+    assert.equal(estimateStyle(readImage(dir('bench1') + 'medium-dots.jpg')).style, null);
+    const { found, m, results } = score('bench1', 'medium-dots.jpg');
+    assert.equal(results.length, 1);
+    assert.ok(Math.abs(results[0].est.style.alpha - 0.5) < 0.02, `α ${results[0].est.style.alpha}`);
+    assert.equal(found.length, 100);
+    assert.equal(m.recall, 1);
+    assert.ok(m.rmse < 2 * FIT_TOL, `rmse ${m.rmse}`);
 });

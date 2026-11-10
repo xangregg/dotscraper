@@ -665,9 +665,7 @@ the table above; the full images now score as the interiors did). Found / truth,
 New findings:
 - **JPEG** is its own problem: on 8 of the 12 JPEGs, style estimation finds no family or no radius, where the
   PNGs work; where it does fit, recall drops (bench2 smoother 0.652, medium 0.627). bench1 smoother.jpg's 50%
-  black reads as opaque, so its overlap levels aren't found. Opaque gray dots-packed.jpg is exact. Not yet
-  diagnosed; the suspects are the color clustering and level histograms, which half-resolution chroma and
-  block noise spread out. Needs its own work item.
+  black reads as opaque, so its overlap levels aren't found. Opaque gray dots-packed.jpg is exact. Fixed below.
 - **Dots outside the plot area:** text below the axes can make dots (bench2 tiny-dots: the zeros of "100"). When
   axes are detected, dots beyond them should be dropped or flagged.
 - **bench2 group** misses 11, each within 6 px of a dot of the other color (multi-family compositing);
@@ -675,6 +673,62 @@ New findings:
 - **bench2 smoother-ci** finds 290, 116 of them unmatched (phantoms on the band), where bench1 only missed dots:
   milestone 3.
 - **Beeswarms work:** bench3 swarms, packed and jittered layouts are exact apart from the dots under the ANOVA band.
+
+**JPEG.** Diagnosis, on the bench JPEGs against their PNGs:
+
+- *Flat pixels vanish.* Inside isolated dots the RGB values are 3–9 units (rms per channel) from the PNG's, so
+  few 3×3 neighborhoods pass the flat test (FLAT_TOL 3): 6 of 3246 dot pixels on bench1 medium-dots, against
+  2880 in the PNG. No flat pixels, no level peaks, no family.
+- *The error is mostly chroma.* In YCbCr it is 2 units rms in luma but 4–5.6 (up to 16) in Cb and Cr inside the
+  dots: JPEG keeps chroma at half resolution and the decoder upsamples it smoothly, so the background's color
+  bleeds into small dots. It is a smooth bias, not noise, so an edge-preserving blur (bilateral, tried) doesn't
+  remove it.
+- *Ringing.* The background next to every edge has near-white pixels slightly off every color line ((252, 252,
+  248) around orange dots). In the count image they were "off the line", so every isolated dot looked partly
+  hidden; their small positive counts made a halo that failed the disc test (moment ratio 1.06–1.07 against
+  1.03); and on smoother.jpg they made a false first level at t = 5.
+
+Fix:
+
+- `src/core/jpeg.js` `restoreChroma`: a guided filter (He, Sun and Tang 2010) refits Cb and Cr as a linear
+  function of luma in 9 × 9 windows (radius 4, ε 4). In a window with two colors that is exact, so chroma
+  follows the sharp luma edges again. On isolated dots it halves the error at the rims (medium-dots 12.0 → 6.2,
+  large 10.9 → 6.0, dots-random 14.6 → 8.0, rms) and cuts it 25–45% inside colored dots; on 50% black it costs
+  a little (2.9 → 3.2). Smoothing luma too changed nothing. The mask and fit also use the restored image
+  (positions 0.046 against 0.084 px RMSE on bench1 large-dots when only the style saw it).
+- `JPEG_TOLERANCES` in style.js, chosen by `estimateStyle(image, { jpeg: true })`: flat 6, levels start at
+  t ≥ 15, off-line distance 8 accepted near B in the count image, and counts below 0.1 weigh nothing in an
+  isolated dot's moments. Swept one at a time over the 12 JPEGs: flat 5–8, minLevelT 15–20, nearB 5–12 and
+  isolatedFloor 0.1–0.2 work alike; flat 3, minLevelT 10, nearB 2 or isolatedFloor 0.05 each lose images; the
+  level-vote distance off the line is best left at 4 (6 lost bench2 smoother-ci). Both parts are needed:
+  restoration with the exact tolerances gets 1 of 12 exactly right, and the JPEG tolerances without restoration
+  get 3, with 9 finding no family or no radius.
+- Who says "JPEG": the app sets it from the file type (or name), with a "JPEG-compressed" checkbox under Image
+  for pasted images (the clipboard hands over PNG) and JPEGs saved as PNG; the bench from the extension. Detecting
+  it from the pixels was tried: a smooth-region noise estimate puts antialiased translucent PNGs (bench3
+  dots-random.png) above some JPEGs, and an 8×8 block-boundary statistic didn't separate them either.
+
+Measured (found / truth, RMSE px; jpeg-js in Node):
+
+| JPEG | before | now | the PNG |
+|---|---|---|---|
+| bench1 medium, large, smoother | no family, no radius, 97 | 100, 100, 100 (0.053, 0.050, 0.033) | 100 each |
+| bench2 medium, large, smoother | 129, no radius, 133 | 204, 204, 204 (0.060, 0.080, 0.040) | 204 each |
+| bench3 dots-packed, dots-random | 204, no family | 204, 204 (0.017, 0.030) | 204 each |
+| bench1 smoother-ci | no family | 74 | 80 |
+| bench2 smoother-ci | no radius | 171, precision 1.000 | 290, precision 0.600 |
+| bench1 group-smoother | no family | 90 (recall 0.880) | 98 |
+| bench2 group-smoother | no family | 131 (recall 0.637): red reads as opaque | 193 |
+
+In the browser (bench1 medium-dots.jpg through the file input): the box is checked from the file type,
+translucent α 0.487 (Node 0.50: the decoders differ), 100 dots, 0 flagged, 0.048 px RMSE against the truth.
+Fitted JPEG dots are flagged more often (bench2 medium-dots: 44 against 1), since the residual is noisier.
+Still short: bench2 group-smoother's red level 2 keeps 77 on-line pixels near t 208 against 755 in the PNG (the
+overlaps of a saturated color are small lenses that the chroma bleed covers), so a deeper peak becomes "level 2",
+the fit is impossible and red falls back to opaque. That is the multi-family case again.
+
+Also found while checking the page: "Find dots" was enabled before any image was loaded, and clicking it threw
+(no estimate yet); it now starts disabled.
 
 **Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers, bench1 stroked-dots).
 

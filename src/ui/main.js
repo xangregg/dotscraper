@@ -6,6 +6,7 @@
 // radius, alpha and blur.
 
 import { pixelAt, pixelHash } from '../core/image.js';
+import { restoreChroma } from '../core/jpeg.js';
 import { estimateStyle } from '../core/style.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
@@ -25,11 +26,15 @@ const SAMPLE_DIFF_GAIN = 10; // the diff sample shows |image − model| × this
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
 const EDIT_HIT_RADII = 0.6; // × r: a click this close to a dot's center removes it in edit mode
 
+const JPEG_NAME = /\.jpe?g$/i;
+
 const $ = id => document.getElementById(id);
 
 const state = {
     name: null, // display name of the current image
     image: null, // RgbaImage
+    jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type, or set by the user)
+    work: null, // the image the analysis sees: for a JPEG, its chroma restored (src/core/jpeg.js); else the image
     hash: null,
     estimate: null, // from estimateStyle
     seed: null, // a user-picked family color, or null
@@ -96,13 +101,13 @@ function fittedStyle() {
 function fitInputFor(k) {
     if (k === currentFamily()) {
         return {
-            image: state.image, style: currentStyle(), line: state.estimate.familyMeasure.line,
+            image: state.work, style: currentStyle(), line: state.estimate.familyMeasure.line,
             mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT,
         };
     }
-    const est = estimateStyle(state.image, { family: k, candidates: state.estimate.candidates });
-    const layers = buildMask(state.image, est);
-    return { image: state.image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
+    const est = estimateStyle(state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
+    const layers = buildMask(state.work, est);
+    return { image: state.work, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
 }
 
 function familyLabel(k) {
@@ -208,7 +213,7 @@ function displayImage() {
         if (!imgT) {
             imgT = new Float32Array(image.width * image.height);
             for (let p = 0; p < imgT.length; p++)
-                imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - image.data[4 * p + ch]) * line.u[ch], 0);
+                imgT[p] = [0, 1, 2].reduce((sum, ch) => sum + (line.B[ch] - state.work.data[4 * p + ch]) * line.u[ch], 0);
         }
         return residualOverlay(imgT, modelT, layers.mask, image.width, image.height);
     }
@@ -228,7 +233,7 @@ function refreshMarks(dots = state.fit?.dots) {
 /** Estimate the style (with the current seed or family) and rebuild the mask. */
 function analyze() {
     const t0 = performance.now();
-    state.estimate = estimateStyle(state.image, state.seed ? { seed: state.seed } : { family: state.family });
+    state.estimate = estimateStyle(state.work, state.seed ? { seed: state.seed, jpeg: state.jpeg } : { family: state.family, jpeg: state.jpeg });
     const t1 = performance.now();
     rebuildMask();
     const t2 = performance.now();
@@ -241,7 +246,7 @@ function rebuildMask() {
     stopFit();
     state.fit = null;
     const style = currentStyle();
-    state.layers = style ? buildMask(state.image, { ...state.estimate, style }, state.dilate === null ? {} : { dilate: state.dilate }) : null;
+    state.layers = style ? buildMask(state.work, { ...state.estimate, style }, state.dilate === null ? {} : { dilate: state.dilate }) : null;
     renderLayersPanel();
     renderFitPanel();
 }
@@ -317,13 +322,13 @@ function renderSample() {
     let sumDiff = 0;
     for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-            const src = 4 * ((y0 + y) * state.image.width + x0 + x);
+            const src = 4 * ((y0 + y) * state.work.width + x0 + x);
             const p = y * size + x;
             let worst = 0;
             for (let ch = 0; ch < 3; ch++) {
-                real.data[4 * p + ch] = state.image.data[src + ch];
+                real.data[4 * p + ch] = state.work.data[src + ch];
                 mod.data[4 * p + ch] = Math.round(model.data[3 * p + ch]);
-                worst = Math.max(worst, Math.abs(state.image.data[src + ch] - model.data[3 * p + ch]));
+                worst = Math.max(worst, Math.abs(state.work.data[src + ch] - model.data[3 * p + ch]));
             }
             maxDiff = Math.max(maxDiff, worst);
             sumDiff += worst;
@@ -339,7 +344,7 @@ function renderSample() {
         c.style.width = c.style.height = `${SAMPLE_SIZE}px`;
         c.getContext('2d').putImageData(data, 0, 0);
     }
-    $('sample-caption').textContent = `Dot at ${dot.cx.toFixed(1)}, ${dot.cy.toFixed(1)} px: image, model, |difference| × ${SAMPLE_DIFF_GAIN} (mean ${(sumDiff / (size * size)).toFixed(2)}, max ${maxDiff.toFixed(1)}, 0–255)`;
+    $('sample-caption').textContent = `Dot at ${dot.cx.toFixed(1)}, ${dot.cy.toFixed(1)} px: image${state.jpeg ? ' (chroma restored)' : ''}, model, |difference| × ${SAMPLE_DIFF_GAIN} (mean ${(sumDiff / (size * size)).toFixed(2)}, max ${maxDiff.toFixed(1)}, 0–255)`;
 }
 
 function renderLayersPanel() {
@@ -389,7 +394,7 @@ function pickAt(x, y) {
     }
     if (!state.picking || !state.image)
         return;
-    const [r, g, b] = pixelAt(state.image, x, y);
+    const [r, g, b] = pixelAt(state.work, x, y);
     state.seed = [r, g, b];
     state.overrides = {};
     setPicking(false);
@@ -619,9 +624,16 @@ function saveTruth() {
     URL.revokeObjectURL(a.href);
 }
 
-function setImage(name, image) {
+function setJpeg(jpeg) {
+    state.jpeg = jpeg;
+    state.work = jpeg ? restoreChroma(state.image) : state.image;
+    $('jpeg').checked = jpeg;
+}
+
+function setImage(name, image, jpeg) {
     state.name = name;
     state.image = image;
+    setJpeg(jpeg);
     state.hash = pixelHash(image);
     state.seed = null;
     state.family = 0;
@@ -642,7 +654,7 @@ function setImage(name, image) {
 async function openTestImage(name) {
     showMessage(`Loading ${name}…`);
     try {
-        setImage(name, await loadTestImage(name));
+        setImage(name, await loadTestImage(name), JPEG_NAME.test(name));
         history.replaceState(null, '', `#image=${encodeURIComponent(name)}`);
         $('test-image').value = name;
     }
@@ -655,7 +667,7 @@ async function openFile(file) {
     const name = file.name && file.name !== 'image.png' ? file.name : 'pasted image';
     showMessage(`Decoding ${name}…`);
     try {
-        setImage(name, await decodeImage(file));
+        setImage(name, await decodeImage(file), file.type === 'image/jpeg' || JPEG_NAME.test(file.name ?? ''));
         // a pasted or uploaded image can't be reopened from a link
         history.replaceState(null, '', location.pathname);
         $('test-image').value = '';
@@ -666,6 +678,14 @@ async function openFile(file) {
 }
 
 function wireControls() {
+    $('jpeg').addEventListener('change', e => {
+        if (!state.image)
+            return;
+        setJpeg(e.target.checked);
+        // the candidates change with the thresholds, so the family index may name another family
+        state.family = 0;
+        analyze();
+    });
     $('family').addEventListener('change', e => {
         if (e.target.value === 'seed')
             return;

@@ -34,7 +34,7 @@ styles.css
 src/core/               pure algorithms: image.js (hash, pixel access), render.js (forward model), style.js (dot
                         style), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
-                        ticks, labels, scales), rng.js
+                        ticks, labels, scales), jpeg.js (chroma restoration for JPEGs), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
                         axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress

@@ -106,6 +106,26 @@ const OFF_MIX_REL = 0.12;
 const MAX_MIX = 1.3;
 
 /**
+ * Tolerances that assume exact renders, and their JPEG replacements (for an image whose chroma jpeg.js has
+ * restored). JPEG's block noise leaves dot interiors a few units from their color, so few 3×3 neighborhoods are
+ * flat; and it rings the background next to edges with near-white pixels slightly off every color line ((252, 252,
+ * 248) around orange dots), which made a false first level just above B, made every isolated dot look partly hidden,
+ * and gave dots a faint halo that failed the disc test. Measured on the 12 bench JPEGs (PLAN.md phase 5): flat 5–8,
+ * minLevelT 15–20, nearB 5–12 and isolatedFloor 0.1–0.2 work alike; flat 3, minLevelT 10, nearB 2 or isolatedFloor
+ * 0.05 each lose images. The distance off the line for level votes stays PERP_TOL (6 lost an image).
+ *
+ * @typedef {object} Tolerances
+ * @property {number} flat           0–255 units: max channel difference in a 3×3 neighborhood for a flat pixel
+ * @property {number} minLevelT      0–255 units: flat pixels this close to B along the line don't vote for levels
+ * @property {number} nearB          0–255 units: off-line distance always accepted in the count image
+ * @property {number} isolatedFloor  counts below this weigh 0 in an isolated dot's area and moments
+ */
+/** @type {Tolerances} */
+export const EXACT_TOLERANCES = { flat: FLAT_TOL, minLevelT: LEVEL_SEPARATION / 2, nearB: NEAR_B_ABS_TOL, isolatedFloor: 0 };
+/** @type {Tolerances} */
+export const JPEG_TOLERANCES = { flat: 6, minLevelT: 15, nearB: 8, isolatedFloor: 0.1 };
+
+/**
  * @typedef {object} ColorLine
  * @property {number[]} B  background color
  * @property {number[]} u  unit vector from B toward the family's colors
@@ -142,12 +162,13 @@ export function backgroundColor(image) {
 }
 
 /**
- * 1 where every channel of the pixel's 3×3 neighborhood is within FLAT_TOL of the pixel (borders are 0).
+ * 1 where every channel of the pixel's 3×3 neighborhood is within tol.flat of the pixel (borders are 0).
  *
  * @param {import('./image.js').RgbaImage} image
+ * @param {Tolerances} [tol]
  * @returns {Uint8Array}
  */
-export function flatMask(image) {
+export function flatMask(image, tol = EXACT_TOLERANCES) {
     const { width, height, data } = image;
     const flat = new Uint8Array(width * height);
     for (let y = 1; y < height - 1; y++) {
@@ -158,7 +179,7 @@ export function flatMask(image) {
                 for (let dx = -1; dx <= 1 && ok; dx++) {
                     const q = p + dy * width + dx;
                     for (let ch = 0; ch < 3; ch++) {
-                        if (Math.abs(data[4 * q + ch] - data[4 * p + ch]) > FLAT_TOL)
+                        if (Math.abs(data[4 * q + ch] - data[4 * p + ch]) > tol.flat)
                             ok = 0;
                     }
                 }
@@ -217,15 +238,16 @@ function votesForLevel(t, perp) {
  * @param {import('./image.js').RgbaImage} image
  * @param {{t: Float32Array, perp: Float32Array}} proj
  * @param {Uint8Array} flat
+ * @param {Tolerances} [tol]
  * @returns {{levels: Level[], beyond: Level[]}}
  */
-export function findLevels(image, proj, flat) {
+export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
     const { t, perp } = proj;
     const nb = Math.ceil(LEVEL_MAX_T / LEVEL_BIN);
     const hist = new Float64Array(nb + 1);
     let total = 0;
     for (let p = 0; p < t.length; p++) {
-        if (flat[p] && t[p] > LEVEL_SEPARATION / 2 && votesForLevel(t[p], perp[p])) {
+        if (flat[p] && t[p] > tol.minLevelT && votesForLevel(t[p], perp[p])) {
             hist[Math.min(nb, Math.round(t[p] / LEVEL_BIN))]++;
             total++;
         }
@@ -378,9 +400,10 @@ export function levelTable(B, levels, fit) {
  * @param {{t: Float32Array, perp: Float32Array}} proj
  * @param {ColorLine} line
  * @param {number[][]} table
+ * @param {Tolerances} [tol]
  * @returns {Float32Array}
  */
-export function countImage(proj, line, table) {
+export function countImage(proj, line, table, tol = EXACT_TOLERANCES) {
     const { B, u } = line;
     const ts = table.map(c => (B[0] - c[0]) * u[0] + (B[1] - c[1]) * u[1] + (B[2] - c[2]) * u[2]);
     const K = ts.length - 1;
@@ -388,7 +411,7 @@ export function countImage(proj, line, table) {
     const D = new Float32Array(t.length);
     for (let p = 0; p < t.length; p++) {
         const tp = t[p];
-        if (perp[p] > COUNT_PERP_TOL || (perp[p] > NEAR_B_ABS_TOL && perp[p] > COUNT_PERP_REL_TOL * tp)) {
+        if (perp[p] > COUNT_PERP_TOL || (perp[p] > tol.nearB && perp[p] > COUNT_PERP_REL_TOL * tp)) {
             D[p] = NaN;
             continue;
         }
@@ -414,9 +437,10 @@ export function countImage(proj, line, table) {
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B
  * @param {Uint8Array} flat
+ * @param {Tolerances} [tol]
  * @returns {object[]}  candidates: { seed, line, levels, beyond, fit, pixels, translucent }
  */
-export function familyCandidates(image, B, flat) {
+export function familyCandidates(image, B, flat, tol = EXACT_TOLERANCES) {
     const n = image.width * image.height;
     const nTheta = Math.ceil(360 / DIRECTION_BIN);
     const nPhi = Math.ceil(180 / DIRECTION_BIN);
@@ -472,7 +496,7 @@ export function familyCandidates(image, B, flat) {
             }
         }
         const seed = [seedKey >> 16, (seedKey >> 8) & 255, seedKey & 255];
-        candidates.push(measureFamily(image, B, seed, flat));
+        candidates.push(measureFamily(image, B, seed, flat, tol));
     }
     // two peaks can describe the same family (levels at slightly different hues): keep the first of each
     const distinct = [];
@@ -494,11 +518,12 @@ export function familyCandidates(image, B, flat) {
  * @param {number[]} B
  * @param {number[]} seed
  * @param {Uint8Array} flat
+ * @param {Tolerances} [tol]
  */
-export function measureFamily(image, B, seed, flat) {
+export function measureFamily(image, B, seed, flat, tol = EXACT_TOLERANCES) {
     const line = colorLine(B, seed);
     const proj = projectOnLine(image, line);
-    const { levels, beyond } = findLevels(image, proj, flat);
+    const { levels, beyond } = findLevels(image, proj, flat, tol);
     const fit = levels.length ? fitGeometric([B, ...levels.map(L => L.color)]) : null;
     const plausible = fit !== null && fit.rms <= FIT_MAX_RMS && fit.c.every(v => v >= -FIT_C_TOL && v <= 255 + FIT_C_TOL);
     return {
@@ -554,9 +579,10 @@ function components(D, width, height) {
  * @param {Float32Array} D
  * @param {number} width
  * @param {number} height
+ * @param {Tolerances} [tol]
  * @returns {{cx: number, cy: number, r: number, aspect: number, box: number[]}[]}
  */
-export function isolatedDots(D, width, height) {
+export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
     const dots = [];
     const m = EDGE_RING;
     for (const comp of components(D, width, height)) {
@@ -589,7 +615,7 @@ export function isolatedDots(D, width, height) {
                     offLine = true;
                     continue;
                 }
-                const w = Math.min(1, d);
+                const w = d < tol.isolatedFloor ? 0 : Math.min(1, d);
                 a += w;
                 sx += w * (x + 0.5);
                 sy += w * (y + 0.5);
@@ -604,7 +630,8 @@ export function isolatedDots(D, width, height) {
         let mxy = 0;
         for (let y = y0 - m; y <= y1 + m; y++) {
             for (let x = x0 - m; x <= x1 + m; x++) {
-                const w = Math.min(1, D[y * width + x]);
+                const d = D[y * width + x];
+                const w = d < tol.isolatedFloor ? 0 : Math.min(1, d);
                 const dx = x + 0.5 - cx;
                 const dy = y + 0.5 - cy;
                 mxx += w * dx * dx;
@@ -896,7 +923,7 @@ function localBackground(image, near, colors, others) {
  * neither, or contrast is too low to tell), its typical background (the most common color around it), the radius
  * (isolated dots, else the distance transform), and how many filled, dot-shaped edges a Hough vote finds.
  */
-export function measureOpaque(image, color, backgrounds, others = []) {
+export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES) {
     const { width, height, data } = image;
     const n = width * height;
     const mask = new Uint8Array(n);
@@ -961,7 +988,7 @@ export function measureOpaque(image, color, backgrounds, others = []) {
     }
     const line = colorLine(B, color);
     const table = [B, color];
-    const isolated = isolatedDots(D, width, height);
+    const isolated = isolatedDots(D, width, height, tol);
     const radius = isolated.length ? median(isolated.map(d => d.r)) : radiusFromDistance(D, width, height);
     let dots = 0;
     let strongDots = 0;
@@ -1030,7 +1057,7 @@ function isDotFamily(f) {
  * Opaque dot families: color clusters that aren't a background, aren't levels of a translucent family, and show
  * at least DOT_MIN_COUNT dot-shaped edges at a radius of at least DOT_MIN_RADIUS.
  */
-export function opaqueFamilies(image, backgrounds, translucent) {
+export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLERANCES) {
     const onTranslucent = c => translucent.some(f => {
         const { B, u } = f.line;
         const e = B.map((v, ch) => v - c[ch]);
@@ -1079,7 +1106,7 @@ export function opaqueFamilies(image, backgrounds, translucent) {
         }
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
-        const fam = measureOpaque(image, cl.color, backgrounds);
+        const fam = measureOpaque(image, cl.color, backgrounds, [], tol);
         fam.interior = interior / count;
         if (isDotFamily(fam))
             out.push(fam);
@@ -1089,7 +1116,7 @@ export function opaqueFamilies(image, backgrounds, translucent) {
     // blue, about 10 dots each) can fail the test once its neighbors' colors are excluded.
     const colors = out.map(f => f.seed);
     const final = out.map(f => {
-        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed));
+        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed), tol);
         return { ...g, radius: g.radius ?? f.radius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
@@ -1107,6 +1134,8 @@ function median(a) {
  * @param {object} [opts]
  * @param {number[]} [opts.seed]    a color of the family (e.g. picked by the user); default: the best candidate
  * @param {number} [opts.family]    index into the candidates, instead of a seed
+ * @param {boolean} [opts.jpeg]     the image is JPEG-compressed: noise-tolerant thresholds (JPEG_TOLERANCES); candidates
+ *   passed in must have been found with the same setting
  * @returns {object}  { background, candidates, family, style, D, isolated, edge, notes }
  *   style: { color, alpha, levels, radius, blur } ready for render.js; radius and blur are null when no isolated
  *   dot was found. notes: human-readable caveats for display.
@@ -1115,17 +1144,18 @@ export function estimateStyle(image, opts = {}) {
     const { width, height } = image;
     const background = backgroundColor(image);
     const B = background.color;
-    const flat = flatMask(image);
+    const tol = opts.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
+    const flat = flatMask(image, tol);
     const backgrounds = backgroundColors(image);
     // candidates are the slow part (seconds on large images): reuse them when estimating another family
-    const candidates = opts.candidates ?? findCandidates(image, B, flat, backgrounds);
+    const candidates = opts.candidates ?? findCandidates(image, B, flat, backgrounds, tol);
     let fam;
     let familyIndex = opts.family ?? 0;
     if (opts.seed) {
-        fam = measureFamily(image, B, opts.seed, flat);
+        fam = measureFamily(image, B, opts.seed, flat, tol);
         fam.kind = 'translucent';
         if (!fam.translucent)
-            fam = measureOpaque(image, opts.seed, backgrounds);
+            fam = measureOpaque(image, opts.seed, backgrounds, [], tol);
         familyIndex = -1;
     }
     else {
@@ -1137,8 +1167,8 @@ export function estimateStyle(image, opts = {}) {
     if (fam.kind === 'opaque')
         return opaqueEstimate(image, fam, candidates, familyIndex, flat, background);
     const table = levelTable(B, fam.levels, fam.fit);
-    const D = countImage(fam.proj, fam.line, table);
-    const isolated = isolatedDots(D, width, height);
+    const D = countImage(fam.proj, fam.line, table, tol);
+    const isolated = isolatedDots(D, width, height, tol);
     let radius = null;
     let blur = null;
     let edge = null;
@@ -1162,11 +1192,11 @@ export function estimateStyle(image, opts = {}) {
 /**
  * All dot families: translucent ones (levels along a color direction) first, then opaque ones (color clusters).
  */
-export function findCandidates(image, B, flat, backgrounds) {
-    const translucent = familyCandidates(image, B, flat).filter(c => c.translucent);
+export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANCES) {
+    const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent);
     for (const c of translucent)
         c.kind = 'translucent';
-    return [...translucent, ...opaqueFamilies(image, backgrounds, translucent)];
+    return [...translucent, ...opaqueFamilies(image, backgrounds, translucent, tol)];
 }
 
 // the estimate for an opaque family: its own background, radius from isolated dots or the distance transform, blur
