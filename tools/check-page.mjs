@@ -206,10 +206,14 @@ async function main() {
         cdp.ws.close();
     }
     finally {
-        // Chrome keeps writing to its profile until it has fully exited.
-        const exited = new Promise(resolve => proc.once('exit', resolve));
-        proc.kill();
-        await exited;
+        // Chrome keeps writing to its profile until it has fully exited. If it already has (it died before
+        // DevTools was ready), 'exit' won't fire again, and waiting for it let Node drain its event loop and quit
+        // with code 0 and no output, as if the check had passed.
+        if (proc.exitCode === null && proc.signalCode === null) {
+            const exited = new Promise(resolve => proc.once('exit', resolve));
+            proc.kill();
+            await exited;
+        }
         rmSync(profileDir, { recursive: true, force: true, maxRetries: 5 });
     }
     process.exit(exitCode);
