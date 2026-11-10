@@ -37,6 +37,27 @@ What each one asks of the extractor (from viewing them; pixel measurements are a
 | violin-beeswarm | 1950 × 1328 | one blue family | no | no | packed, touching | light violin shading under dots, black whisker lines over them, brackets | categorical x, linear y |
 | beeswarm-boxplot | 970 × 2374 | gray and red families; outliers with a dark ring | no | ring on some | packed, touching | boxes, dashed whiskers and reference lines, text | categorical x, linear y |
 
+**bench1/, bench2/, bench3/** (added in phase 5): the user's JMP renderings of one data set each, with exact ground
+truth (`data.csv` in data units; its header gives the scales, ticks and the plot area in px, whose edge pixels'
+centers are the scales' min and max). bench1 has 100 dots with one coincident pair; bench2 the same styles with
+204 dots, five coincident pairs and a tight pile of three; bench3 204 dots as beeswarms and jitter in two lanes
+(x is the group). Some renderings are also JPEGs (4:2:0 chroma, typical export quality), and medium-dots-grid1/2
+add gridlines. All are 624 × 515 with the plot area at (70, 30), 546 × 436 (bench3: 442 tall). The bench1 and
+bench2 styles:
+
+| rendering | what it tests |
+|---|---|
+| tiny-, small-, medium-, large-dots | one 50% family at r 2.6, 3.8, 6.7 (orange), 12.6 (green); the pair is the only overlap at small sizes |
+| smoother, smoother-behind | 50% black dots and a blue smoother over or under them; black text on the dots' own color line |
+| smoother-ci, smoother-behind-ci | a translucent blue CI band under or over orange dots |
+| group, group-large, group-smoother(-ci) | red and blue translucent families; the pair is one of each (purple) |
+| ellipse | a translucent density ellipse under orange dots |
+| stroked-dots | light gray dots with a darker ring |
+| medium-dots-grid1, -grid2 | gridlines under the dots |
+
+bench3: dots-swarm, -packed, -random (jitter), and swarms with a box plot (its outlier marker drawn over a dot),
+violin, grid, and an ANOVA mean with a translucent CI band over the dots.
+
 dog-ages, zoomed, also shows that the image was upscaled from a lower resolution (blocky, slightly blurred edges),
 that each additional overlapping dot darkens the green by a visibly constant step, that circle edges inside a
 cluster are visible as arcs, and that there are a few small white specks where several edges meet
@@ -164,6 +185,14 @@ as poorly determined rather than silently placed or dropped.
 - **Real images:** ground truth hand-annotated in the app's edit mode and saved to
   `testgraphs/truth/<name>.json`, local like the images (pixel positions, with a note on how confident the annotator was in dense
   clusters). For dog-ages, also look for the published data (open question 4).
+- **Truth sets in data units** (`tools/truth-csv.mjs`, bench1–3): `data.csv` with `# x scale: linear, min=…,
+  max=…`, `# x ticks: …` and `# plot area: left=…, top=…, width=…, height=…` header lines, then x, y and an
+  optional group per dot. Every image of a set maps through the plot area (exact; detected ticks are off by up to
+  0.25 px because JMP snaps them to whole pixels). Groups have no colors, so each found family is linked to the
+  groups it explains and dots are matched within each linked set. When the x tick list is exactly the set of x
+  values (bench3), x is a lane whose layout is unknown: found dots go to the nearest lane center and are matched
+  by y alone. JPEGs are decoded with jpeg-js, which agrees with macOS on 97% of values but differs by up to 31
+  levels at color edges (chroma upsampling); browsers may differ similarly.
 - **Metrics** (`metrics.js`): match extracted to true dots by optimal assignment within a radius (r/2); report
   precision, recall, count error, position RMSE (px) and time. `npm run bench` prints the table; results go into
   this file as phases complete.
@@ -566,17 +595,99 @@ What the images taught, in the order it came up:
   centers. The family test is a heuristic tuned on these images; Pick remains the way to add a family it misses.
 - The test suite now takes about 20 s (the opaque fits, Laser among them).
 
-**Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers).
+**bench1: ground truth, and what it changed in earlier phases.** `npm run bench` now also scores every bench1
+image (`--set bench1`, `--only name`). First run: tiny-dots crashed, every full image lost its axes, smoother drew
+15 dots on its text in 12 s, and the 98s missed the coincident pair. Fixes, each with a regression test:
+
+- **Axes (phase 4).** JMP draws axes and ticks in gray 165, above the dark threshold of 160 (other figures: axes
+  0–125, gridlines 194–244): now 180. A tick axis needs two labeled ticks (beeswarm-boxplot's gray bracket at 160
+  became an x axis otherwise), and unlabeled ticks beyond the other axis are dropped (the y label "30" crossing
+  the x axis line left of the corner made three).
+- **Small dots (phase 5).** r ≥ 2 px counts as a dot family when at least 5 isolated whole dots show it round
+  (text clusters measure r 2.5–2.74 and never have one); isolated dots may be 12 px² (r 2.6 is 21 px²).
+- **Weak second level (phase 2).** Sparse translucent dots overlap in one pair, whose second level is 2 flat
+  pixels at r 2.6 and 12 at r 3.8. With one level found, a peak of ≥ 2 pixels at t₂/t₁ in [1.05, 1.95] and at
+  least the level separation beyond the first is the second level. (Without the separation, shoulders of the first
+  peak at ratios 1.05–1.07 made light shading on four compressed images a "translucent family".)
+- **Text in the family's color (phase 2 masks).** A pixel at count ≥ 1.5 is inside a dot, so a disc of 0.9 r
+  around it must lie in the family's pixels or the mask; text strokes fail that and are masked. Pixels masked
+  anyway count as support (dog-ages' line halos read as background and lost one dot until they did). On the
+  economist this also masks a stretch of the blue trend line that isn't saturated: its blue family drops from 85
+  to 78 dots, and the 10 dots it lost were phantoms on red dots and on the line.
+
+**Measured (bench1, first version).** Positions were scored two ways: interior images by their bounds, full images
+through the detected ticks. JMP snaps ticks to whole pixels, so the tick scale is off by up to 0.17–0.25 px at the
+ends; scored with the exact mapping, the full images' fits matched the interior ones (tiny 0.018, medium 0.028 px).
+Every full image held its interior pixel for pixel at (70, 30) except the axis lines over its left column and
+bottom row, so the interiors were dropped for a plot-area header line.
+
+| rendering | found / 100 | recall | RMSE interior / full (px) | time (full) |
+|---|---|---|---|---|
+| tiny-dots | 100 | 1.000 | 0.018 / 0.227 | 0.7 s |
+| small-dots | 100 | 1.000 | 0.019 / 0.134 | 0.4 s |
+| medium-dots | 100 | 1.000 | 0.028 / 0.135 | 0.6 s |
+| large-dots | 100 | 1.000 | 0.028 / 0.135 | 0.9 s |
+| smoother, smoother-behind | 100 | 1.000 | 0.032 / 0.137 | 0.6 s |
+| group, group-large, group-smoother | 98 | 0.980 | 0.021–0.029 / 0.133–0.135 | 0.8–1.2 s |
+| smoother-ci, smoother-behind-ci | 80, 83 | 0.800, 0.820 | 0.023–0.041 / 0.13 | 0.9 s |
+| group-smoother-ci | 131 interior, 77 full | 0.91, 0.77 | 0.043 / 0.134 | 1–2.3 s |
+| ellipse | 194 | 0.970 | 0.017 / 0.126 | 1.5 s |
+| stroked-dots | no radius | – | – | – |
+
+Still failing, and where they belong: the group pair (red over blue: translucent multi-family compositing, above);
+dots on the CI bands and the ellipse (milestone 3: the ellipse's orange-on-lavender and orange-on-white become two
+families, each fitting every dot); stroked dots (milestone 2).
+
+**Measured (bench1–3 through the plot area).** `npm run bench -- --seeds 0` (no code changes to src/core since
+the table above; the full images now score as the interiors did). Found / truth, recall, RMSE px:
+
+| rendering | bench1 (100) | bench2 (204) | bench3 (204, y only) |
+|---|---|---|---|
+| tiny-dots | 100, 1.000, 0.018 | 207, 1.000, 0.032: 3 extra in the "100" label below the plot | |
+| small-dots | 100, 1.000, 0.019 | 204, 1.000, 0.030 | |
+| medium-dots, -grid1, -grid2 | 100, 1.000, 0.028–0.029 | 204, 1.000, 0.038–0.044 | |
+| large-dots | 100, 1.000, 0.028 | 204, 1.000, 0.042 | |
+| smoother, smoother-behind | 100, 1.000, 0.032–0.034 | 204, 1.000, 0.034–0.035 | |
+| group, group-smoother | 98, 0.980, 0.021–0.023 | 193, 0.946, 0.047–0.049 | |
+| group-large | 98, 0.980, 0.029 | no radius (no isolated dot) | |
+| smoother-ci, smoother-behind-ci | 80 / 83, 0.80 / 0.82 | 290 / 180, 0.853 / 0.868, precision 0.60 / 0.98 | |
+| group-smoother-ci | 77, 0.770, 0.023 | 163, 0.799, 0.047 | |
+| ellipse | 194, 0.970, 0.017 | 178, 0.667, 0.353 | |
+| stroked-dots | no radius | no radius | |
+| dots-swarm, -grid, -violin, -box | | | 204, 1.000, 0.014–0.016 |
+| dots-packed, dots-random | | | 204, 1.000, 0.017 / 0.019 |
+| dots-swarm-anova | | | 185, 0.907, 0.039: the 19 missed are under the CI band |
+| JPEG: smoother | 97, 0.970, 0.025 | 133, 0.652, 0.300 | |
+| JPEG: medium-dots | no family | 129, 0.627, 0.091 | |
+| JPEG: large-dots, group-smoother, smoother-ci | no family or no radius (all three) | no family or no radius (all three) | |
+| JPEG: dots-packed, dots-random | | | 204, 1.000, 0.017; no family |
+
+New findings:
+- **JPEG** is its own problem: on 8 of the 12 JPEGs, style estimation finds no family or no radius, where the
+  PNGs work; where it does fit, recall drops (bench2 smoother 0.652, medium 0.627). bench1 smoother.jpg's 50%
+  black reads as opaque, so its overlap levels aren't found. Opaque gray dots-packed.jpg is exact. Not yet
+  diagnosed; the suspects are the color clustering and level histograms, which half-resolution chroma and
+  block noise spread out. Needs its own work item.
+- **Dots outside the plot area:** text below the axes can make dots (bench2 tiny-dots: the zeros of "100"). When
+  axes are detected, dots beyond them should be dropped or flagged.
+- **bench2 group** misses 11, each within 6 px of a dot of the other color (multi-family compositing);
+  group-large finds no isolated dot for the radius at 204 dots.
+- **bench2 smoother-ci** finds 290, 116 of them unmatched (phantoms on the band), where bench1 only missed dots:
+  milestone 3.
+- **Beeswarms work:** bench3 swarms, packed and jittered layouts are exact apart from the dots under the ANOVA band.
+
+**Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers, bench1 stroked-dots).
 
 - [ ] Outlined dots: a two-part template (ring and fill), and a fill that varies per dot.
 
-**Milestone 3: varying backgrounds and translucent overlays** (fibers' CI band, violin shading, pathogen's band).
+**Milestone 3: varying backgrounds and translucent overlays** (fibers' CI band, violin shading, pathogen's band,
+bench1's CI bands and ellipse).
 
 - [ ] Background field under the dots; translucent layers over them.
 
 **Milestone 4.**
 
-- [ ] Ground truth and benchmark rows for each test image.
+- [ ] Ground truth and benchmark rows for each test image. (bench1–3 have exact truth for their 59 renderings.)
 
 ### Phase 6 — Polish and deploy
 - [ ] About panel, CSV/JSON export, copy to clipboard, URL state, dark theme.

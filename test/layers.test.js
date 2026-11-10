@@ -4,8 +4,10 @@ import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
 import { distanceTransform, dilate, opening, buildMask, CLASS_FAMILY, CLASS_OTHER, CLASS_BACKGROUND } from '../src/core/layers.js';
 import { estimateStyle } from '../src/core/style.js';
-import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
+import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readPng } from '../tools/png.mjs';
+
+const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
 test('distance transform equals brute force on random masks', () => {
     const rng = createRng(11);
@@ -131,8 +133,15 @@ const DOG = new URL('../testgraphs/dog-ages.png', import.meta.url).pathname;
 test('dog-ages: curve, dashes and text masked; dots and background not', { skip: !existsSync(DOG) && 'local test image absent' }, () => {
     const image = readPng(DOG);
     const est = estimateStyle(image);
-    const { mask, classes } = buildMask(image, est);
+    const { mask, classes, thin } = buildMask(image, est);
     const at = (x, y) => ({ m: mask[y * image.width + x], c: classes[y * image.width + x] });
+    // dots beside the curve and dashes, whose pale halos read as background, are not "too thin to be dots"
+    for (const [x0, y0, x1, y1] of [[389, 361, 407, 388], [414, 420, 442, 438], [419, 395, 424, 410]]) {
+        for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++)
+                assert.equal(thin[y * image.width + x], 0, `${x},${y}`);
+        }
+    }
     assert.deepEqual(at(714, 508), { m: 0, c: CLASS_FAMILY }); // isolated dot at 14.5, 47
     assert.deepEqual(at(60, 60), { m: 0, c: CLASS_BACKGROUND });
     // every pure black or dash-gray pixel inside the plot area is masked
@@ -171,4 +180,31 @@ test('nearestTransform finds a nearest mask pixel (same distance as brute force)
             assert.equal(dx * dx + dy * dy, d2[p]);
         }
     }
+});
+
+test('glyph-sized strokes in a translucent family’s own color are masked; dots are not', () => {
+    // JMP's 50% black dots share their color line with black text, whose strokes read as counts 1–8 and are too
+    // short to be lines: the fit put dots on the tick labels and title
+    const rng = createRng(6);
+    const points = scatterPoints(rng, { n: 30, box: [30, 60, 370, 270] });
+    // overlapping partners, so α can be measured
+    for (const p of points.slice(0, 15))
+        points.push({ x: p.x + 5, y: p.y + 3 });
+    const strokes = [];
+    for (let k = 0; k < 12; k++) {
+        const x = 20 + 30 * k;
+        strokes.push({ points: [[x, 15], [x, 27]], width: 1.6, color: [0, 0, 0] });
+        strokes.push({ points: [[x + 3, 15], [x + 9, 27]], width: 1.6, color: [0, 0, 0] });
+    }
+    const spec = { width: 400, height: 300, background: [255, 255, 255], blur: 0.4, families: [{ color: [0, 0, 0], alpha: 0.5, radius: 8, points }], lines: strokes };
+    const { image } = synthGraph(spec);
+    const est = estimateStyle(image);
+    near(est.style.alpha, 0.5, 0.02, 'α');
+    const { mask } = buildMask(image, est);
+    for (const s of strokes) {
+        const [[x0, y0], [x1, y1]] = s.points;
+        assert.equal(mask[Math.round((y0 + y1) / 2) * 400 + Math.round((x0 + x1) / 2)], 1, `stroke at ${x0}`);
+    }
+    for (const p of points)
+        assert.equal(mask[Math.floor(p.y) * 400 + Math.floor(p.x)], 0, `dot at ${p.x}, ${p.y}`);
 });

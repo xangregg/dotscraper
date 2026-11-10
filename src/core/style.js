@@ -34,13 +34,18 @@ const PEAK_MIN_PIXELS = 20; // and at least this many
 const LEVEL_SEPARATION = 10; // 0–255 units between levels
 const PEAK_HALF_WIDTH = 3; // bins either side summed into a level's color
 const MAX_STEP_RATIO = 0.95; // a level reached by a step larger than this × the previous step ends the sequence
+// Sparse translucent dots overlap rarely, so the second level can be a handful of pixels (bench1: the one coincident
+// pair gives 2 flat pixels at r 2.6 and 12 at r 3.8). With only one level found, a weaker peak is the second level
+// if it sits where a second level can: t₂ / t₁ = 2 − α, between these ratios.
+const WEAK_LEVEL_MIN_PIXELS = 2;
+const WEAK_LEVEL_RATIO = [1.05, 1.95];
 // A translucent family must fit the geometric model with a full color c a renderer could use. Gray text with two
 // shades can mimic a level sequence, but its fitted c falls far outside the RGB cube.
 const FIT_MAX_RMS = 2; // 0–255 units
 const FIT_C_TOL = 10; // 0–255 units c may fall outside [0, 255] (fitting noise)
 const EXTRA_LEVELS = 12; // geometric levels appended beyond the deepest measured one
 const ISOLATED_MAX_LEVEL = 1.25; // components never above this count are single dots
-const ISOLATED_MIN_AREA = 30; // px²
+const ISOLATED_MIN_AREA = 12; // px² (JMP's tiny dots: r 2.6, area 21)
 const ISOLATED_MAX_ASPECT = 1.05; // ratio of principal second-moment radii
 const ISOLATED_MAX_MOMENT_RATIO = 1.03; // r(moment) / r(area); 1 for a uniform disc
 const EDGE_RING = 4; // px outside a dot sampled for its edge
@@ -61,6 +66,10 @@ const RING = 3; // px: the ring around a family's pixels whose most common color
 // DOT_MIN_ISOLATED whole isolated dots (black and gray dots share their color with text: coverage 0.18–0.23, but
 // 9 and 17 isolated dots).
 const DOT_MIN_RADIUS = 3; // px
+// Smaller dots count when isolated whole dots show them round (bench1 tiny-dots: r 2.6, 58 isolated; text clusters
+// measure r 2.5–2.74 but never have an isolated round component)
+const SMALL_DOT_MIN_RADIUS = 2; // px
+const SMALL_DOT_MIN_ISOLATED = 5;
 const DOT_MIN_ARC = 0.5; // fraction of the circumference for a Hough center to count
 const DOT_STRONG_ARC = 0.75;
 const DOT_MIN_STRONG = 3;
@@ -233,6 +242,25 @@ export function findLevels(image, proj, flat) {
             continue;
         }
         peaks.push(b);
+    }
+    if (peaks.length === 1) {
+        // the strongest bin in the second-level window, its neighbors summed (a plateau of a few pixels can straddle
+        // two bins)
+        let best = -1;
+        let bestCount = 0;
+        // and as far from the first level as any two levels (shoulders of the first peak in compressed images gave
+        // ratios 1.05–1.07: beeswarm-boxplot, fibers, nicest language, violin)
+        const lo = Math.ceil(Math.max(WEAK_LEVEL_RATIO[0] * peaks[0], peaks[0] + LEVEL_SEPARATION / LEVEL_BIN));
+        const hi = Math.min(nb - 1, Math.floor(WEAK_LEVEL_RATIO[1] * peaks[0]));
+        for (let b = lo; b <= hi; b++) {
+            const c = hist[b - 1] + hist[b] + hist[b + 1];
+            if (hist[b] > 0 && c > bestCount) {
+                best = b;
+                bestCount = c;
+            }
+        }
+        if (bestCount >= WEAK_LEVEL_MIN_PIXELS)
+            peaks.push(best);
     }
     const found = peaks.map(b => {
         const sum = [0, 0, 0];
@@ -938,7 +966,7 @@ export function measureOpaque(image, color, backgrounds, others = []) {
     let dots = 0;
     let strongDots = 0;
     let coverage = 0;
-    if (radius >= DOT_MIN_RADIUS) {
+    if (radiusPlausible(radius, isolated.length)) {
         const weight = new Uint8Array(n);
         for (let p = 0; p < n; p++)
             weight[p] = Number.isNaN(D[p]) ? 0 : 1;
@@ -989,8 +1017,12 @@ export function measureOpaque(image, color, backgrounds, others = []) {
     };
 }
 
+function radiusPlausible(radius, isolatedCount) {
+    return radius >= DOT_MIN_RADIUS || (radius >= SMALL_DOT_MIN_RADIUS && isolatedCount >= SMALL_DOT_MIN_ISOLATED);
+}
+
 function isDotFamily(f) {
-    return f.radius >= DOT_MIN_RADIUS && f.strongDots >= DOT_MIN_STRONG
+    return radiusPlausible(f.radius, f.isolated.length) && f.strongDots >= DOT_MIN_STRONG
         && (f.coverage >= DOT_MIN_COVERAGE || f.isolated.length >= DOT_MIN_ISOLATED);
 }
 

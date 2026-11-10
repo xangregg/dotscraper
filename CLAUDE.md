@@ -42,9 +42,14 @@ src/fit-worker.js       module Web Worker wrapping the fit
 testgraphs/             test images, index.json, ground truth in truth/<name>.json: LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,
                         and never let a test fail just because they're absent (skip instead).
+bench1/ bench2/ bench3/  the user's own JMP renderings (PNG and JPEG) of one data set each: data.csv in data units
+                        with scale, tick and plot-area header lines (bench1: 100 dots, bench2: 204 with more ties,
+                        bench3: 204 as beeswarms, x a lane). Exact ground truth; the user's to commit or not.
+                        Tests using them skip when they're absent.
 tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
-tools/png.mjs           PNG read/write for tools and tests (pngjs)
+tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
 tools/measure-dots.mjs  phase 0 measurement of a translucent dot family (levels, alpha, radius, blur)
+tools/truth-csv.mjs     truth sets in data units (benchN/data.csv) and their pixel positions through the plot area
 tools/                  bench and index scripts
 test/*.test.js          node:test + node:assert/strict
 ```
@@ -64,9 +69,10 @@ test/*.test.js          node:test + node:assert/strict
   --until 'window.renderCheckResult' --eval 'JSON.stringify(window.renderCheckResult)' --screenshot out.png`.
 - Measure a dot family: `npm run measure -- testgraphs/<image> [--seed r,g,b] [--out dir]` (writes the overlap
   count image D to `dir`).
-- Benchmark: `npm run bench [-- --seeds n --preset name --verbose]` runs style, mask and fit on the synthetic
-  presets and on every local image with `testgraphs/truth/<name>.json`, printing precision, recall, count error,
-  position RMSE, Hough-only precision/recall, flags and time. Record results in PLAN.md.
+- Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose]` runs style, mask and
+  fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
+  sets (bench1–3; `--set` picks one, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  time. `--set none` runs the synthetic presets alone. Record results in PLAN.md.
 
 ## Conventions
 

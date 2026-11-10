@@ -125,3 +125,21 @@ test('regression: translucent dots that never overlap form an opaque family with
     assert.equal(est.style.levels.length, 2);
     near(est.style.radius, 10, 0.05, 'radius');
 });
+
+test('regression: sparse translucent dots with one coincident pair are translucent, α from the pair', () => {
+    // bench1 small-dots and tiny-dots: 50% black dots that overlap only in one coincident pair, whose second level
+    // is a handful of flat pixels; read as opaque, the pair's darker pixels were "other" and both dots were lost
+    for (const radius of [2.6, 3.8]) {
+        const points = [];
+        for (let y = 20; y < 180; y += 20) {
+            for (let x = 20; x < 280; x += 20)
+                points.push({ x: x + 0.3 * (y % 7), y: y + 0.2 * (x % 5) });
+        }
+        points.push({ ...points[17] });
+        const spec = { width: 300, height: 200, background: [255, 255, 255], blur: 0.3, families: [{ color: [0, 0, 0], alpha: 0.5, radius, points }] };
+        const est = estimateStyle(synthGraph(spec).image);
+        assert.equal(est.familyMeasure.kind, 'translucent', `r ${radius}`);
+        near(est.style.alpha, 0.5, 0.02, `α at r ${radius}`);
+        near(est.style.radius, radius, 0.15, 'radius');
+    }
+});

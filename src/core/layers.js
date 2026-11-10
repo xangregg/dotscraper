@@ -27,6 +27,12 @@ const THIN_MIN_LENGTH_RADII = 3; // × dot radius, the larger side of a thin com
 // join into long components (synthetic swarm: 8 of 84 dots masked). Lines are at least 2 px wide: a second, 1 px
 // opening of the candidates removes the slivers.
 const SLIVER_OPENING = 1; // px
+// A pixel at count ≥ 1.5 is inside at least one dot, so a disc of nearly the dot's radius around it lies in the
+// family's pixels (or under other marks). Text in a translucent family's own color fails that: JMP's 50% black dots
+// share their line with black text, whose antialiased strokes read as counts 1–8, too short for the length test,
+// and the fit put 15 dots on the tick labels and title.
+const SOLID_COUNT = 1.5; // overlap count
+const SOLID_OPEN_FRACTION = 0.9; // × dot radius: the disc that must fit
 const MASK_DILATE_BASE = 1; // px
 const MASK_DILATE_BLURS = 2; // px per px of edge blur
 // Stand-in for an infinite distance in the transform: finite so the parabola intersections stay exact (q² ≤ ~10⁷
@@ -266,6 +272,7 @@ export function buildMask(image, estimate, opts = {}) {
         classes[p] = Number.isNaN(d) ? CLASS_OTHER : (d > 0 ? CLASS_FAMILY : CLASS_BACKGROUND);
     }
     const thin = new Uint8Array(n);
+    const r = opts.dilate ?? MASK_DILATE_BASE + MASK_DILATE_BLURS * (style.blur ?? 0);
     if (style.radius) {
         const deep = new Uint8Array(n);
         const limit = style.measuredLevels + DEEP_EXTRA_LEVELS;
@@ -302,11 +309,27 @@ export function buildMask(image, estimate, opts = {}) {
             for (const p of comp.pixels)
                 thin[p] = 1;
         }
+        if (!opaque) {
+            // pixels masked anyway are unknown, not empty: the pale halos of dog-ages' curve and dashes broke the
+            // dots beside them
+            const hidden = new Uint8Array(n);
+            for (let p = 0; p < n; p++)
+                hidden[p] = classes[p] === CLASS_OTHER || thin[p] ? 1 : 0;
+            const support = dilate(hidden, width, height, r);
+            for (let p = 0; p < n; p++) {
+                if (D[p] >= 0.5)
+                    support[p] = 1;
+            }
+            const body = opening(support, width, height, SOLID_OPEN_FRACTION * style.radius);
+            for (let p = 0; p < n; p++) {
+                if (D[p] >= SOLID_COUNT && !body[p])
+                    thin[p] = 1;
+            }
+        }
     }
     const seedMask = new Uint8Array(n);
     for (let p = 0; p < n; p++)
         seedMask[p] = classes[p] === CLASS_OTHER || thin[p] ? 1 : 0;
-    const r = opts.dilate ?? MASK_DILATE_BASE + MASK_DILATE_BLURS * (style.blur ?? 0);
     const mask = dilate(seedMask, width, height, r);
     const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0 };
     for (let p = 0; p < n; p++) {

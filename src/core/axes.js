@@ -11,7 +11,12 @@
 
 const GRAY_CHROMA = 24; // 0–255: max(r, g, b) − min(r, g, b) for a gray pixel
 const INK_TOL = 15; // 0–255 units (Euclidean RGB) from the background for a pixel to be ink
-const DARK_LUMINANCE = 160; // 0–255: gray ink darker than this is "dark" (axes, ticks); lighter is gridline gray
+// Gray ink darker than this is "dark" (axes, ticks); lighter is gridline gray. Measured: axes and frames 0–125 in
+// the published figures but 164–165 in JMP's (bench1), gridlines 194–244.
+const DARK_LUMINANCE = 180; // 0–255
+// A tick axis needs labels: a gray significance bracket on beeswarm-boxplot (luminance 160, 400 px long, its ends
+// and middle stroke three "ticks") is otherwise an x axis.
+const AXIS_MIN_LABELED_TICKS = 2;
 const LINE_MIN_FRACTION = 0.3; // a line's longest run spans at least this fraction of the image
 const LINE_GAP = 3; // px: gaps up to this long don't break a run (antialiasing, dots over gridlines)
 const LINE_MAX_THICKNESS_FRACTION = 0.02; // of the smaller image dimension …
@@ -469,12 +474,15 @@ export function detectAxes(image) {
     const pick = dir => {
         const candidates = lines.filter(l => l.dir === dir && l.dark).map(line => ({ line, ticks: findTicks(image, ink, line, lines) }));
         candidates.sort((a, b) => (b.ticks.length - a.ticks.length) || (dir === 'h' ? b.line.pos - a.line.pos : a.line.pos - b.line.pos));
-        let best = candidates.find(c => c.ticks.length >= 2) ?? null;
-        if (best) {
-            findLabels(image, backgrounds, best.line, best.ticks);
-            best = { ...best, ticks: best.ticks.filter(t => !t.onLine || t.label) };
+        let best = null;
+        for (const c of candidates) {
+            findLabels(image, backgrounds, c.line, c.ticks);
+            if (c.ticks.filter(t => t.label).length >= AXIS_MIN_LABELED_TICKS) {
+                best = { ...c, ticks: c.ticks.filter(t => !t.onLine || t.label) };
+                break;
+            }
         }
-        else {
+        if (!best) {
             // gridlines perpendicular to this axis give its tick positions
             const other = dir === 'h' ? 'v' : 'h';
             const grid = lines.filter(l => l.dir === other && !l.dark).sort((a, b) => a.pos - b.pos);
@@ -491,14 +499,29 @@ export function detectAxes(image) {
                 best = { line: null, ticks };
             }
         }
-        if (!best)
+        return best;
+    };
+    // An unlabeled "tick" beyond the other axis, away from the plot, is that axis's label crossing this line (JMP:
+    // the y axis's bottom label "30" straddles the x axis line left of the corner and its strokes made three ticks).
+    const beyondOther = (axis, other) => {
+        if (!axis || !other?.line)
+            return axis;
+        const at = other.line.pos;
+        const plotAfter = axis.ticks.filter(t => t.pos > at).length >= axis.ticks.filter(t => t.pos < at).length;
+        const outside = t => (plotAfter ? t.pos < at - TICK_LINE_CLEARANCE : t.pos > at + TICK_LINE_CLEARANCE);
+        return { ...axis, ticks: axis.ticks.filter(t => t.label || !outside(t)) };
+    };
+    const finish = axis => {
+        if (!axis)
             return null;
-        const gaps = best.ticks.slice(1).map((t, i) => t.pos - best.ticks[i].pos);
+        const gaps = axis.ticks.slice(1).map((t, i) => t.pos - axis.ticks[i].pos);
         const spacing = gaps.length ? gaps.reduce((sum, g) => sum + g, 0) / gaps.length : NaN;
         const regular = gaps.length > 0 && gaps.every(g => Math.abs(g - spacing) <= Math.max(1, 0.03 * spacing));
-        return { ...best, spacing, regular };
+        return { ...axis, spacing, regular };
     };
-    return { lines, backgrounds, x: pick('h'), y: pick('v') };
+    const x = pick('h');
+    const y = pick('v');
+    return { lines, backgrounds, x: finish(beyondOther(x, y)), y: finish(beyondOther(y, x)) };
 }
 
 /**

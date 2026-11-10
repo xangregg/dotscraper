@@ -42,6 +42,18 @@ test('synthetic L axes: lines, ticks (0.2 px) and label boxes are found', () => 
     }
 });
 
+test('regression: mid-gray axes and ticks (JMP draws them at luminance 165) are axes, not gridlines', () => {
+    // crisp one-pixel lines, as JMP draws them (blurred, the line would be lighter than JMP's)
+    const spec = plot({ blur: 0 });
+    const centered = a => ({ ...a, ticks: a.ticks.map(t => t + 0.5) });
+    spec.axes = { ...spec.axes, color: [165, 165, 165], width: 1, x: centered(spec.axes.x), y: centered(spec.axes.y) };
+    const ax = detectAxes(synthGraph(spec).image);
+    assert.ok(ax.x?.line && ax.y?.line, 'both axis lines');
+    assert.equal(ax.x.ticks.length, 6);
+    assert.equal(ax.y.ticks.length, 5);
+    assert.ok([...ax.x.ticks, ...ax.y.ticks].every(t => t.label));
+});
+
 test('no y axis line: light gridlines and a dark baseline in step with them stand in as y ticks', () => {
     const spec = plot({
         gridlines: [100, 160, 220].map(y => ({ points: [[40, y], [410, y]], width: 2, color: [225, 225, 225] })),
@@ -113,7 +125,10 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
     assert.ok(e.y.ticks.every(t => t.label[0] > 700), JSON.stringify(e.y.ticks.map(t => t.label)));
     // thin antialiased axes count as dark (cantons, beeswarm-boxplot)
     assert.equal(detectAxes(readPng(TESTGRAPHS + 'cantons-haemocytes-dotplot.png')).y.ticks.length, 5);
-    assert.equal(detectAxes(readPng(TESTGRAPHS + 'beeswarm-boxplot.png')).y.ticks.length, 9);
+    const bb = detectAxes(readPng(TESTGRAPHS + 'beeswarm-boxplot.png'));
+    assert.equal(bb.y.ticks.length, 9);
+    // its gray significance bracket (luminance 160) has three unlabeled "ticks" but is not an x axis
+    assert.equal(bb.x, null);
 });
 
 test('regression: the native-size dog-ages "100" label keeps its "1"', { skip: !has('dog-ages-actual-size.png') && 'local test image absent' }, () => {

@@ -1,0 +1,436 @@
+﻿Names Default to Here(1);
+
+dt = New Table( "Test1",
+	Add Rows( 100 ),
+	New Column( "Score",
+		Set Values(
+			[97.2, 94.6, 94, 91, 90.8, 89.6, 89.8, 88.2, 87, 87.4, 85.4, 84.8, 83.4, 83.2, 83.6,
+			83.6, 83.6, 82.6, 82.4, 82.2, 81.6, 81, 81.8, 81, 81.8, 80.8, 80, 79.4, 79, 78.2,
+			78.4, 78.8, 77, 77.6, 77, 77.4, 77.6, 76.2, 77.2, 76.2, 77.4, 76.4, 76.4, 76.8, 76.8,
+			75.2, 75.4, 75.2, 75, 75.8, 75.6, 75, 75.4, 75.8, 74.8, 74, 74.2, 74.4, 74.5, 74.6,
+			74.8, 74.8, 73.4, 74.2, 73.2, 73.6, 73.4, 73.4, 73.8, 73.8, 73, 73.2, 72.8, 72, 72.2,
+			72, 72.4, 72.4, 72.2, 71.4, 71, 71.6, 71.6, 71.2, 71, 71.6, 71.4, 70.6, 70.4, 70.8,
+			70.6, 70, 70.8, 70.8, 70.4, 69.4, 69.6, 69, 69.4, 69.4]
+		)
+	),
+	New Column( "Response",
+		Set Values(
+			[74, 80.4, 72.2, 61.4, 70.4, 77, 62.8, 83.2, 70.6, 72.2, 60, 55.4, 72.6, 60.2, 55,
+			56.6, 51.8, 54.4, 56.4, 58.4, 67.8, 58.2, 52.4, 36.2, 45, 47.2, 43.4, 62.4, 51.2,
+			61.4, 51.2, 36, 65.2, 57, 54.4, 44.4, 51, 65.6, 51.8, 51.4, 48, 48.6, 47.2, 46.4,
+			42.2, 67.8, 60.4, 59, 57.8, 55, 51.6, 43.6, 43, 48.6, 60.8, 54, 48.4, 46.2, 42.6,
+			38.6, 37.8, 46, 56, 56.6, 53.2, 52.8, 51.2, 49.4, 45.2, 43.2, 35.4, 68.4, 57.6, 45.2,
+			44.2, 37.8, 46.2, 54.4, 68.6, 59.2, 55.2, 48.2, 45.8, 39.8, 39, 37.2, 49.4, 60.8,
+			57.4, 41.2, 40, 32.6, 71.6, 56.4, 46.4, 55.8, 53.4, 53.6, 52.2, 52.2]
+		)
+	),
+	New Column( "group", Numeric, "Nominal",
+		Set Values(
+			[1, 1, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 2,
+			2, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1, 2, 1, 1, 1, 2,
+			2, 1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 1, 1, 1, 1, 1, 2, 1, 2,
+			1, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 2, 1, 2,
+			1, 1, 1, 2]
+		)
+	)
+);
+
+dt << Save( "data.csv" );
+
+csv = Load Text File("data.csv");
+csv;
+header = "# x ticks: 65, 70, 75, 80, 85, 90, 95, 100
+# y ticks: 30, 40, 50, 60, 70, 80, 90 
+# x scale: linear, min=65, max=100
+# y scale: linear, min=30, max=90
+# plot area: left=70, top=30, width=546, height=436
+";
+// header uses 0D and CSV uses 0D0A -- not sure why
+substitute into(header, "\!r", "\!r\!n");
+Save Text File("data.csv", header || csv);
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 3 ), Transparency( 0.5 )},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("tiny-dots.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 5 ), Transparency( 0.5 )},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("small-dots.png", "png");
+gb << close window;
+
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 10 ), Transparency( 0.5 ), Line Color("orange")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("medium-dots.png", "png");
+gb << save picture("medium-dots.jpg", "jpg");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 ), Label Row( Show Major Grid( 1 ))} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 10 ), Transparency( 0.5 ), Line Color("magenta")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("medium-dots-grid1.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 ), Label Row( Show Major Grid( 1 ))}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 ), Label Row( Show Major Grid( 1 ))} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 10 ), Transparency( 0.5 ), Line Color("blue")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("medium-dots-grid2.png", "png");
+gb << close window;
+
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model(
+				1,
+				Type Properties( 0, "Marker",
+					{Marker Size( 20 ), Transparency( 0.5 ), Line Color("green")}
+				),
+				Properties( 0,
+					{Marker Size( 20 ), Transparency( 0.5 ), Line Color("green")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("large-dots.png", "png");
+gb << save picture("large-dots.jpg", "jpg");
+gb << close window;
+
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 )), Smoother( X, Y, Legend( 2 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model(
+				1,
+				Type Properties( 0, "Marker",
+					{Marker Size( 12 ), Transparency( 0.5 ), Line Color("black")}
+				),
+				Properties( 0,
+					{Marker Size( 12 ), Transparency( 0.5 ), Line Color("black")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("smoother.png", "png");
+gb << save picture("smoother.jpg", "jpg");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 )), Smoother( X, Y, Legend( 2 ), Confidence of Fit( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 12 ), Transparency( 0.5 ), Line Color("orange")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("smoother-ci.png", "png");
+gb << save picture("smoother-ci.jpg", "jpg");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Smoother( X, Y, Legend( 2 ) ), Points( X, Y, Legend( 1 )) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 12 ), Transparency( 0.5 ), Line Color("black")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("smoother-behind.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Smoother( X, Y, Legend( 2 ), Confidence of Fit( 1 ) ), Points( X, Y, Legend( 1 )) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 12 ), Transparency( 0.5 ), Line Color("orange")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("smoother-behind-ci.png", "png");
+gb << close window;
+
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :group ) ),
+	Elements(
+		Points( X, Y, Legend( 1 ) )
+	),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )}),
+		Dispatch( {}, "400", ScaleBox, {Legend Model( 1,
+			Properties( 0, {Line Color( "red" ), Marker Size( 10 ), Transparency( 0.7 )}, Item ID( "1", 1 )),
+			Properties( 1, {Line Color( "blue" ), Marker Size( 10 ), Transparency( 0.7 )}, Item ID( "2", 1 ))
+		)} )
+	)
+);
+gb << save picture("group.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :group ) ),
+	Elements(
+		Points( X, Y, Legend( 1 ) )
+	),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )}),
+		Dispatch( {}, "400", ScaleBox, {Legend Model( 1,
+			Properties( 0, {Line Color( "red" ), Marker Size( 16 ), Transparency( 0.5 )}, Item ID( "1", 1 )),
+			Properties( 1, {Line Color( "blue" ), Marker Size( 16 ), Transparency( 0.5 )}, Item ID( "2", 1 ))
+		)} )
+	)
+);
+gb << save picture("group-large.png", "png");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :group ) ),
+	Elements(
+		Points( X, Y, Legend( 1 ) ),
+		Smoother( X, Y, Color( 0 ), Legend( 2 ) )
+	),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )}),
+		Dispatch( {}, "400", ScaleBox, {Legend Model( 1,
+			Properties( 0, {Line Color( "red" ), Marker Size( 10 ), Transparency( 0.7 )}, Item ID( "1", 1 )),
+			Properties( 1, {Line Color( "blue" ), Marker Size( 10 ), Transparency( 0.7 )}, Item ID( "2", 1 ))
+		)} )
+	)
+);
+gb << save picture("group-smoother.png", "png");
+gb << save picture("group-smoother.jpg", "jpg");
+gb << close window;
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :group ) ),
+	Elements(
+		Points( X, Y, Legend( 1 ) ),
+		Smoother( X, Y, Color( 0 ), Legend( 2 ), Confidence of Fit( 1 ) )
+	),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )}),
+		Dispatch( {}, "400", ScaleBox, {Legend Model( 1,
+			Properties( 0, {Line Color( "red" ), Marker Size( 10 ), Transparency( 0.7 )}, Item ID( "1", 1 )),
+			Properties( 1, {Line Color( "blue" ), Marker Size( 10 ), Transparency( 0.7 )}, Item ID( "2", 1 ))
+		)} )
+	)
+);
+gb << save picture("group-smoother-ci.png", "png");
+gb << close window;
+
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Ellipse(X, Y, Legend(2)), Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker Size( 12 ), Transparency( 0.5 ), Line Color("orange")},
+					Item ID( "Response", 1 )
+				)
+			)}
+		)
+	)
+);
+
+gb << save picture("ellipse.png", "png");
+gb << close window;
+
+
+gb = Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ) ),
+	Elements( Points( X, Y, Legend( 1 ) ), Points( X, Y, Legend( 2 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0,
+					{Marker("Filled Circle"), Marker Size( 10 ), Transparency( 0.3 ), Line Color("gray")},
+					Item ID( "Response", 1 )
+				)
+			),
+			Legend Model( 2,
+				Properties( 0,
+					{Marker("Circle"), Marker Size( 10 ), Transparency( 0.75 ), Line Color("gray")},
+					Item ID( "Response", 1 )
+				)
+			)	
+			}
+		)
+	)
+);
+
+gb << save picture("stroked-dots.png", "png");
+gb << close window;
+
+close(dt, nosave);
