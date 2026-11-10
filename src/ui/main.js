@@ -7,8 +7,8 @@
 
 import { pixelAt, pixelHash } from '../core/image.js';
 import { restoreChroma } from '../core/jpeg.js';
-import { estimateStyle, JPEG_TOLERANCES, EXACT_TOLERANCES } from '../core/style.js';
-import { unmixEstimates } from '../core/unmix.js';
+import { estimateStyle } from '../core/style.js';
+import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
 import { refitNear } from '../core/fit.js';
@@ -36,9 +36,9 @@ const state = {
     image: null, // RgbaImage
     jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type, or set by the user)
     work: null, // the image the analysis sees: for a JPEG, its chroma restored (src/core/jpeg.js); else the image
-    // every family's estimate when two or more are translucent, each with its unmixed image (src/core/unmix.js);
-    // else null, and each family is fitted on state.work
+    // every family's estimate (src/core/families.js), each with the image to fit it on; null for a picked color
     familyEstimates: null,
+    base: null, // state.work with any translucent layer over the dots divided out (src/core/background.js)
     hash: null,
     estimate: null, // from estimateStyle
     seed: null, // a user-picked family color, or null
@@ -101,9 +101,9 @@ function fittedStyle() {
     return style && f ? { ...style, radius: f.radius } : style;
 }
 
-/** The image the current family is analyzed on: its unmixed image when there is one, else state.work. */
+/** The image the current family is analyzed on: its own image from families.js, else the base image. */
 function analysisImage() {
-    return state.estimate?.image ?? state.work;
+    return state.estimate?.image ?? state.base ?? state.work;
 }
 
 /** What the fit needs for one family: the current one as shown (overrides applied), others as estimated. */
@@ -114,8 +114,8 @@ function fitInputFor(k) {
             mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT,
         };
     }
-    const est = state.familyEstimates?.[k] ?? estimateStyle(state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
-    const image = est.image ?? state.work;
+    const est = state.familyEstimates?.[k] ?? estimateStyle(state.base ?? state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
+    const image = est.image ?? state.base ?? state.work;
     const layers = buildMask(image, est, { bounds: plotBounds(state.axes) });
     return { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
 }
@@ -243,13 +243,18 @@ function refreshMarks(dots = state.fit?.dots) {
 /** Estimate the style (with the current seed or family) and rebuild the mask. */
 function analyze() {
     const t0 = performance.now();
-    state.estimate = estimateStyle(state.work, state.seed ? { seed: state.seed, jpeg: state.jpeg } : { family: state.family, jpeg: state.jpeg });
-    state.familyEstimates = null;
-    const cands = state.estimate.candidates;
-    if (!state.seed && cands.filter(c => c.kind === 'translucent').length >= 2) {
-        const ests = cands.map((_, k) => (k === state.family ? state.estimate : estimateStyle(state.work, { family: k, candidates: cands, jpeg: state.jpeg })));
-        state.familyEstimates = unmixEstimates(state.work, ests, state.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES);
-        state.estimate = state.familyEstimates[state.family];
+    if (state.seed) {
+        // a picked color is one family on its own, on the image with any overlay already divided out
+        state.familyEstimates = null;
+        state.estimate = estimateStyle(state.base ?? state.work, { seed: state.seed, jpeg: state.jpeg });
+    }
+    else {
+        const prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
+        state.base = prepared.image;
+        state.familyEstimates = prepared.estimates;
+        // merging a family seen over two backgrounds can leave fewer families than the index
+        state.family = Math.min(state.family, prepared.estimates.length - 1);
+        state.estimate = prepared.estimates[state.family];
     }
     const t1 = performance.now();
     rebuildMask();
@@ -646,6 +651,7 @@ function saveTruth() {
 function setJpeg(jpeg) {
     state.jpeg = jpeg;
     state.work = jpeg ? restoreChroma(state.image) : state.image;
+    state.base = null;
     $('jpeg').checked = jpeg;
 }
 
@@ -708,10 +714,17 @@ function wireControls() {
     $('family').addEventListener('change', e => {
         if (e.target.value === 'seed')
             return;
-        state.seed = null;
         state.family = Number(e.target.value);
         state.overrides = {};
-        analyze();
+        // every family was prepared together; only a switch back from a picked color needs the analysis again
+        if (state.seed || !state.familyEstimates) {
+            state.seed = null;
+            analyze();
+            return;
+        }
+        state.estimate = state.familyEstimates[state.family];
+        rebuildMask();
+        renderStylePanel();
     });
     $('pick-color').addEventListener('click', () => {
         setPicking(!state.picking);

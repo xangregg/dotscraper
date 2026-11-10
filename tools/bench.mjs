@@ -10,8 +10,8 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPng, readImage } from './png.mjs';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
-import { estimateStyle, JPEG_TOLERANCES, EXACT_TOLERANCES } from '../src/core/style.js';
-import { unmixEstimates } from '../src/core/unmix.js';
+import { estimateStyle } from '../src/core/style.js';
+import { estimateFamilies } from '../src/core/families.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
@@ -63,21 +63,18 @@ function fitEstimate(image, est, bounds) {
 }
 
 /**
- * Every dot family of an image: translucent families on their unmixed images (unmix.js), opaque ones with the
- * others masked, and what lies beyond the axes masked.
+ * Every dot family of an image, as families.js prepares them (overlays divided out, translucent families on their
+ * own images), each fitted with what lies beyond the axes masked.
  */
 export function extractAll(image, jpeg = false) {
     if (jpeg)
         image = restoreChroma(image);
     const bounds = plotBounds(detectAxes(image));
-    const first = estimateStyle(image, { jpeg });
-    const ests = [first];
-    for (let k = 1; k < first.candidates.length; k++)
-        ests.push(estimateStyle(image, { family: k, candidates: first.candidates, jpeg }));
-    const missing = ests.find(e => !e.style);
+    const { estimates } = estimateFamilies(image, { jpeg });
+    const missing = estimates.find(e => !e.style);
     if (missing)
         throw new Error(missing.notes.join(' '));
-    return unmixEstimates(image, ests, jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES).map(e => fitEstimate(e.image, e, bounds));
+    return estimates.map(e => fitEstimate(e.image, e, bounds));
 }
 
 // truth families matched to found families by color (each found family to the nearest truth color)

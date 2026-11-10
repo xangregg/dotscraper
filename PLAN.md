@@ -792,7 +792,54 @@ lines meet (all flagged weak and deep), likely phantoms.
 **Milestone 3: varying backgrounds and translucent overlays** (fibers' CI band, violin shading, pathogen's band,
 bench1's CI bands and ellipse).
 
-- [ ] Background field under the dots; translucent layers over them.
+- [x] Background field under the dots; translucent layers over them.
+
+A shaded region is a large flat area of one color B₂ that isn't a dot family's (`src/core/background.js`): at
+least 1500 flat pixels of the color, surviving an opening by 0.75 dot radius (dog-ages' black curve and text,
+52 000 flat pixels after upscaling, are strokes, not areas; bench3's ANOVA band, its two boxes mostly covered by
+dots, survives 0.75 but not 1 radius), and not itself a dot's color over or under a region found before it
+(orange dots under the band are a large flat color of their own). Each pixel belongs to the region of its nearest
+background-colored pixel, so a dot inside a band is in the band and a dot across its edge is split along it.
+
+- *Over or under.* Drawn under the dots, a region changes a dot's color to c + (B₂ − c)·T: its offset from B₂ points
+  toward c. Drawn over them as a translucent layer, it leaves B₂ + s·(U − B): the offset points along c − B, scaled
+  by s = 1 − the layer's α. The flat pixels inside the region vote; at least 50 votes and 60% agreement decide,
+  else the region is "unknown" and changes nothing. s is the commonest scaled offset against one dot's, and an
+  "overlay" keeping more than 95% of what's under it isn't one (nicest language's white page read as s = 1).
+- *Overlays are divided out* first, U = B + (I − B₂) / s, and everything is estimated again on the result. Pixels on
+  the region's edge are only partly under the layer and are left as they are (inverted as if wholly under it, the
+  slivers where bench1 smoother-ci's band edge crosses a dot made an "opaque family" that took every dot again).
+- *Regions under translucent dots* give unmix.js a per-pixel background: a dot there is read along the line from B₂.
+  Opaque families already read coverage against their local background.
+- *One family over two backgrounds* (`families.js`): with too few overlaps to show its levels, a translucent family
+  looks like two opaque ones (bench1 ellipse: orange on white and on lavender, the only overlap inside the ellipse).
+  Their colors differ by q·(B − B₂), which gives α = 1 − q and c without any overlap; such a pair becomes one
+  translucent family, and an opaque cluster that is a translucent family's dot over B₂ is dropped.
+- `estimateFamilies` (`src/core/families.js`) does all of it (estimate, regions, overlays, merges, unmixing); the
+  bench and the app both call it, and the style panel's notes say what was done.
+
+Measured (found / truth, recall, RMSE px); every other bench row and every real image's counts unchanged:
+
+| chart | before | now |
+|---|---|---|
+| bench1 smoother-ci (band over) | 80, 0.800 | 100, 1.000 (0.028) |
+| bench1 smoother-behind-ci (band under) | 83, 0.820 | 100, 1.000 (0.026) |
+| bench1 group-smoother-ci | 85, 0.840 | 100, 1.000 (0.034) |
+| bench1 ellipse | 194, 0.970, precision 0.500 | 100, 1.000 (0.046) |
+| bench2 smoother-ci | 290, 0.853, precision 0.600 | 203, 0.995 (0.046) |
+| bench2 smoother-behind-ci | 180, 0.868 | 205, 1.000, precision 0.995 (0.064) |
+| bench2 group-smoother-ci | 190, 0.882, precision 0.947 | 205, 0.990, precision 0.985 (0.117) |
+| bench2 ellipse | 178, 0.667 | 204, 1.000 (0.042) |
+| bench3 dots-swarm-anova (band over opaque dots) | 185, 0.907 | 204, 1.000 (0.038) |
+| bench1 smoother-ci.jpg | 74, 0.740 | 97, 0.960 (0.258) |
+| bench2 smoother-ci.jpg | 171, 0.838 | 187, 0.907 (0.191) |
+
+In the browser: bench1 smoother-ci 100 dots (0.028 px), with the note that a layer letting 74% through was
+divided out; bench2 group still 204 (113 + 91).
+
+Not done: fibers' band (3 votes: its opaque dots barely enter it; left "unknown", 39 dots as before); pathogen's
+band over outlined dots (milestone 2 first); the JPEG band charts are short of their PNGs, and bench1
+smoother-ci.jpg's positions are worse (0.258 px against 0.038 before; not examined).
 
 **Milestone 4.**
 

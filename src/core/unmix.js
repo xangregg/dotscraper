@@ -52,36 +52,43 @@ function fractional(T, q) {
  * @param {{color: number[], alpha: number}[]} families  translucent families: full color c (0–255), α (0–1)
  * @param {Uint8Array} [flat]  1 where the pixel's neighborhood is flat (style.flatMask); a flat pixel on one family's
  *   line must be a whole number of its dots
+ * @param {{colors: number[][], index: Uint8Array}} [under]  a background that varies under the dots: pixel p's is
+ *   colors[index[p]] (background.js, regions under the dots); default B everywhere
  * @returns {{T: Float32Array[], mixed: Uint8Array}}  T per family (1 where it has no dot); mixed = 1 where a pair
  *   explained the pixel, 2 where nothing did (the pixel is left to each family's mask)
  */
-export function unmixFamilies(image, B, families, flat = null) {
+export function unmixFamilies(image, B, families, flat = null, under = null) {
     const { width, height, data } = image;
     const n = width * height;
     const F = families.length;
     const T = families.map(() => new Float32Array(n).fill(1));
     const mixed = new Uint8Array(n);
-    const dirs = families.map(f => f.color.map((v, ch) => v - B[ch])); // c − B
-    const span = dirs.map(d => Math.hypot(...d));
-    const unit = dirs.map((d, k) => d.map(v => v / span[k]));
     const q = families.map(f => 1 - f.alpha);
-    // pair normal equations, precomputed
-    const pairs = [];
-    for (let a = 0; a < F; a++) {
-        for (let b = a + 1; b < F; b++) {
-            const aa = dot(dirs[a], dirs[a]);
-            const bb = dot(dirs[b], dirs[b]);
-            const ab = dot(dirs[a], dirs[b]);
-            const det = aa * bb - ab * ab;
-            if (Math.abs(det) > 1e-6 * aa * bb)
-                pairs.push({ a, b, aa, bb, ab, det });
+    // each family's offset from each background, and the pair normal equations, precomputed per background
+    const geometry = Bk => {
+        const dirs = families.map(f => f.color.map((v, ch) => v - Bk[ch])); // c − B_k
+        const span = dirs.map(d => Math.hypot(...d));
+        const unit = dirs.map((d, k) => d.map(v => v / span[k]));
+        const pairs = [];
+        for (let a = 0; a < F; a++) {
+            for (let b = a + 1; b < F; b++) {
+                const aa = dot(dirs[a], dirs[a]);
+                const bb = dot(dirs[b], dirs[b]);
+                const ab = dot(dirs[a], dirs[b]);
+                const det = aa * bb - ab * ab;
+                if (Math.abs(det) > 1e-6 * aa * bb)
+                    pairs.push({ a, b, aa, bb, ab, det });
+            }
         }
-    }
+        return { Bk, dirs, span, unit, pairs };
+    };
+    const geometries = (under?.colors ?? [B]).map(geometry);
     const e = [0, 0, 0];
     for (let p = 0; p < n; p++) {
-        e[0] = data[4 * p] - B[0];
-        e[1] = data[4 * p + 1] - B[1];
-        e[2] = data[4 * p + 2] - B[2];
+        const { Bk, dirs, span, unit, pairs } = geometries[under ? under.index[p] : 0];
+        e[0] = data[4 * p] - Bk[0];
+        e[1] = data[4 * p + 1] - Bk[1];
+        e[2] = data[4 * p + 2] - Bk[2];
         const len2 = dot(e, e);
         if (len2 < 1)
             continue;
@@ -175,22 +182,43 @@ export function familyImage(image, B, family, T, mixed) {
 }
 
 /**
- * Each family's estimate with the image it should be fitted on. With two or more translucent families, each of them
- * gets its unmixed image (familyImage) and the overlap count recomputed on it, so pixels where it overlaps another
- * family count instead of being masked; opaque families, and every family when fewer than two are translucent, keep
- * the image as it is.
+ * Each family's estimate with the image it should be fitted on. Translucent families get their own image
+ * (familyImage) and the overlap count recomputed on it when there are two or more of them (pixels where they
+ * overlap count instead of being masked) or when part of the background under the dots is another color (a dot
+ * there is read against that color). Opaque families, which read coverage against their local background already,
+ * keep the image as it is.
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {object[]} estimates  style.estimateStyle for each family (one without a style is passed through)
  * @param {import('./style.js').Tolerances} [tol]  as the estimates used
- * @returns {object[]}  the estimates with `image` added (and D and notes replaced where unmixed)
+ * @param {{regions: {color: number[], mode: string}[], label: Uint8Array}|null} [layers]  background.js
+ * @returns {object[]}  the estimates with `image` added (and D and notes replaced where separated)
  */
-export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES) {
+export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers = null) {
     const translucent = estimates.map((e, k) => (e.style && e.familyMeasure?.kind !== 'opaque' && e.style.alpha < 1 ? k : -1)).filter(k => k >= 0);
-    if (translucent.length < 2)
+    const underRegions = (layers?.regions ?? []).map((r, i) => (r.mode === 'under' ? i : -1)).filter(i => i >= 0);
+    if (translucent.length === 0 || (translucent.length < 2 && !underRegions.length))
         return estimates.map(e => ({ ...e, image }));
     const B = estimates[translucent[0]].familyMeasure.line.B;
-    const { T, mixed } = unmixFamilies(image, B, translucent.map(k => estimates[k].style), estimates[translucent[0]].flat ?? flatMask(image, tol));
+    let under = null;
+    if (underRegions.length) {
+        const index = new Uint8Array(layers.label.length);
+        for (let p = 0; p < index.length; p++) {
+            const r = layers.label[p] - 1;
+            index[p] = r >= 0 && layers.regions[r].mode === 'under' ? r + 1 : 0;
+        }
+        under = { colors: [B, ...layers.regions.map(r => r.color)], index };
+    }
+    const flat = estimates[translucent[0]].flat ?? flatMask(image, tol);
+    const { T, mixed } = unmixFamilies(image, B, translucent.map(k => estimates[k].style), flat, under);
+    const others = translucent.length - 1;
+    const notes = [];
+    if (others)
+        notes.push(`Overlaps with the other ${others === 1 ? 'translucent family are' : `${others} translucent families are`} separated pixel by pixel; the counts shown are this family’s alone.`);
+    for (const i of underRegions) {
+        const c = layers.regions[i].color.map(Math.round).join(', ');
+        notes.push(`A region of color ${c} lies under the dots; dots there are read against it.`);
+    }
     return estimates.map((e, k) => {
         const j = translucent.indexOf(k);
         if (j < 0)
@@ -200,7 +228,7 @@ export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES) {
         return {
             ...e, image: own,
             D: countImage(projectOnLine(own, line), line, e.style.levels, tol),
-            notes: [...e.notes, `Overlaps with the other ${translucent.length - 1 === 1 ? 'translucent family are' : `${translucent.length - 1} translucent families are`} separated pixel by pixel; the counts shown are this family’s alone.`],
+            notes: [...e.notes, ...notes],
         };
     });
 }
