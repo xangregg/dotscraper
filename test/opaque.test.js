@@ -7,7 +7,11 @@ import { buildMask } from '../src/core/layers.js';
 import { fitDots } from '../src/core/fit.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { matchDots } from '../src/core/metrics.js';
-import { readPng } from '../tools/png.mjs';
+import { readPng, readImage } from '../tools/png.mjs';
+import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
+import { estimateFamilies } from '../src/core/families.js';
+import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
+import { extractAll } from '../tools/bench.mjs';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -108,4 +112,69 @@ test('regression: Laser’s black family fits its dots, not its text or bar', { 
     near(fit.dots.length, 23, 1, 'black dots');
     // none below the plot (the category labels) or left of the y axis (the tick labels)
     assert.ok(fit.dots.every(d => d.y < 600 && d.x > 140), JSON.stringify(fit.dots.filter(d => d.y >= 600 || d.x <= 140)));
+});
+
+// JMP's outlined markers: each dot an opaque disc of the outline color with a smaller fill drawn over it, dot by dot
+function outlinedImage(dots, fill, outline, r, width) {
+    let im = solidImage(200, 120, [255, 255, 255]);
+    for (const d of dots) {
+        for (const [color, radius] of [[outline, r + width], [fill, r]]) {
+            const model = createDotModel(im, { color, alpha: 1, radius });
+            model.add(d.x, d.y);
+            im = model.image;
+        }
+    }
+    const rgba = toRgba(im);
+    return { ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) };
+}
+
+test('outlined opaque dots: one family, fill and outline, measured at the outline’s radius', () => {
+    const fill = [171, 8, 252];
+    const outline = [105, 2, 156];
+    const dots = [];
+    for (let i = 0; i < 6; i++)
+        dots.push({ x: 20 + i * 30, y: 30 }, { x: 25 + i * 30, y: 85 + (i % 2) * 6 });
+    dots.push({ x: 37, y: 92 }); // overlapping the second row's first dot
+    const image = outlinedImage(dots, fill, outline, 8.8, 1.7);
+    const est = estimateStyle(image);
+    assert.equal(est.candidates.length, 1, 'the outline is not a family of its own');
+    const fam = est.candidates[0];
+    assert.equal(fam.kind, 'opaque');
+    assert.ok(fam.outline && Math.hypot(...fam.outline.map((v, ch) => v - outline[ch])) <= 6, `outline ${fam.outline}`);
+    near(fam.radius, 10.5, 0.2, 'radius');
+    const layers = buildMask(image, est);
+    const fit = fitDots({ image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT });
+    const m = matchDots(dots, fit.dots, 2);
+    assert.equal(fit.dots.length, dots.length);
+    assert.equal(m.recall, 1);
+});
+
+const benchDir = set => new URL(`../${set}/`, import.meta.url).pathname;
+const benchAbsent = (set, name) => !existsSync(benchDir(set) + name) && `${set}/${name} absent`;
+
+function benchRow(set, name) {
+    const truth = truthPixels(readTruthCsv(benchDir(set) + 'data.csv')).dots;
+    const found = extractAll(readImage(benchDir(set) + name)).flatMap(r => r.fit.dots);
+    return { found: found.length, m: matchDots(truth, found, 4) };
+}
+
+test('regression: outlined opaque dots are a family (bench1 solid-opaque-stroke)', { skip: benchAbsent('bench1', 'solid-opaque-stroke.png') }, () => {
+    // before: "No dot family found": every outline pixel read as neither the fill nor its background
+    const { found, m } = benchRow('bench1', 'solid-opaque-stroke.png');
+    assert.equal(found, 98); // as the plain rendering, solid-opaque
+    assert.ok(m.recall >= 0.98, `recall ${m.recall}`);
+});
+
+test('regression: bench2 solid-opaque-stroke', { skip: benchAbsent('bench2', 'solid-opaque-stroke.png') }, () => {
+    // before: no family. 165 of 204: about 8 dots are under 0.1% visible, and dots in packed clusters are missed
+    // because the boundaries between fill and outline inside a cluster aren't used
+    const { found, m } = benchRow('bench2', 'solid-opaque-stroke.png');
+    assert.ok(found >= 160, `found ${found}`);
+    assert.ok(m.recall >= 0.75, `recall ${m.recall}`);
+});
+
+test('regression: no outlined family made of a translucent family’s levels (economist)', { skip: !has('economist-canada-unfriendly-chart.png') && 'local test image absent' }, () => {
+    // a red–blue lens inside red dots, with red's one-dot level around it, passed as an outlined opaque family
+    const { estimates } = estimateFamilies(readPng(new URL('../testgraphs/economist-canada-unfriendly-chart.png', import.meta.url).pathname));
+    assert.deepEqual(estimates.map(e => e.familyMeasure.kind), ['translucent', 'translucent']);
 });

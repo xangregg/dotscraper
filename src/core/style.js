@@ -113,6 +113,9 @@ const OFF_MIX_REL = 0.12;
 // … and so is one well past the dot's color along the mix (black text against light gray dots: on the same gray
 // axis, it read as coverage 4, clipped to 1, and text strokes became the family's radius)
 const MAX_MIX = 1.3;
+const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–outline segment still lies on it
+const OUTLINE_OPENING = 1.5; // px, radius of the disc that must remove an outline's color …
+const OUTLINE_MAX_THICK = 0.25; // … all but this share of it
 
 /**
  * Tolerances that assume exact renders, and their JPEG replacements (for an image whose chroma jpeg.js has
@@ -988,33 +991,47 @@ function localBackground(image, near, colors, others) {
  * An opaque family from a color: the coverage image D (0 its local background … 1 the color; NaN where a pixel is
  * neither, or contrast is too low to tell), its typical background (the most common color around it), the radius
  * (isolated dots, else the distance transform), and how many filled, dot-shaped edges a Hough vote finds.
+ *
+ * With an outline color, a dot is its fill inside an opaque ring of the outline (JMP's outlined markers: an outline
+ * disc 1.7 px larger in radius under the fill): every pixel between the two colors is covered, and the outer rim is
+ * read as the outline's coverage of the background. The boundary between fill and outline isn't used.
  */
-export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES) {
+export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES, outline = null) {
     const { width, height, data } = image;
     const n = width * height;
+    const member = (p, c) => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL;
+    const own = new Uint8Array(n);
     const mask = new Uint8Array(n);
-    for (let p = 0; p < n; p++)
-        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= CLUSTER_TOL ? 1 : 0;
+    for (let p = 0; p < n; p++) {
+        own[p] = member(p, color) ? 1 : 0;
+        mask[p] = own[p] || (outline && member(p, outline)) ? 1 : 0;
+    }
     const thick = opening(mask, width, height, THICK_OPENING);
+    const thickOwn = outline ? opening(own, width, height, THICK_OPENING) : thick;
     const B = ringBackground(image, thick.some(v => v) ? thick : mask) ?? backgrounds[0];
     const near = dilate(mask, width, height, NEAR_FAMILY);
+    // the outer rim mixes the background with the outline, if there is one
+    const edge = outline ?? color;
     // the family's color noise: RMS distance from its color over interior pixels (all 8 neighbors in the family)
     let noiseSum = 0;
     let noiseN = 0;
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
             const p = y * width + x;
-            if (!thick[p] || !mask[p - 1] || !mask[p + 1] || !mask[p - width] || !mask[p + width])
+            if (!thickOwn[p] || !own[p - 1] || !own[p + 1] || !own[p - width] || !own[p + width])
                 continue;
             noiseSum += (data[4 * p] - color[0]) ** 2 + (data[4 * p + 1] - color[1]) ** 2 + (data[4 * p + 2] - color[2]) ** 2;
             noiseN++;
         }
     }
     const offAbs = Math.max(OFF_MIX_ABS, OFF_MIX_NOISE * (noiseN ? Math.sqrt(noiseSum / noiseN) : 0));
-    const pageColorsForBg = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL);
+    const pageColorsForBg = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL
+        && (!outline || Math.hypot(...P.map((v, ch) => v - outline[ch])) > CLUSTER_TOL));
     const bg = localBackground(image, near, pageColorsForBg, others);
     // background colors, but not this family's own (a dot color can be common enough to count as a background)
-    const pageColors = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL);
+    const pageColors = pageColorsForBg;
+    const fo = outline ? color.map((v, ch) => v - outline[ch]) : null;
+    const foo = fo ? fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2] : 0;
     const D = new Float32Array(n);
     for (let p = 0; p < n; p++) {
         const r = data[4 * p];
@@ -1024,10 +1041,21 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             D[p] = 0; // away from the family on a background color: no dot here
             continue;
         }
+        if (fo) {
+            // between the outline and the fill: inside a dot
+            const e0 = r - outline[0];
+            const e1 = g - outline[1];
+            const e2 = b - outline[2];
+            const k = (e0 * fo[0] + e1 * fo[1] + e2 * fo[2]) / foo;
+            if (k >= -OUTLINE_SLACK && k <= 1 + OUTLINE_SLACK && Math.hypot(e0 - k * fo[0], e1 - k * fo[1], e2 - k * fo[2]) <= offAbs) {
+                D[p] = 1;
+                continue;
+            }
+        }
         // away from the family, another family's color is that family's pixel, not partial coverage of this one
         // (near it, pixels are read against their actual neighbor, which keeps the edges where dots touch)
-        const own = Math.hypot(r - color[0], g - color[1], b - color[2]);
-        if (!near[p] && others.some(O => { const d = Math.hypot(r - O[0], g - O[1], b - O[2]); return d <= CLUSTER_TOL && d < own; })) {
+        const dOwn = Math.min(Math.hypot(r - color[0], g - color[1], b - color[2]), outline ? Math.hypot(r - outline[0], g - outline[1], b - outline[2]) : Infinity);
+        if (!near[p] && others.some(O => { const d = Math.hypot(r - O[0], g - O[1], b - O[2]); return d <= CLUSTER_TOL && d < dOwn; })) {
             D[p] = NaN;
             continue;
         }
@@ -1036,9 +1064,9 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         const b0 = near[p] ? bg[3 * p] : B[0];
         const b1 = near[p] ? bg[3 * p + 1] : B[1];
         const b2 = near[p] ? bg[3 * p + 2] : B[2];
-        const w0 = color[0] - b0;
-        const w1 = color[1] - b1;
-        const w2 = color[2] - b2;
+        const w0 = edge[0] - b0;
+        const w1 = edge[1] - b1;
+        const w2 = edge[2] - b2;
         const ww = w0 * w0 + w1 * w1 + w2 * w2;
         if (ww < MIN_CONTRAST * MIN_CONTRAST) {
             D[p] = NaN;
@@ -1104,10 +1132,27 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     }
     const pixels = mask.reduce((t, v) => t + v, 0);
     return {
-        kind: 'opaque', seed: color, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
+        kind: 'opaque', seed: color, outline, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
         levels: [{ t: Math.hypot(...B.map((v, ch) => v - color[ch])), color, count: pixels }],
         beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
     };
+}
+
+// An outline is a thin ring: an opening by a disc wider than it leaves little of its color. Areas around a fill are
+// thick (bench1 ellipse: the lavender ellipse under orange dots keeps 98%; bench2 group-smoother.jpg: red's one-dot
+// level around its two-dot lenses keeps 94%), and JMP's 1.7 px outlines keep 0.5–4.8%.
+function isThin(image, color) {
+    const { width, height, data } = image;
+    const mask = new Uint8Array(width * height);
+    let total = 0;
+    for (let p = 0; p < mask.length; p++) {
+        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= CLUSTER_TOL ? 1 : 0;
+        total += mask[p];
+    }
+    let kept = 0;
+    for (const v of opening(mask, width, height, OUTLINE_OPENING))
+        kept += v;
+    return total > 0 && kept < OUTLINE_MAX_THICK * total;
 }
 
 function radiusPlausible(radius, isolatedCount) {
@@ -1132,9 +1177,10 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     });
     const { width, height, data } = image;
     const out = [];
-    // a cluster between a family found already and that family's background (or a page color) is its antialiased
-    // rim, not a family (synthetic swarm: maroon's blend with white made a "family")
-    const isBlend = c => out.some(f => [f.background, ...backgrounds].some(P => {
+    // a cluster between a family found already and that family's background, its outline or a page color is an
+    // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family")
+    const isOutline = c => out.some(f => f.outline && Math.hypot(...f.outline.map((v, ch) => v - c[ch])) <= CLUSTER_TOL);
+    const isBlend = c => out.some(f => [f.background, ...(f.outline ? [f.outline] : []), ...backgrounds].some(P => {
         const w = f.seed.map((v, ch) => v - P[ch]);
         const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
         const v = c.map((x, ch) => x - P[ch]);
@@ -1144,7 +1190,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and so
     // count as a background color; the dot test tells it from a panel.
     for (const cl of colorClusters(image, backgrounds.slice(0, 1))) {
-        if (onTranslucent(cl.color) || isBlend(cl.color))
+        if (onTranslucent(cl.color) || isBlend(cl.color) || isOutline(cl.color))
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
         const c = cl.color;
@@ -1172,7 +1218,16 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         }
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
-        const fam = measureOpaque(image, cl.color, backgrounds, [], tol);
+        let fam = measureOpaque(image, cl.color, backgrounds, [], tol);
+        // a fill whose surroundings are another ink, not the page: outlined dots, tried as one family. Not a
+        // translucent family's level (economist: a red–blue lens inside red dots made a phantom "outlined" family)
+        const ring = fam.background;
+        if (!isDotFamily(fam) && !onTranslucent(ring) && !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL)
+            && isThin(image, ring)) {
+            const outlined = measureOpaque(image, cl.color, backgrounds, [], tol, ring);
+            if (isDotFamily(outlined))
+                fam = { ...outlined, fillRadius: fam.radius };
+        }
         fam.interior = interior / count;
         if (isDotFamily(fam))
             out.push(fam);
@@ -1182,8 +1237,8 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     // blue, about 10 dots each) can fail the test once its neighbors' colors are excluded.
     const colors = out.map(f => f.seed);
     const final = out.map(f => {
-        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed), tol);
-        return { ...g, radius: g.radius ?? f.radius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
+        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed), tol, f.outline);
+        return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
 }
@@ -1299,7 +1354,11 @@ function opaqueEstimate(image, fam, candidates, familyIndex, flat, pageBackgroun
         background: { color: fam.background, fraction: count },
         candidates, family: familyIndex, flat,
         familyMeasure: fam,
-        style: { color: [...fam.seed], alpha: 1, levels: fam.table, measuredLevels: 1, radius: fam.radius, blur },
+        style: {
+            color: [...fam.seed], alpha: 1, levels: fam.table, measuredLevels: 1, radius: fam.radius, blur,
+            // for display only: the fit sees an outlined dot as one disc (measureOpaque)
+            ...(fam.outline && fam.fillRadius ? { outline: { color: [...fam.outline], inner: fam.fillRadius / fam.radius } } : {}),
+        },
         D: fam.D, fitT, isolated: fam.isolated, edge, notes,
     };
 }

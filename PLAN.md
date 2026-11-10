@@ -789,7 +789,8 @@ lines meet (all flagged weak and deep), likely phantoms.
 
 - [x] Outlined dots with one fill: a two-part template (ring and fill).
 - [x] A fill that varies per dot, translucent (bench1–2 gradient-dots, `colormap.js`).
-- [ ] A fill that varies per dot, opaque (pathogen).
+- [x] Outlined opaque dots of one fill (bench1–2 solid-opaque-stroke).
+- [ ] A fill that varies per dot, opaque (pathogen; bench1–2 gradient-opaque, gradient-opaque-stroke).
 
 **Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
 fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
@@ -842,6 +843,29 @@ smaller fill, both α 0.5: fill radius 9.6, outline 11.3 px, measured correctly)
 the outline's radius (11.1). Not done: each dot's color isn't reported (a legend mapping would be needed to make it
 data); opaque scale-colored dots (pathogen) aren't detected; a scale sharing the plot with another family isn't
 handled. In the browser: not checked (the page check couldn't launch Chrome in this session's sandbox).
+
+**Outlined opaque dots** (bench1–2 solid-opaque-stroke: JMP's outlined markers at α 1, a fill (171, 8, 252) of
+radius 8.78 over an outline disc (105, 2, 156) of radius 10.47, centered together; plain solid-opaque has the
+same fill radius). Before: "No dot family found", since every outline pixel read as neither the fill nor its
+background, so each fill sat in a ring of unknown pixels and the Hough vote saw no edges.
+
+- *Model* (`measureOpaque`, `outline`): a two-color opaque family. Pixels between the fill and the outline are
+  covered; the outer rim is the outline's coverage of the background; a dot is one disc at the outline's radius,
+  and the opaque fit runs unchanged. The boundary between fill and outline isn't used.
+- *Detection* (`opaqueFamilies`): only a cluster that fails the dot test is retried, when its ring color is not a
+  page background, not a translucent family's level (economist: a red–blue lens inside red dots, with red's
+  one-dot level around it, made a phantom family), and thin: an opening of radius 1.5 px keeps under 25% of it
+  (JMP's outlines keep 0.5–4.8%; bench1 ellipse's lavender region 98% and bench2 group-smoother.jpg's red level
+  94%, both phantoms before this test). The blend of fill and outline is a rim, not a family (synthetic).
+- *Display*: the dot sample and the Model view draw the outline disc and then the fill (sample difference: mean
+  10.21 → 0.58, max 95.2 → 6.3); the Model view draws all outlines before all fills and says so.
+
+Measured: bench1 98/100, recall 0.98, RMSE 0.041 (plain solid-opaque: 98, 0.035); bench2 165/204, 0.760, 0.862
+(plain: 180, 0.863, 0.625). About 8 of bench2's dots are under 0.1% visible in either rendering. Against the plain
+rendering, the outlined one misses 15 dots that are at least 60% visible (plain: 7), in packed clusters, where the
+union of the discs is one blob and only the inner outlines show where each dot is. Using them needs a renderer that
+respects drawing order (a later outline paints over an earlier fill); not done. Every other bench row and all ten
+testgraphs images' families are unchanged. In the browser: bench2 165 dots, no console errors.
 
 **Not done, and why.**
 

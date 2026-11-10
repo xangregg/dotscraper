@@ -202,6 +202,19 @@ function showMessage(text, isError = false) {
     el.hidden = !text;
 }
 
+/**
+ * The dots rendered in RGB with the style. An outlined opaque family's dots are an outline disc with the fill drawn
+ * over it: exact for one dot, but here every outline is drawn before every fill (the chart's order isn't known), so
+ * where dots overlap the picture differs from the chart's.
+ */
+function renderModel(bg, dots, style) {
+    if (!style.outline)
+        return renderDots(bg, dots, style);
+    // the level table would paint over the background image, so both passes composite over it instead
+    const rings = renderDots(bg, dots, { ...style, color: style.outline.color, levels: undefined });
+    return renderDots(rings, dots, { ...style, radius: style.outline.inner * style.radius, levels: undefined });
+}
+
 function displayImage() {
     const { image, estimate, layers } = state;
     if (state.overlay === 'count' && estimate?.D)
@@ -217,7 +230,7 @@ function displayImage() {
         const line = estimate.familyMeasure.line;
         const bg = solidImage(image.width, image.height, line.B);
         if (state.overlay === 'model')
-            return rgbOverlay(renderDots(bg, fam.dots, style));
+            return rgbOverlay(renderModel(bg, fam.dots, style));
         const modelT = renderDots(bg, fam.dots, { ...style, project: line }).data;
         let imgT = estimate.fitT;
         if (!imgT) {
@@ -341,7 +354,7 @@ function renderSample() {
     const size = Math.min(2 * half + 1, state.image.width - x0, state.image.height - y0);
     // a color scale's model is in the virtual family's color, so it is compared with the virtual image it was fitted on
     const seen = est.scale ? analysisImage() : state.work;
-    const model = renderDots(solidImage(size, size, est.background.color), [{ x: dot.cx - x0, y: dot.cy - y0 }], style);
+    const model = renderModel(solidImage(size, size, est.background.color), [{ x: dot.cx - x0, y: dot.cy - y0 }], style);
     const real = new ImageData(size, size);
     const mod = new ImageData(size, size);
     const diff = new ImageData(size, size);
@@ -402,7 +415,8 @@ function renderLegend() {
         return;
     }
     if (state.overlay === 'model') {
-        legend.textContent = 'The fitted dots rendered with the style (radius from the fit).';
+        legend.textContent = 'The fitted dots rendered with the style (radius from the fit).'
+            + (currentStyle()?.outline ? ' Outlines are all drawn before the fills, so overlaps can differ from the chart’s drawing order.' : '');
         return;
     }
     if (state.overlay === 'count')
