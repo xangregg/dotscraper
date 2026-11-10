@@ -259,3 +259,18 @@ test('projected rendering equals the projection of the RGB rendering', () => {
         }
     }
 });
+
+test('an outlined dot: α inside, α + ring α in the annulus, exact coverage at the ring’s inner edge', () => {
+    const style = { color: [0, 0, 0], alpha: 0.3, radius: 10, ring: { inner: 0.8, alpha: 0.4 } };
+    const im = renderDots(solidImage(40, 40, [255, 255, 255]), [{ x: 20, y: 20 }], style);
+    const at = (x, y) => im.data[3 * (y * 40 + x)];
+    // center, and a pixel [28, 29) × [19, 20), 8.0–9.0 px out along the row: inside the annulus 8–10
+    assert.ok(Math.abs(at(20, 20) - 255 * 0.7) < 1e-3);
+    assert.ok(Math.abs(at(28, 19) - 255 * 0.3) < 0.2, `ring ${at(28, 19)}`);
+    // a pixel straddling the inner circle: 1 − α·m − ring α·(m − m_inner)
+    const m = pixelCoverage(20, 20, 10, 27, 23);
+    const mi = pixelCoverage(20, 20, 8, 27, 23);
+    assert.ok(mi > 0.05 && mi < 0.95, `straddles: ${mi}`);
+    assert.ok(Math.abs(at(27, 23) - 255 * (1 - 0.3 * m - 0.4 * (m - mi))) < 1e-3);
+    assert.equal(at(5, 5), 255);
+});

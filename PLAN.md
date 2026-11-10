@@ -787,7 +787,42 @@ lines meet (all flagged weak and deep), likely phantoms.
 
 **Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers, bench1 stroked-dots).
 
-- [ ] Outlined dots: a two-part template (ring and fill), and a fill that varies per dot.
+- [x] Outlined dots with one fill: a two-part template (ring and fill).
+- [ ] A fill that varies per dot (pathogen).
+
+**Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
+fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
+dot, so no dot passed as isolated and the radius was unknown.
+
+- *Render* (`render.js` `style.ring`): a dot is α opaque inside and α + ring α between inner × radius and the radius,
+  in the family's one color; the annulus's coverage is the disc's less the inner disc's, so antialiasing stays
+  exact. It is exact for one dot; where outlines cross other dots it is an approximation (the true ring has its
+  own color and is composited after its own fill).
+- *Isolated* (`style.js`): a component deeper than one dot still counts when all of its deeper pixels lie beyond
+  0.6 radius from its center; the area (counts clamped at 1) still gives the outer radius.
+- *Measured* (`measureRing`): when at least half the isolated dots are ringed, the inner radius (0.5–0.97 × r) and
+  the ring's extra opacity are fitted to their pixels along the color line (opacity by linear least squares for
+  each inner radius). bench1: a ring from 8.3 to 10.3 px, 69% opaque against 31% inside; bench2: 8.3–10.3 px, 63%
+  against 25%. The style notes describe it.
+
+Measured: bench1 stroked-dots 100/100, bench2 204/204 (was: no radius), 29 and 48 flagged deep (ring pixels read
+as deeper stacks than the measured levels). RMSE 0.62 and 0.71 px, which is JMP's drawing, not the fit: its
+stroked dots sit up-left of the data, the fill by 0.5 px and the ring by 0.13 px (centroids of isolated dots
+against the truth; plain dots are exact), and the fitted centers carry a mean offset of (−0.44, −0.44) px with
+0.03 px scatter around it. Other rows: three JPEG rows' RMSE moved by 0.001–0.007 px (a few JPEG dots now pass
+as ringed isolated dots); everything else, and every real image, unchanged. In the browser: 100 dots, no errors.
+
+**Not done, and why.**
+
+- *pathogen* (a fill that varies per dot, by a color scale, under a thin dark outline; and a band over the dots,
+  gridlines, a log scale): there is no color family to find. It needs a different model: per-dot fill colors,
+  fitted in RGB rather than along one color line, with opaque dots hiding each other in drawing order, detected
+  from the outlines. It also has no ground truth; a JMP truth set colored by a continuous column, with outlines,
+  would make it measurable.
+- *beeswarm-boxplot* fails for another reason than its few outlined outliers: its gray swarm is packed (no
+  isolated dot, the discs explain 0.31 of the color's pixels against the 0.35 required), and its red swarm's local
+  background reads as dark red (57, 0, 0), probably where the box plot's black lines cross red dots, so no coverage
+  is read. That is milestone 1's opaque-family test.
 
 **Milestone 3: varying backgrounds and translucent overlays** (fibers' CI band, violin shading, pathogen's band,
 bench1's CI bands and ellipse).

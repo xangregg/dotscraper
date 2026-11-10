@@ -11,6 +11,7 @@
 import { houghCenters } from './fit.js';
 import { distanceTransform, dilate, nearestTransform, opening } from './layers.js';
 import { backgroundColors } from './axes.js';
+import { pixelCoverage } from './render.js';
 
 const BACKGROUND_TOL = 3; // 0–255 units (Euclidean RGB): a pixel this close to B is background
 const FLAT_TOL = 3; // 0–255 units: max channel difference in a 3×3 neighborhood for a pixel to count as flat
@@ -48,6 +49,14 @@ const ISOLATED_MAX_LEVEL = 1.25; // components never above this count are single
 const ISOLATED_MIN_AREA = 12; // px² (JMP's tiny dots: r 2.6, area 21)
 const ISOLATED_MAX_ASPECT = 1.05; // ratio of principal second-moment radii
 const ISOLATED_MAX_MOMENT_RATIO = 1.03; // r(moment) / r(area); 1 for a uniform disc
+// Outlined dots (bench1 stroked-dots: a light gray fill, a darker ring 2 px wide at the rim) read deeper than one dot
+// at the ring, so none passed as isolated. A component above ISOLATED_MAX_LEVEL is still one dot if every such pixel
+// lies in its outer part, beyond this fraction of the radius from the center.
+const RING_MIN_RADIUS_FRACTION = 0.6;
+const RING_INNER_RANGE = [0.5, 0.97]; // the ring's inner radius searched, × the radius
+const RING_INNER_STEP = 0.01;
+const RING_MIN_ALPHA = 0.05; // extra opacity below this is no ring
+const RINGED_MIN_SHARE = 0.5; // of the isolated dots, for the family to be outlined
 const EDGE_RING = 4; // px outside a dot sampled for its edge
 const PROFILE_BIN = 0.25; // px, radial edge profile bins
 // Opaque families (PLAN.md phase 5) are color clusters, not directions: a beeswarm's dots and the violin shading
@@ -580,7 +589,8 @@ function components(D, width, height) {
  * @param {number} width
  * @param {number} height
  * @param {Tolerances} [tol]
- * @returns {{cx: number, cy: number, r: number, aspect: number, box: number[]}[]}
+ * @returns {{cx: number, cy: number, r: number, aspect: number, box: number[], ringed: boolean}[]}  ringed: deeper
+ *   than one dot only in its outer part (an outline)
  */
 export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
     const dots = [];
@@ -602,7 +612,7 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
             y0 = Math.min(y0, y);
             y1 = Math.max(y1, y);
         }
-        if (maxD > ISOLATED_MAX_LEVEL || x0 - m < 0 || y0 - m < 0 || x1 + m >= width || y1 + m >= height)
+        if (x0 - m < 0 || y0 - m < 0 || x1 + m >= width || y1 + m >= height)
             continue;
         let a = 0;
         let sx = 0;
@@ -648,9 +658,65 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
         const r = Math.sqrt(a / Math.PI);
         if (aspect > ISOLATED_MAX_ASPECT || Math.sqrt(2 * tr) / r > ISOLATED_MAX_MOMENT_RATIO)
             continue;
-        dots.push({ cx, cy, r, aspect, box: [x0, y0, x1, y1] });
+        let ringed = false;
+        if (maxD > ISOLATED_MAX_LEVEL) {
+            // deeper than one dot: an outline if all of that is in the outer part
+            ringed = comp.every(p => {
+                if (!(D[p] > ISOLATED_MAX_LEVEL))
+                    return true;
+                const x = p % width;
+                return Math.hypot(x + 0.5 - cx, (p - x) / width + 0.5 - cy) >= RING_MIN_RADIUS_FRACTION * r;
+            });
+            if (!ringed)
+                continue;
+        }
+        dots.push({ cx, cy, r, aspect, box: [x0, y0, x1, y1], ringed });
     }
     return dots;
+}
+
+/**
+ * An outline's inner radius (× radius) and extra opacity, fitted to isolated dots' pixels along the color line: a
+ * dot is tC·(α·m + a·m_ring), with m its coverage and m_ring the annulus's (render.js style.ring). For each inner
+ * radius the opacity a is linear least squares; blur is left out (outlined renderings so far are crisp).
+ *
+ * @param {Float32Array} t  0–255 units along the line, per pixel
+ * @param {number} width
+ * @param {{cx: number, cy: number}[]} dots  isolated dots
+ * @param {number} radius  px
+ * @param {number} alpha  the fill's
+ * @param {number} tC  0–255 units: t of the full color
+ * @returns {{inner: number, alpha: number}|null}  null when there is no ring
+ */
+export function measureRing(t, width, dots, radius, alpha, tC) {
+    const pixels = [];
+    for (const d of dots) {
+        for (let y = Math.floor(d.cy - radius - 1); y <= d.cy + radius + 1; y++) {
+            for (let x = Math.floor(d.cx - radius - 1); x <= d.cx + radius + 1; x++) {
+                const m = pixelCoverage(d.cx, d.cy, radius, x, y);
+                pixels.push({ d, x, y, m, t: t[y * width + x] });
+            }
+        }
+    }
+    let best = null;
+    for (let inner = RING_INNER_RANGE[0]; inner <= RING_INNER_RANGE[1] + 1e-9; inner += RING_INNER_STEP) {
+        let num = 0;
+        let den = 0;
+        const rings = pixels.map(q => (q.m > 0 ? q.m - pixelCoverage(q.d.cx, q.d.cy, inner * radius, q.x, q.y) : 0));
+        pixels.forEach((q, i) => {
+            const g = tC * rings[i];
+            num += (q.t - tC * alpha * q.m) * g;
+            den += g * g;
+        });
+        const a = den > 0 ? Math.min(1 - alpha, Math.max(0, num / den)) : 0;
+        let sse = 0;
+        pixels.forEach((q, i) => {
+            sse += (q.t - tC * (alpha * q.m + a * rings[i])) ** 2;
+        });
+        if (!best || sse < best.sse)
+            best = { inner, alpha: a, sse };
+    }
+    return best && best.alpha >= RING_MIN_ALPHA ? { inner: best.inner, alpha: best.alpha } : null;
 }
 
 function erfc(x) {
@@ -1172,11 +1238,20 @@ export function estimateStyle(image, opts = {}) {
     let radius = null;
     let blur = null;
     let edge = null;
+    let ring = null;
     if (isolated.length) {
         radius = median(isolated.map(d => d.r));
         edge = edgeBlur(D, width, isolated);
         // the profile's σ includes the pixel box, which the renderer's exact coverage already supplies
         blur = Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12));
+        const ringed = isolated.filter(d => d.ringed);
+        if (ringed.length >= RINGED_MIN_SHARE * isolated.length) {
+            const { B: lb, u } = fam.line;
+            const tC = (lb[0] - fam.fit.c[0]) * u[0] + (lb[1] - fam.fit.c[1]) * u[1] + (lb[2] - fam.fit.c[2]) * u[2];
+            ring = measureRing(fam.proj.t, width, ringed, radius, fam.fit.alpha, tC);
+            if (ring)
+                notes.push(`Outlined dots: a ring from ${(ring.inner * radius).toFixed(1)} to ${radius.toFixed(1)} px, ${Math.round(100 * (fam.fit.alpha + ring.alpha))}% opaque against ${Math.round(100 * fam.fit.alpha)}% inside, drawn in the fill's color line (an approximation where outlines cross other dots).`);
+        }
     }
     else {
         notes.push('No isolated whole dot found, so the radius and edge blur must be set by hand.');
@@ -1184,7 +1259,7 @@ export function estimateStyle(image, opts = {}) {
     return {
         background, candidates, family: familyIndex, flat,
         familyMeasure: fam,
-        style: { color: fam.fit.c, alpha: fam.fit.alpha, levels: table, measuredLevels: fam.levels.length, radius, blur },
+        style: { color: fam.fit.c, alpha: fam.fit.alpha, levels: table, measuredLevels: fam.levels.length, radius, blur, ...(ring ? { ring } : {}) },
         D, isolated, edge, notes,
     };
 }

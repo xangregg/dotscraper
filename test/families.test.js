@@ -52,3 +52,26 @@ test('regression: opaque dots under a small translucent band (bench3 ANOVA)', { 
     assert.equal(r.found, 204);
     assert.equal(r.recall, 1);
 });
+
+test('regression: outlined dots (bench1 stroked-dots): a ring is measured and every dot found', { skip: absent('bench1') }, () => {
+    // before: "The dot radius is unknown": the ring reads deeper than one dot, so no dot passed as isolated
+    const { results, r } = row('bench1', 'stroked-dots.png');
+    const s = results[0].est.style;
+    assert.ok(s.ring, 'ring measured');
+    // measured: a 2 px ring, 8.3 to 10.3 px, 69% opaque against the fill's 31%
+    assert.ok(Math.abs(s.ring.inner * s.radius - 8.3) < 0.3, `ring inner ${s.ring.inner * s.radius}`);
+    assert.equal(r.found, 100);
+    assert.equal(r.recall, 1);
+    // JMP draws stroked dots up-left of the data (fill 0.5 px, ring 0.13 px; plain dots are exact), so the positions
+    // carry that offset; around it they scatter as little as plain dots do
+    const found = results[0].fit.dots;
+    const truth = truthPixels(readTruthCsv(dir('bench1') + 'data.csv')).dots;
+    const off = truth.map(t => {
+        const f = found.reduce((a, b) => (Math.hypot(b.x - t.x, b.y - t.y) < Math.hypot(a.x - t.x, a.y - t.y) ? b : a));
+        return [f.x - t.x, f.y - t.y];
+    });
+    const mean = off.reduce((a, o) => [a[0] + o[0] / off.length, a[1] + o[1] / off.length], [0, 0]);
+    assert.ok(mean.every(v => v > -0.5 && v < -0.35), `offset ${mean}`);
+    const scatter = Math.sqrt(off.reduce((sum, o) => sum + (o[0] - mean[0]) ** 2 + (o[1] - mean[1]) ** 2, 0) / off.length);
+    assert.ok(scatter < 0.1, `scatter ${scatter}`);
+});
