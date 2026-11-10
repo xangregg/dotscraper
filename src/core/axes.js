@@ -525,6 +525,41 @@ export function detectAxes(image) {
 }
 
 /**
+ * The plot area's sides that the axes show: an axis line with tick marks whose labels all lie on one side of it
+ * bounds the data on the other side (x labels below the line: the plot is above it). Gridline axes and axes with
+ * labels on both sides bound nothing (the economist's zero line has data on both sides; a baseline through the
+ * middle of a beeswarm would too).
+ *
+ * @param {{x: object|null, y: object|null}} axes  from detectAxes
+ * @returns {{left: number|null, right: number|null, top: number|null, bottom: number|null}}  px, the axis lines'
+ *   centers; null where unbounded
+ */
+export function plotBounds(axes) {
+    const bounds = { left: null, right: null, top: null, bottom: null };
+    const side = axis => {
+        if (!axis?.line)
+            return 0;
+        const labeled = axis.ticks.filter(t => t.source === 'tick' && t.label);
+        if (labeled.length < AXIS_MIN_LABELED_TICKS)
+            return 0;
+        const across = axis.line.dir === 'h' ? b => (b[1] + b[3] + 1) / 2 : b => (b[0] + b[2] + 1) / 2;
+        const signs = labeled.map(t => Math.sign(across(t.label) - axis.line.pos));
+        return signs.every(v => v === signs[0]) ? signs[0] : 0;
+    };
+    const sx = side(axes.x);
+    if (sx > 0)
+        bounds.bottom = axes.x.line.pos;
+    else if (sx < 0)
+        bounds.top = axes.x.line.pos;
+    const sy = side(axes.y);
+    if (sy < 0)
+        bounds.left = axes.y.line.pos;
+    else if (sy > 0)
+        bounds.right = axes.y.line.pos;
+    return bounds;
+}
+
+/**
  * Fit a scale to ticks with known values.
  *
  * Linear: value = a + b·px. Log: log10(value) = a + b·px (values must be positive). Least squares; with more than two

@@ -11,7 +11,7 @@ import { estimateStyle } from '../core/style.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
 import { refitNear } from '../core/fit.js';
-import { detectAxes } from '../core/axes.js';
+import { detectAxes, plotBounds } from '../core/axes.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
@@ -106,7 +106,7 @@ function fitInputFor(k) {
         };
     }
     const est = estimateStyle(state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
-    const layers = buildMask(state.work, est);
+    const layers = buildMask(state.work, est, { bounds: plotBounds(state.axes) });
     return { image: state.work, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
 }
 
@@ -246,7 +246,8 @@ function rebuildMask() {
     stopFit();
     state.fit = null;
     const style = currentStyle();
-    state.layers = style ? buildMask(state.work, { ...state.estimate, style }, state.dilate === null ? {} : { dilate: state.dilate }) : null;
+    const opts = { bounds: plotBounds(state.axes), ...(state.dilate === null ? {} : { dilate: state.dilate }) };
+    state.layers = style ? buildMask(state.work, { ...state.estimate, style }, opts) : null;
     renderLayersPanel();
     renderFitPanel();
 }
@@ -359,7 +360,8 @@ function renderLayersPanel() {
     const s = L.stats;
     const pct = v => `${(100 * v / n).toFixed(1)}%`;
     $('layer-stats').textContent = `background ${pct(s.background)}, dot color ${pct(s.family)}, other ${pct(s.other)}, `
-        + `thin marks ${s.thin} px. Masked ${pct(s.masked)}, including ${s.maskedFamily} dot-color px near other marks.`;
+        + `thin marks ${s.thin} px. Masked ${pct(s.masked)}, including ${s.maskedFamily} dot-color px near other marks`
+        + (s.outside ? ` and ${pct(s.outside)} beyond the axes (labels, titles).` : '.');
     if (state.image)
         refreshView(true);
 }

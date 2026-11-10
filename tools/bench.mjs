@@ -15,6 +15,7 @@ import { buildMask } from '../src/core/layers.js';
 import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';
+import { detectAxes, plotBounds } from '../src/core/axes.js';
 import { readTruthCsv, truthPixels } from './truth-csv.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,27 +42,29 @@ function parseArgs(argv) {
 
 /**
  * Style, mask and fit for one family of an image (the first by default); also the Hough candidates alone. For a
- * JPEG, pass the image through restoreChroma first and set `jpeg` (style.js JPEG_TOLERANCES).
+ * JPEG, pass the image through restoreChroma first and set `jpeg` (style.js JPEG_TOLERANCES). `bounds` masks what
+ * lies beyond the axes (axes.plotBounds).
  */
-export function extract(image, family = 0, candidates = undefined, jpeg = false) {
+export function extract(image, family = 0, candidates = undefined, jpeg = false, bounds = undefined) {
     const est = estimateStyle(image, { family, candidates, jpeg });
     if (!est.style)
         throw new Error(est.notes.join(' '));
-    const layers = buildMask(image, est);
+    const layers = buildMask(image, est, { bounds });
     const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
     const fit = fitDots(input);
     const hough = houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
     return { est, layers, fit, hough };
 }
 
-/** Every dot family of an image, each fitted with the others masked. */
+/** Every dot family of an image, each fitted with the others masked, and with what lies beyond the axes masked. */
 export function extractAll(image, jpeg = false) {
     if (jpeg)
         image = restoreChroma(image);
-    const first = extract(image, 0, undefined, jpeg);
+    const bounds = plotBounds(detectAxes(image));
+    const first = extract(image, 0, undefined, jpeg, bounds);
     const out = [first];
     for (let k = 1; k < first.est.candidates.length; k++)
-        out.push(extract(image, k, first.est.candidates, jpeg));
+        out.push(extract(image, k, first.est.candidates, jpeg, bounds));
     return out;
 }
 
@@ -215,7 +218,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 rows.push(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0));
                 continue;
             }
-            const res = extract(image);
+            const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
             const r = row(`${name} #${seed}`, truth, res, Date.now() - t0);
             rows.push(r);
             if (opts.verbose) {
@@ -261,7 +264,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const truth = JSON.parse(readFileSync(join(TRUTH_DIR, file), 'utf8'));
             const img = join(ROOT, 'testgraphs', truth.image ?? basename(file, '.json') + '.png');
             const t0 = Date.now();
-            const res = extract(readPng(img));
+            const image = readPng(img);
+            const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
             rows.push(row(basename(file, '.json'), truth.dots, res, Date.now() - t0));
         }
     }

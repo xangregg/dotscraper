@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { detectAxes, fitScale, toData, toPixel, resolution, guessValues } from '../src/core/axes.js';
+import { detectAxes, fitScale, toData, toPixel, resolution, guessValues, plotBounds } from '../src/core/axes.js';
 import { synthGraph, scatterPoints, labelBlocks } from '../src/core/synth.js';
 import { readPng } from '../tools/png.mjs';
 
@@ -137,4 +137,22 @@ test('regression: the native-size dog-ages "100" label keeps its "1"', { skip: !
     const zero = ax.y.ticks[ax.y.ticks.length - 1].label;
     // three digits against one, in the same font
     assert.ok(top[2] - top[0] > 2.5 * (zero[2] - zero[0]), `100: ${top}, 0: ${zero}`);
+});
+
+test('plotBounds: an axis bounds the plot on the side away from its labels; gridline axes and mixed labels don’t', () => {
+    const tick = (pos, label) => ({ pos, source: 'tick', label });
+    const xBelow = { line: { dir: 'h', pos: 300.5 }, ticks: [tick(80, [70, 310, 90, 322]), tick(140, [130, 310, 150, 322])] };
+    const yLeft = { line: { dir: 'v', pos: 60.5 }, ticks: [tick(270, [30, 264, 52, 276]), tick(220, [30, 214, 52, 226])] };
+    assert.deepEqual(plotBounds({ x: xBelow, y: yLeft }), { left: 60.5, right: null, top: null, bottom: 300.5 });
+    // labels above the x axis (an axis at the top) and right of the y axis
+    const xAbove = { line: { dir: 'h', pos: 20.5 }, ticks: [tick(80, [70, 2, 90, 14]), tick(140, [130, 2, 150, 14])] };
+    const yRight = { line: { dir: 'v', pos: 400.5 }, ticks: [tick(270, [410, 264, 430, 276]), tick(220, [410, 214, 430, 226])] };
+    assert.deepEqual(plotBounds({ x: xAbove, y: yRight }), { left: null, right: 400.5, top: 20.5, bottom: null });
+    // labels on both sides, one labeled tick, gridlines, no axis
+    const mixed = { line: { dir: 'h', pos: 300.5 }, ticks: [tick(80, [70, 310, 90, 322]), tick(140, [130, 280, 150, 292])] };
+    const oneLabel = { line: { dir: 'h', pos: 300.5 }, ticks: [tick(80, [70, 310, 90, 322]), tick(140, null)] };
+    const grid = { line: { dir: 'v', pos: 60.5 }, ticks: [{ pos: 270, source: 'grid', label: [30, 264, 52, 276] }, { pos: 220, source: 'grid', label: [30, 214, 52, 226] }] };
+    const none = { left: null, right: null, top: null, bottom: null };
+    assert.deepEqual(plotBounds({ x: mixed, y: grid }), none);
+    assert.deepEqual(plotBounds({ x: oneLabel, y: null }), none);
 });

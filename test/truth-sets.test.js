@@ -80,3 +80,10 @@ test('regression: JPEG dots are found (chroma restored, noise-tolerant threshold
     assert.equal(m.recall, 1);
     assert.ok(m.rmse < 2 * FIT_TOL, `rmse ${m.rmse}`);
 });
+
+test('regression: label glyphs below the x axis aren’t dots (bench2 tiny-dots: the zeros of "100")', { skip: skip('bench2') }, () => {
+    // before: 207 found, the 3 extras at (614.7, 482.5), (615.1, 484.3), (623.6, 482.9), 17 px below the axis
+    const { found, m } = score('bench2', 'tiny-dots.png');
+    assert.equal(found.length, 204);
+    assert.equal(m.recall, 1);
+});

@@ -35,6 +35,10 @@ const SOLID_COUNT = 1.5; // overlap count
 const SOLID_OPEN_FRACTION = 0.9; // × dot radius: the disc that must fit
 const MASK_DILATE_BASE = 1; // px
 const MASK_DILATE_BLURS = 2; // px per px of edge blur
+// Beyond the axes is no data, only labels, whose round glyphs ("0") read as small dots (bench2 tiny-dots: three dots
+// in the "100" below the x axis). Pixels farther out than this are masked; a dot centered on the axis line (data at
+// the scale's end) keeps every pixel.
+const OUTSIDE_MARGIN_RADII = 1; // × dot radius beyond the axis line
 // Stand-in for an infinite distance in the transform: finite so the parabola intersections stay exact (q² ≤ ~10⁷
 // px² is far below the precision of FAR), and far beyond any real squared distance.
 const FAR = 1e12; // px²
@@ -257,9 +261,11 @@ function components8(mask, width, height) {
  * @param {object} estimate  from style.estimateStyle (uses D, style, background)
  * @param {object} [opts]
  * @param {number} [opts.dilate]  px, mask dilation (default MASK_DILATE_BASE + MASK_DILATE_BLURS × blur)
+ * @param {{left: number|null, right: number|null, top: number|null, bottom: number|null}} [opts.bounds]  px, the
+ *   plot area's sides (axes.plotBounds); pixels more than OUTSIDE_MARGIN_RADII × radius beyond them are masked
  * @returns {{classes: Uint8Array, thin: Uint8Array, mask: Uint8Array, dilate: number,
  *            stats: {background: number, family: number, other: number, thin: number, masked: number,
- *                    maskedFamily: number}}}
+ *                    maskedFamily: number, outside: number}}}
  *   counts in pixels; maskedFamily is the family pixels the mask removes from the fit
  */
 export function buildMask(image, estimate, opts = {}) {
@@ -331,7 +337,23 @@ export function buildMask(image, estimate, opts = {}) {
     for (let p = 0; p < n; p++)
         seedMask[p] = classes[p] === CLASS_OTHER || thin[p] ? 1 : 0;
     const mask = dilate(seedMask, width, height, r);
-    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0 };
+    let outside = 0;
+    const b = opts.bounds;
+    if (b && style.radius) {
+        const m = OUTSIDE_MARGIN_RADII * style.radius;
+        for (let y = 0; y < height; y++) {
+            const cy = y + 0.5;
+            const rowOut = (b.top !== null && cy < b.top - m) || (b.bottom !== null && cy > b.bottom + m);
+            for (let x = 0; x < width; x++) {
+                const cx = x + 0.5;
+                if (rowOut || (b.left !== null && cx < b.left - m) || (b.right !== null && cx > b.right + m)) {
+                    mask[y * width + x] = 1;
+                    outside++;
+                }
+            }
+        }
+    }
+    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside };
     for (let p = 0; p < n; p++) {
         if (classes[p] === CLASS_BACKGROUND)
             stats.background++;

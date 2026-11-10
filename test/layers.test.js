@@ -208,3 +208,23 @@ test('glyph-sized strokes in a translucent family’s own color are masked; dots
     for (const p of points)
         assert.equal(mask[Math.floor(p.y) * 400 + Math.floor(p.x)], 0, `dot at ${p.x}, ${p.y}`);
 });
+
+test('bounds: pixels more than a dot radius beyond the axes are masked, nothing nearer changes', () => {
+    const { image } = synthGraph(SYNTH_PRESETS.sparse(1));
+    const est = estimateStyle(image);
+    const r = est.style.radius;
+    const bounds = { left: 60.5, right: null, top: null, bottom: image.height - 40.5 };
+    const plain = buildMask(image, est);
+    const bounded = buildMask(image, est, { bounds });
+    const { width, height } = image;
+    let outside = 0;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const p = y * width + x;
+            const out = x + 0.5 < bounds.left - r || y + 0.5 > bounds.bottom + r;
+            outside += out;
+            assert.equal(bounded.mask[p], out ? 1 : plain.mask[p], `${x},${y}`);
+        }
+    }
+    assert.equal(bounded.stats.outside, outside);
+});

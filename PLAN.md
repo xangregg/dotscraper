@@ -667,7 +667,7 @@ New findings:
   PNGs work; where it does fit, recall drops (bench2 smoother 0.652, medium 0.627). bench1 smoother.jpg's 50%
   black reads as opaque, so its overlap levels aren't found. Opaque gray dots-packed.jpg is exact. Fixed below.
 - **Dots outside the plot area:** text below the axes can make dots (bench2 tiny-dots: the zeros of "100"). When
-  axes are detected, dots beyond them should be dropped or flagged.
+  axes are detected, dots beyond them should be dropped or flagged. Fixed below.
 - **bench2 group** misses 11, each within 6 px of a dot of the other color (multi-family compositing);
   group-large finds no isolated dot for the radius at 204 dots.
 - **bench2 smoother-ci** finds 290, 116 of them unmatched (phantoms on the band), where bench1 only missed dots:
@@ -729,6 +729,19 @@ the fit is impossible and red falls back to opaque. That is the multi-family cas
 
 Also found while checking the page: "Find dots" was enabled before any image was loaded, and clicking it threw
 (no estimate yet); it now starts disabled.
+
+**Beyond the axes.** `axes.plotBounds` turns each axis line with tick marks into a side of the plot area when
+all its labels lie on one side of it (x labels below: the plot is above), and `buildMask(…, { bounds })` masks
+pixels more than one dot radius beyond those sides, so a dot centered on an axis line (data at the scale's end)
+keeps every pixel. Gridline axes and axes with labels on both sides bound nothing. The app and the bench pass the
+bounds from the detected axes; the Layers panel reports the share masked "beyond the axes".
+
+Bounds found: on all ten test images the left and bottom axes where they exist (nicest language: bottom at y 400
+of 1146, its labels and the page text below; economist: bottom only; beeswarm-boxplot: left only), none on top or
+right; bench3: left only (its category axis has no tick marks). Measured: bench2 tiny-dots 207 → 204 (precision
+1.000); every other bench row and every real image's dot counts unchanged (Laser 32 + 23 + 25 in 4.1 s instead of
+7.7 s). In the browser, bench2 tiny-dots masks 19.0% of the image beyond the axes and finds the 204 dots
+(0.032 px RMSE against the truth).
 
 **Milestone 2: outlines and per-dot fill color** (pathogen, beeswarm-boxplot outliers, bench1 stroked-dots).
 
