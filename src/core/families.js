@@ -6,7 +6,7 @@
 import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCES, EXACT_TOLERANCES } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
-import { findColormap, rayImage, colormapCandidate } from './colormap.js';
+import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
 
 const DEFAULT_RADIUS = 5; // px, for the region test when no family has a radius yet
 // One translucent family over two backgrounds looks like two opaque families when it has too few overlaps to show
@@ -82,8 +82,9 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
 }
 
 /**
- * The estimate for dots colored by a continuous scale, fitted on the virtual image (colormap.rayImage), or null
- * when the image has no such family. `scale` marks it: its style's color is the virtual family's, which no dot has.
+ * The estimate for dots colored by a continuous scale, fitted on the virtual image (colormap.rayImage for
+ * translucent dots, opaqueImage for opaque ones), or null when the image has no such family. `scale` marks it,
+ * 'translucent' or 'opaque': its style's color is the virtual family's, which no dot has.
  */
 function colormapEstimate(image, jpeg) {
     const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
@@ -91,11 +92,17 @@ function colormapEstimate(image, jpeg) {
     const cm = findColormap(image, B, flatMask(image, tol), tol);
     if (!cm)
         return null;
+    if (cm.alpha === null) {
+        const { image: virtual } = opaqueImage(image, B, cm);
+        const est = estimateStyle(virtual, { jpeg });
+        const note = `Opaque dots colored by a continuous scale (${cm.points.length} colors sampled): every dot pixel is counted as covered, so the fit sees one opaque family. Outlines are fitted as part of the dot, and edges between dots of different colors aren't used.`;
+        return { ...est, image: virtual, scale: 'opaque', notes: [note, ...est.notes] };
+    }
     const { image: virtual, P } = rayImage(image, B, cm);
     const measured = measureFamily(virtual, B, P, flatMask(virtual, tol), tol);
     const est = estimateStyle(virtual, { family: 0, candidates: [colormapCandidate(measured, B, P, cm.alpha)], jpeg });
     const note = `Dots colored by a continuous scale (${cm.points.length} colors sampled): each pixel is counted along its own direction from the background, so the fit sees one family. Outlines are fitted as part of the dot.`;
-    return { ...est, image: virtual, scale: true, notes: [note, ...est.notes] };
+    return { ...est, image: virtual, scale: 'translucent', notes: [note, ...est.notes] };
 }
 
 /**

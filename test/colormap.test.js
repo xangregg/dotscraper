@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
-import { flatMask, EXACT_TOLERANCES } from '../src/core/style.js';
-import { findColormap, rayImage } from '../src/core/colormap.js';
+import { flatMask, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '../src/core/style.js';
+import { findColormap, rayImage, opaqueImage } from '../src/core/colormap.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
 import { extractAll } from '../tools/bench.mjs';
 import { matchDots } from '../src/core/metrics.js';
+import { restoreChroma } from '../src/core/jpeg.js';
 
 const WHITE = [255, 255, 255];
 const ALPHA = 0.5;
@@ -69,6 +70,74 @@ test('findColormap: one translucent family is not a color scale', () => {
     assert.equal(findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES), null);
 });
 
+const OUTLINE = 2; // px: outline width of the outlined variant
+const OUTLINE_DARKEN = 0.75; // outline color = fill × this, toward black
+const GAP_X = 28.75; // px: the middle of the 1 px gap between the last two dots, off the pixel grid
+const GAP_Y = 105; // px
+
+// opaque dots drawn in order, each its own color, in touching and overlapping clusters, one pair 1 px apart;
+// with `outline`, each is an outline disc under a fill OUTLINE px smaller, as JMP draws outlined markers
+function opaqueScaleImage(outline) {
+    const centers = [];
+    for (let i = 0; i < 24; i++)
+        centers.push({ x: 20 + (i % 12) * 23 + (i % 2) * 6, y: (i < 12 ? 30 : 85) + (i % 3) * 5 });
+    centers.push({ x: GAP_X - RADIUS - 0.5, y: GAP_Y }, { x: GAP_X + RADIUS + 0.5, y: GAP_Y });
+    const dots = centers.map((c, i) => ({ ...c, s: i / (centers.length - 1) }));
+    let im = solidImage(W, H, WHITE);
+    for (const d of dots) {
+        const fill = scaleColor(d.s);
+        const layers = outline ? [[fill.map(v => v * OUTLINE_DARKEN), RADIUS], [fill, RADIUS - OUTLINE]] : [[fill, RADIUS]];
+        for (const [color, radius] of layers) {
+            const model = createDotModel(im, { color, alpha: 1, radius });
+            model.add(d.x, d.y);
+            im = model.image;
+        }
+    }
+    const round = rgba => ({ ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) });
+    const union = createDotModel(solidImage(W, H, WHITE), { color: [0, 0, 0], alpha: 1, radius: RADIUS });
+    for (const d of dots)
+        union.add(d.x, d.y);
+    return { image: round(toRgba(im)), union: round(toRgba(union.image)) };
+}
+
+for (const outline of [false, true]) {
+    test(`opaqueImage: opaque dots of a scale${outline ? ', outlined,' : ''} become the union of their discs`, () => {
+        const { image, union } = opaqueScaleImage(outline);
+        const cm = findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES);
+        assert.ok(cm, 'a color scale');
+        assert.equal(cm.alpha, null, 'opaque: no second level');
+        const { image: v, P } = opaqueImage(image, WHITE, cm);
+        // coverage of the virtual image along B → P, against the one-color rendering's
+        const d = P.map((c, ch) => c - WHITE[ch]);
+        const dd = d.reduce((sum, x) => sum + x * x, 0);
+        let se = 0;
+        let count = 0;
+        let worst = 0;
+        let worstGap = 0;
+        for (let p = 0; p < W * H; p++) {
+            let s = 0;
+            for (let ch = 0; ch < 3; ch++)
+                s += (v.data[4 * p + ch] - WHITE[ch]) * d[ch];
+            const a = s / dd;
+            const truth = 1 - union.data[4 * p] / 255;
+            if (a === 0 && truth === 0)
+                continue;
+            se += (a - truth) ** 2;
+            count++;
+            worst = Math.max(worst, Math.abs(a - truth));
+            const x = p % W;
+            const y = Math.floor(p / W);
+            if (Math.abs(x + 0.5 - GAP_X) <= 1 && Math.abs(y + 0.5 - GAP_Y) <= RADIUS / 2)
+                worstGap = Math.max(worstGap, Math.abs(a - truth));
+        }
+        const rms = Math.sqrt(se / count);
+        assert.ok(rms <= 0.03, `coverage rms ${rms.toFixed(4)} over ${count} pixels`);
+        assert.ok(worst <= 0.5, `worst coverage error ${worst.toFixed(3)}`);
+        // the gap between the pair has no background pixel, but is mostly uncovered
+        assert.ok(worstGap <= 0.15, `worst coverage error in the gap ${worstGap.toFixed(3)}`);
+    });
+}
+
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
 const absent = (set, name) => !existsSync(dir(set) + name) && `${set}/${name} absent`;
 
@@ -91,4 +160,30 @@ test('regression: bench2 gradient-dots, with the scale’s darkest dot alone in 
     const { found, m } = row('bench2', 'gradient-dots.png');
     assert.ok(found >= 199 && found <= 205, `found ${found}`);
     assert.ok(m.recall >= 0.975, `recall ${m.recall}`);
+});
+
+const OPAQUE_ROWS = [
+    // before: 114 found, recall 0.82, as one opaque family of the most common fill
+    ['bench1', 'gradient-opaque.png', 99, 102, 0.99],
+    // before: 46, recall 0.33
+    ['bench1', 'gradient-opaque-stroke.png', 99, 102, 0.98],
+    // before: "The dot radius is unknown"; bench2 solid-opaque, the same dots in one color: 196, 0.926
+    ['bench2', 'gradient-opaque.png', 188, 200, 0.91],
+    // before: "No dot family found"; solid-opaque-stroke: 179, 0.848
+    ['bench2', 'gradient-opaque-stroke.png', 172, 184, 0.81],
+];
+
+for (const [set, name, lo, hi, recall] of OPAQUE_ROWS) {
+    test(`regression: opaque dots colored by a scale are found (${set} ${name})`, { skip: absent(set, name) }, () => {
+        const { found, m } = row(set, name);
+        assert.ok(found >= lo && found <= hi, `found ${found}`);
+        assert.ok(m.recall >= recall, `recall ${m.recall}`);
+    });
+}
+
+test('regression: a band’s edges are not an opaque color scale (bench1 smoother-ci.jpg)', { skip: absent('bench1', 'smoother-ci.jpg') }, () => {
+    // its band edges chain to a spread of 0.215 with no second level; the opaque scales span 0.54–0.60
+    const image = restoreChroma(readImage(dir('bench1') + 'smoother-ci.jpg'));
+    const B = backgroundColor(image).color;
+    assert.equal(findColormap(image, B, flatMask(image, JPEG_TOLERANCES), JPEG_TOLERANCES), null);
 });

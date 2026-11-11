@@ -24,6 +24,11 @@ import {
 const SAMPLE_SIZE = 80; // CSS px, each sample canvas
 const SAMPLE_MARGIN = 4; // px around the dot in the sample crop
 const SAMPLE_DIFF_GAIN = 10; // the diff sample shows |image − model| × this
+// what the dot sample shows for dots colored by a scale (families.js `scale`)
+const SCALE_CAPTION = {
+    translucent: 'image as one virtual family (counts along each pixel’s color)',
+    opaque: 'image as one virtual opaque family (every dot pixel covered, outlines included)',
+};
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
 const EDIT_HIT_RADII = 0.6; // × r: a click this close to a dot's center removes it in edit mode
 
@@ -384,7 +389,7 @@ function renderSample() {
         c.style.width = c.style.height = `${SAMPLE_SIZE}px`;
         c.getContext('2d').putImageData(data, 0, 0);
     }
-    $('sample-caption').textContent = `Dot at ${dot.cx.toFixed(1)}, ${dot.cy.toFixed(1)} px: ${est.scale ? 'image as one virtual family (counts along each pixel’s color)' : 'image'}${state.jpeg ? ' (chroma restored)' : ''}, model, |difference| × ${SAMPLE_DIFF_GAIN} (mean ${(sumDiff / (size * size)).toFixed(2)}, max ${maxDiff.toFixed(1)}, 0–255)`;
+    $('sample-caption').textContent = `Dot at ${dot.cx.toFixed(1)}, ${dot.cy.toFixed(1)} px: ${SCALE_CAPTION[est.scale] ?? 'image'}${state.jpeg ? ' (chroma restored)' : ''}, model, |difference| × ${SAMPLE_DIFF_GAIN} (mean ${(sumDiff / (size * size)).toFixed(2)}, max ${maxDiff.toFixed(1)}, 0–255)`;
 }
 
 function renderLayersPanel() {

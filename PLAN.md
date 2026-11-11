@@ -790,7 +790,8 @@ lines meet (all flagged weak and deep), likely phantoms.
 - [x] Outlined dots with one fill: a two-part template (ring and fill).
 - [x] A fill that varies per dot, translucent (bench1–2 gradient-dots, `colormap.js`).
 - [x] Outlined opaque dots of one fill (bench1–2 solid-opaque-stroke).
-- [ ] A fill that varies per dot, opaque (pathogen; bench1–2 gradient-opaque, gradient-opaque-stroke).
+- [x] A fill that varies per dot, opaque (bench1–2 gradient-opaque, gradient-opaque-stroke; pathogen still not
+      detected, see below).
 
 **Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
 fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
@@ -841,7 +842,7 @@ Tried and dropped: a ring less opaque than the fill (JMP's outlined markers are 
 smaller fill, both α 0.5: fill radius 9.6, outline 11.3 px, measured correctly). It made bench2 outlined worse
 (211 found) and fitted a false 1 px ring on the plain JPEGs, so outlined markers are fitted as one disc at about
 the outline's radius (11.1). Not done: each dot's color isn't reported (a legend mapping would be needed to make it
-data); opaque scale-colored dots (pathogen) aren't detected; a scale sharing the plot with another family isn't
+data); opaque scale-colored dots are handled below; a scale sharing the plot with another family isn't
 handled. In the browser: not checked (the page check couldn't launch Chrome in this session's sandbox).
 
 **Outlined opaque dots** (bench1–2 solid-opaque-stroke: JMP's outlined markers at α 1, a fill (171, 8, 252) of
@@ -891,10 +892,53 @@ solid-opaque 180 → 196 (recall 0.863 → 0.926, RMSE 0.625 → 0.357, 8 extra 
 165 → 179 (0.760 → 0.848). Times: bench2 1.9 → 3.9 s, 2.5 → 4.3 s. The synthetic presets, every other truth-set row
 (bench3's opaque beeswarms included) and all ten testgraphs fits are unchanged, at the same times.
 
+**Opaque dots colored by a scale** (bench1–2 gradient-opaque and gradient-opaque-stroke: the same "Muted Yellow
+to Red" at α 1, plain and with JMP's outlined markers). Before: bench1 114 found (recall 0.82) and 46 (0.33), as
+an opaque family of the commonest fill; bench2 "The dot radius is unknown" and "No dot family found".
+`findColormap` already found the curve (spread 0.54–0.60) but required a second level, which opaque dots never show.
+
+- *Detection:* a curve with no second level is an opaque scale when it spans at least 0.4. Across all bench and
+  testgraphs images the only other such curve is bench1 smoother-ci.jpg's band edges, at 0.215.
+- *Model* (`opaqueImage`): the image becomes one virtual opaque family, each dot pixel B + a·(P − B), so the opaque
+  pipeline (radius, Hough, fit, splits) runs unchanged on the union of the discs. The ray trick of the translucent
+  path doesn't give a here: JMP's outline of a light fill points the way the fill does but lies farther out (yellow
+  fill 155 from white, its outline 255, 0.01 apart in direction), so a full fill and a partial outline look alike.
+  Position settles it: a pixel is partial only next to one under 0.45 of its full color's offset (the lightest
+  fill is 0.61 of its outline's), and then a is its offset over the largest one nearby (5 × 5) in its direction.
+- *Three fixes, each found in the difference from the one-color rendering of the same dots:* the direction
+  tolerance grows by 1/m for rounding (a faint rim pixel, (253, 247, 245), was 0.045 off its fill and counted
+  itself as full: whole rings over-covered); "next to a much lighter pixel" rather than "touching the background"
+  (2 px gaps between dots hold no background pixel, so they read as covered); outline pixels up to 0.25 off the
+  curve count when within 3 px of a curve pixel (dark red outlines, (109, 47, 45), are 0.15 off and as close to
+  black text, and pale yellow outlines left as gaps inside clusters).
+- *Coverage against solid-opaque(-stroke), RMS over dot pixels:* plain 0.019 (97 pixels off by more than 0.1,
+  where three colors meet at a rim), outlined 0.019 (was 0.080 before the outline pass).
+
+Measured (found / truth, recall, RMSE px):
+
+| Image | Now | Same dots in one color |
+|---|---|---|
+| bench1 gradient-opaque | 101/100, 1.00, 0.380 | solid-opaque 100, 1.00, 0.056 |
+| bench1 gradient-opaque-stroke | 100/100, 0.99, 0.478 | solid-opaque-stroke 101, 1.00, 0.551 |
+| bench2 gradient-opaque | 192/204, 0.926, 0.499 (precision 0.984) | solid-opaque 196, 0.926, 0.357 (0.964) |
+| bench2 gradient-opaque-stroke | 177/204, 0.828, 0.885 | solid-opaque-stroke 179, 0.848, 0.944 |
+
+bench1's RMSEs come from one dot, (179.5, 355.3), almost hidden by three neighbors 7.6–9.6 px away: the fit
+merges it with a visible neighbor (3.8 px off; 7.6 outlined). Median errors are 0.020 px. The synthetic
+presets, every other truth-set row and all ten testgraphs images are unchanged, at the same times (gradient-opaque:
+1.0–3.4 s). In the browser (the app's pane; headless Chrome can't start in this sandbox): bench2 192 and 177
+dots, as in the bench, no console errors.
+
+Not done: the edges between dots of different colors, and the outlines inside clusters, show where each dot is,
+but the virtual image keeps only the union (the same limit as solid-opaque-stroke). Using them needs per-dot
+colors in the model. Each dot's color isn't reported. pathogen is still not detected: `findColormap` finds no
+chain for it (not investigated further).
+
 **Not done, and why.**
 
 - *pathogen* (a fill that varies per dot, by a color scale, under a thin dark outline; and a band over the dots,
-  gridlines, a log scale): there is no color family to find. It needs a different model: per-dot fill colors,
+  gridlines, a log scale): there is no color family to find, and the opaque-scale path above doesn't detect it
+  either. It needs a different model: per-dot fill colors,
   fitted in RGB rather than along one color line, with opaque dots hiding each other in drawing order, detected
   from the outlines. It also has no ground truth; a JMP truth set colored by a continuous column, with outlines,
   would make it measurable.

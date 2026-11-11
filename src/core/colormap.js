@@ -20,9 +20,11 @@
 // count ratio and P one real one-dot color, so the single-family pipeline (levels, isolated dots, radius, Hough,
 // fit) runs on it unchanged. Pixels off the curve (text, axes, lines) are left as they are, for the masks.
 //
-// Color scales are rare, so this stays a side path: it handles translucent dots only (opaque ones, like pathogen's,
-// aren't detected), assumes no other family shares the plot, doesn't report each dot's color, and fits JMP's outlined
-// markers (an outline-colored disc under a smaller fill, both α 0.5) as one disc at the outline's radius.
+// Opaque dots of a scale (no second level) are rewritten as one virtual opaque family instead (opaqueImage).
+//
+// Color scales are rare, so this stays a side path: it assumes no other family shares the plot, doesn't report
+// each dot's color, and fits JMP's outlined markers (an outline-colored disc under a smaller fill) as one disc at
+// the outline's radius.
 
 const WINDOW = 2; // px: half side of the window whose summed offsets give a pixel's direction
 const MIN_OFFSET = 15; // 0–255 units from B: flat pixels at least this far vote for the one-dot curve
@@ -52,6 +54,21 @@ const FIRST_FALL = 0.1; // the first peak ends where the histogram falls below t
 const SECOND_MIN_FRACTION = 0.01; // of the first peak's pixels, for the second level to count
 const SECOND_MIN_PIXELS = 10;
 const PEAK_CENTROID = 3; // bins either side of the second peak averaged for its position
+// Opaque dots of a scale show no second level (alpha null). With no level to confirm them, the chain must span
+// more: the bench gradients span 0.54–0.60, while bench1 smoother-ci.jpg's band edges chain to 0.215.
+const MIN_OPAQUE_SPREAD = 0.4;
+const OPAQUE_WINDOW = 2; // px: half side of the window searched for a rim pixel's full color
+// A pixel is partial only next to one this much lighter than its full color: the background, or the middle of a
+// narrow gap between dots. A fill beside its own outline is not (the lightest JMP fill is 0.61 of its outline's
+// offset, bench2 gradient-opaque-stroke).
+const LIGHT = 0.45;
+// A rim pixel and its full color are this close in direction, plus the rounding of the rim pixel's offset of m
+// units, about ROUNDING / m (bench2 gradient-opaque: (253, 247, 245) is 0.045 from its fill (218, 131, 89)).
+const SAME_DIRECTION = 0.03; // between unit directions
+const ROUNDING = 1; // 0–255 units
+// Outline pixels off the curve: within this of a curve pixel, and nearer the curve than this
+const OUTLINE_REACH = 3; // px
+const OUTLINE_OFF_CURVE = 0.25; // between unit directions
 
 /**
  * Per pixel, the summed offsets from B over a (2·WINDOW + 1)² window, as unit directions (0 where they cancel).
@@ -207,13 +224,14 @@ function ratioAlpha(ratios) {
 }
 
 /**
- * A translucent family colored by a continuous scale, if the image has one.
+ * A family colored by a continuous scale, if the image has one: translucent with its α, or opaque (alpha null) when
+ * the dots show no second level.
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  the background, 0–255
  * @param {Uint8Array} flat  style.flatMask
  * @param {import('./style.js').Tolerances} tol
- * @returns {{points: {u: number[], m: number, votes: number}[], alpha: number, spread: number,
+ * @returns {{points: {u: number[], m: number, votes: number}[], alpha: number|null, spread: number,
  *            dir: Float32Array}|null}  points: the one-dot curve (unit direction from B, distance m₁ in 0–255
  *            units); dir: each pixel's unit direction (3 per pixel)
  */
@@ -276,7 +294,7 @@ export function findColormap(image, B, flat, tol) {
             ratios.push(m / m1);
     }
     const alpha = ratioAlpha(ratios);
-    if (alpha === null)
+    if (alpha === null && spread < MIN_OPAQUE_SPREAD)
         return null;
     return { points, alpha, spread, dir };
 }
@@ -324,6 +342,104 @@ export function rayImage(image, B, cm) {
             out[4 * p + ch] = Math.round(B[ch] + r * refE[ch]);
     }
     return { image: { width, height, data: out }, P: B.map((v, ch) => v + refE[ch]) };
+}
+
+/**
+ * Opaque dots of a scale as one virtual opaque family: each dot pixel becomes B + a·(P − B), with a its coverage.
+ * A ray from B can't give the coverage here: JMP's outline of a light fill points the way the fill does but lies
+ * farther out (bench2 gradient-opaque-stroke: yellow fill 155 from white, its outline 255, 0.01 apart in direction),
+ * so a full fill and a partial outline look alike. Position settles it instead: a pixel is partial only next to a
+ * much lighter one (the background, or the middle of a narrow gap between dots), and then its full color is the
+ * farthest pixel nearby in its direction. Every other dot pixel, a fill, an outline, or the boundary between two
+ * dots, is covered. The result is a one-color rendering of the dots' union.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} B
+ * @param {ReturnType<typeof findColormap>} cm  with alpha null
+ * @returns {{image: import('./image.js').RgbaImage, P: number[]}}  P: the virtual family's color
+ */
+export function opaqueImage(image, B, cm) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const out = Uint8ClampedArray.from(data);
+    const ref = cm.points.reduce((a, b) => (b.votes > a.votes ? b : a));
+    const P = B.map((v, ch) => v + ref.u[ch] * ref.m);
+    const off = new Float32Array(3 * n);
+    const m = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+        for (let ch = 0; ch < 3; ch++)
+            off[3 * p + ch] = data[4 * p + ch] - B[ch];
+        m[p] = Math.hypot(off[3 * p], off[3 * p + 1], off[3 * p + 2]);
+    }
+    const dots = dotPixels(m, cm, width, height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const p = y * width + x;
+            if (!dots[p])
+                continue;
+            const tolDir = SAME_DIRECTION + ROUNDING / m[p];
+            let full = m[p];
+            for (let yy = Math.max(0, y - OPAQUE_WINDOW); yy <= Math.min(height - 1, y + OPAQUE_WINDOW); yy++) {
+                for (let xx = Math.max(0, x - OPAQUE_WINDOW); xx <= Math.min(width - 1, x + OPAQUE_WINDOW); xx++) {
+                    const q = yy * width + xx;
+                    if (m[q] <= full)
+                        continue;
+                    let d2 = 0;
+                    for (let ch = 0; ch < 3; ch++)
+                        d2 += (off[3 * q + ch] / m[q] - off[3 * p + ch] / m[p]) ** 2;
+                    if (d2 <= tolDir * tolDir)
+                        full = m[q];
+                }
+            }
+            const a = lightest(m, width, height, x, y) <= LIGHT * full ? m[p] / full : 1;
+            for (let ch = 0; ch < 3; ch++)
+                out[4 * p + ch] = Math.round(B[ch] + a * (P[ch] - B[ch]));
+        }
+    }
+    return { image: { width, height, data: out }, P };
+}
+
+// 1 for the pixels of opaque dots: those on the curve, and those near it within OUTLINE_REACH of one. Outlines of
+// dark fills lie as far from the curve as black text does (bench2 gradient-opaque-stroke: a dark red outline
+// (109, 47, 45) is 0.15 off, and 0.16 from black), but only outlines touch the fills. O(pixels · reach²).
+function dotPixels(m, cm, width, height) {
+    const { dir } = cm;
+    const n = width * height;
+    const dist = new Float32Array(n).fill(Infinity);
+    const on = new Uint8Array(n);
+    for (let p = 0; p < n; p++) {
+        if (m[p] < MIN_PIXEL_OFFSET)
+            continue;
+        dist[p] = oneDot(cm.points, dir[3 * p], dir[3 * p + 1], dir[3 * p + 2]).dist;
+        on[p] = dist[p] <= OFF_CURVE ? 1 : 0;
+    }
+    const out = Uint8Array.from(on);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const p = y * width + x;
+            if (on[p] || dist[p] > OUTLINE_OFF_CURVE)
+                continue;
+            search: for (let yy = Math.max(0, y - OUTLINE_REACH); yy <= Math.min(height - 1, y + OUTLINE_REACH); yy++) {
+                for (let xx = Math.max(0, x - OUTLINE_REACH); xx <= Math.min(width - 1, x + OUTLINE_REACH); xx++) {
+                    if (on[yy * width + xx]) {
+                        out[p] = 1;
+                        break search;
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// the smallest offset from B among (x, y) and its 8 neighbors
+function lightest(m, width, height, x, y) {
+    let low = Infinity;
+    for (let yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++) {
+        for (let xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx++)
+            low = Math.min(low, m[yy * width + xx]);
+    }
+    return low;
 }
 
 /**
