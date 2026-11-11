@@ -64,6 +64,14 @@ const FILL_LEVEL = 0.75;
 // phantom gray dots on its antialiased title were 22–34% visible and skipped the check)
 const FILL_MIN_SEEN = 8; // px
 const MERGE_RADII = 0.35; // × r: dots closer than this are tried as one
+// A dot is tried as two when the loss over its patch is at least this many λ and this many times the median dot's:
+// kept splits were 4.4–12 times the median (bench2 solid-opaque: 3.1–15.5 λ against 0.7; violin, a JPEG whose every
+// patch carries noise: 59–107 λ against 13), and trying every patch over λ made violin's fit 5 times slower
+const SPLIT_MIN_LOSS_LAMBDAS = 1;
+const SPLIT_MIN_LOSS_MEDIANS = 4;
+const SPLIT_TABU_RADII = 0.25; // × r: a dot that failed to split isn't tried again until it moves this far
+const SPLIT_OFFSET_RADII = 0.4; // × r: each half starts this far from the dot
+const SPLIT_DIRECTIONS = 4; // directions tried, over half a turn
 const RADIUS_SEARCH = 1; // px either side of the estimated radius
 const RADIUS_TOL = 0.01; // px
 const UNCERTAINTY_STEP = 0.25; // px, finite-difference step for the curvature
@@ -429,6 +437,89 @@ export function createFit(input) {
         return merged;
     }
 
+    // Opaque dots of one color hide the edges between them, so a cluster can be covered by fewer dots than it has, each
+    // stretched over two (bench2 solid-opaque: 180 dots with data loss 89 700, where the truth's 204 give 8 800). Their
+    // union then matches the image to a few pixels, and births, which look for missing ink, find no site. A split
+    // replaces a poorly fitting dot by two, SPLIT_OFFSET_RADII either side of it in one of SPLIT_DIRECTIONS, lets the
+    // neighbors re-settle as a birth does, and keeps the best variant if the neighborhood's loss falls by more than λ.
+    // Translucent families don't need it: a dot standing in for two leaves a missing level, which births see.
+    function splits(tabu) {
+        if (!opaque)
+            return 0;
+        const r = style.radius;
+        const slack = BIRTH_NEIGHBOR_MOVE_RADII * r;
+        const grow = ([x0, y0, x1, y1], d) => [Math.max(0, x0 - d), Math.max(0, y0 - d), Math.min(width, x1 + d), Math.min(height, y1 + d)];
+        let made = 0;
+        const patches = [...pos.keys()].map(id => ({ id, l: loss(model.influenceRect(pos.get(id).x, pos.get(id).y)) }));
+        const ls = patches.map(c => c.l).sort((a, b) => a - b);
+        const minLoss = Math.max(SPLIT_MIN_LOSS_LAMBDAS * lambda, SPLIT_MIN_LOSS_MEDIANS * (ls[ls.length >> 1] ?? 0));
+        const candidates = patches.filter(c => c.l > minLoss).sort((a, b) => b.l - a.l);
+        for (const { id } of candidates) {
+            const p0 = pos.get(id);
+            if (!p0 || tabu.some(t => Math.hypot(t.x - p0.x, t.y - p0.y) < SPLIT_TABU_RADII * r))
+                continue;
+            const neighbors = near(p0.x, p0.y, NEIGHBOR_RADII * r).filter(nid => nid !== id);
+            let foot = model.footprint(p0.x, p0.y);
+            for (const nid of neighbors) {
+                const q0 = pos.get(nid);
+                foot = union(foot, model.footprint(q0.x, q0.y));
+            }
+            foot = grow(foot, Math.ceil(SPLIT_OFFSET_RADII * r + slack + COMPASS_STEPS[0] + 1));
+            const scoreRect = grow(foot, Math.ceil(style.blur ? 3 * style.blur + 1 : 0));
+            const before = loss(scoreRect);
+            const snap = model.snapshot(foot);
+            const saved = [[id, p0], ...neighbors.map(nid => [nid, pos.get(nid)])];
+            const undo = () => {
+                model.restore(snap);
+                for (const [nid] of saved)
+                    pos.delete(nid);
+                for (const k of [...pos.keys()]) {
+                    if (k > lastId)
+                        pos.delete(k);
+                }
+                for (const [nid, q] of saved)
+                    pos.set(nid, q);
+            };
+            const lastId = Math.max(...pos.keys());
+            let best = null;
+            for (let k = 0; k < SPLIT_DIRECTIONS; k++) {
+                const a = Math.PI * k / SPLIT_DIRECTIONS;
+                const dx = SPLIT_OFFSET_RADII * r * Math.cos(a);
+                const dy = SPLIT_OFFSET_RADII * r * Math.sin(a);
+                remove(id);
+                const ids = [add(p0.x + dx, p0.y + dy), add(p0.x - dx, p0.y - dy)];
+                for (const nid of ids)
+                    refineDot(nid, RESWEEP_FIRST_STEP, slack);
+                for (const nid of neighbors)
+                    refineDot(nid, RESWEEP_FIRST_STEP, slack);
+                const gain = before - loss(scoreRect);
+                // each half must pay for itself, as deaths require: otherwise the "split" only moved the dot (Laser: a
+                // dot half under a bar split into one dot and one on the bar, and a later death took the real one)
+                const ok = gain > lambda && ids.every(nid => visibleFraction(pos.get(nid).x, pos.get(nid).y) >= minVisible
+                    && filled(pos.get(nid).x, pos.get(nid).y) && removalGain(nid) > lambda);
+                if (ok && (!best || gain > best.gain))
+                    best = { k, gain };
+                undo();
+            }
+            if (!best) {
+                tabu.push({ x: p0.x, y: p0.y });
+                continue;
+            }
+            // redo the best variant (the trials were undone so that each started from the same neighborhood)
+            const a = Math.PI * best.k / SPLIT_DIRECTIONS;
+            const dx = SPLIT_OFFSET_RADII * r * Math.cos(a);
+            const dy = SPLIT_OFFSET_RADII * r * Math.sin(a);
+            remove(id);
+            const ids = [add(p0.x + dx, p0.y + dy), add(p0.x - dx, p0.y - dy)];
+            for (const nid of ids)
+                refineDot(nid, RESWEEP_FIRST_STEP, slack);
+            for (const nid of neighbors)
+                refineDot(nid, RESWEEP_FIRST_STEP, slack);
+            made++;
+        }
+        return made;
+    }
+
     // Missing dots, (t − t̂)/Δt on unmasked pixels with Δt what one more dot would add at the pixel's current depth,
     // averaged over boxes inscribed in a dot; the best box not near a failed site is tried as a new dot, kept if it
     // pays for itself. The residual and box-mean planes are updated only where an accepted birth changed the model.
@@ -683,7 +774,7 @@ export function createFit(input) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, births, deaths, merges, refitRadius, totalLoss, assess,
+        add, remove, refineAll, refineDot, births, splits, deaths, merges, refitRadius, totalLoss, assess,
         get birthFailures() {
             return birthFailures;
         },
@@ -727,6 +818,7 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
     log.push({ stage: 'candidates', dots: initial.length });
     report('candidates', 0, true);
     let tabu = [];
+    const splitTabu = []; // kept across rounds: a split that failed fails again unless the dot moves
     let rounds = 0;
     for (let round = 1; round <= MAX_ROUNDS; round++) {
         rounds = round;
@@ -738,16 +830,17 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
         tabu = [];
         const tb = Date.now();
         const born = fit.births(tabu);
-        if (born)
+        const split = fit.splits(splitTabu);
+        if (born || split)
             fit.refineAll();
         const msBirths = Date.now() - tb;
         report('births', round);
         const td = Date.now();
         const died = fit.deaths();
         const merged = fit.merges();
-        log.push({ stage: 'round', round, sweeps, born, failed: fit.birthFailures, died, merged, dots: fit.ids().length, msRefine, msBirths, msDeathsMerges: Date.now() - td });
+        log.push({ stage: 'round', round, sweeps, born, split, failed: fit.birthFailures, died, merged, dots: fit.ids().length, msRefine, msBirths, msDeathsMerges: Date.now() - td });
         report('round', round, true);
-        if (!born && !died && !merged)
+        if (!born && !split && !died && !merged)
             break;
     }
     if (opts.refitRadius ?? true) {

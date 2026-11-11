@@ -154,23 +154,35 @@ const benchAbsent = (set, name) => !existsSync(benchDir(set) + name) && `${set}/
 
 function benchRow(set, name) {
     const truth = truthPixels(readTruthCsv(benchDir(set) + 'data.csv')).dots;
-    const found = extractAll(readImage(benchDir(set) + name)).flatMap(r => r.fit.dots);
-    return { found: found.length, m: matchDots(truth, found, 4) };
+    const results = extractAll(readImage(benchDir(set) + name));
+    const found = results.flatMap(r => r.fit.dots);
+    // matched within half a radius, as the bench does
+    return { found: found.length, m: matchDots(truth, found, 0.5 * results[0].fit.radius) };
 }
 
 test('regression: outlined opaque dots are a family (bench1 solid-opaque-stroke)', { skip: benchAbsent('bench1', 'solid-opaque-stroke.png') }, () => {
     // before: "No dot family found": every outline pixel read as neither the fill nor its background
+    // 98 at first; 100–101 with splits (one true dot is fitted as two, 4.7 px off)
     const { found, m } = benchRow('bench1', 'solid-opaque-stroke.png');
-    assert.equal(found, 98); // as the plain rendering, solid-opaque
-    assert.ok(m.recall >= 0.98, `recall ${m.recall}`);
+    assert.ok(found >= 98 && found <= 101, `found ${found}`);
+    assert.equal(m.recall, 1);
 });
 
 test('regression: bench2 solid-opaque-stroke', { skip: benchAbsent('bench2', 'solid-opaque-stroke.png') }, () => {
     // before: no family. 165 of 204: about 8 dots are under 0.1% visible, and dots in packed clusters are missed
     // because the boundaries between fill and outline inside a cluster aren't used
     const { found, m } = benchRow('bench2', 'solid-opaque-stroke.png');
-    assert.ok(found >= 160, `found ${found}`);
-    assert.ok(m.recall >= 0.75, `recall ${m.recall}`);
+    assert.ok(found >= 175, `found ${found}`); // 165 before splits
+    assert.ok(m.recall >= 0.84, `recall ${m.recall}`);
+});
+
+test('regression: a cluster of one opaque color is not covered by too few dots (bench2 solid-opaque)', { skip: benchAbsent('bench2', 'solid-opaque.png') }, () => {
+    // before: 180 of 204, each of several fitted dots stretched over two true ones; the truth's own dots, refined by
+    // the fit, settle at 194 (about 10 are coincident or under 10% visible). Their union matched the image to 27 px,
+    // so births found no site; splits replace such a dot by two
+    const { found, m } = benchRow('bench2', 'solid-opaque.png');
+    assert.ok(found >= 192 && found <= 200, `found ${found}`);
+    assert.ok(m.recall >= 0.92, `recall ${m.recall}`);
 });
 
 test('regression: no outlined family made of a translucent family’s levels (economist)', { skip: !has('economist-canada-unfriendly-chart.png') && 'local test image absent' }, () => {

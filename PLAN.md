@@ -867,6 +867,30 @@ union of the discs is one blob and only the inner outlines show where each dot i
 respects drawing order (a later outline paints over an earlier fill); not done. Every other bench row and all ten
 testgraphs images' families are unchanged. In the browser: bench2 165 dots, no console errors.
 
+**Splits: opaque clusters covered by too few dots** (bench2 solid-opaque, 180 of 204 found). Of the 24 misses,
+about 10 can't be recovered: coincident pairs (rows 120, 140, 144, 200; 198/201 0.7 px apart) and dots under 10%
+visible. For one opaque color the edges between dots don't show, so what the image holds of a dot is the part of
+its circle outside every other dot: of the 23 dots with under 10% of their edge shown, 16 were missed; above 20%,
+only the coincident pairs. But that information isn't exhausted: scored with the fit's own objective, the truth
+(204 dots) has data loss 8 800 and total 112 800, the fit's 180 dots 89 700 and 181 500; started from the truth, the
+fit keeps 194 (recall 0.951). The fit's discs cover the image to 27 px, so births, which look for missing ink, found
+no site; the loss is in boundaries everywhere slightly wrong, a dot stretched over two.
+
+- *Split* (`fit.js` `splits`, opaque families only): a dot whose patch loss is at least λ and 4 × the median dot's
+  is tried as two, 0.4 r either side of it in 4 directions; the neighbors re-settle as for a birth, and the best
+  variant is kept if the loss falls by more than λ and each half would cost more than λ to remove (as deaths
+  require). A dot that fails isn't tried again until it moves 0.25 r.
+- *Thresholds, measured:* kept splits had patch loss 4.4–12 × the median (bench2: 3.1–15.5 λ against 0.7; violin, a
+  JPEG with noise in every patch: 59–107 λ against 13). Trying every patch over λ made violin 5 × slower (21 → 101 s)
+  and fibers +2, violin +4 dots. Without the each-half test, a Laser dot half under a purple bar was split into
+  itself and a dot on the bar, and a later death removed the real one.
+
+Measured: bench1 solid-opaque 98 → 100 (recall 1.00, RMSE 0.056); bench1 solid-opaque-stroke 98 → 101 (recall
+1.00; median error 0.021 px, but one true dot is fitted as two, one of them 4.7 px off, RMSE 0.551); bench2
+solid-opaque 180 → 196 (recall 0.863 → 0.926, RMSE 0.625 → 0.357, 8 extra flagged dots); bench2 solid-opaque-stroke
+165 → 179 (0.760 → 0.848). Times: bench2 1.9 → 3.9 s, 2.5 → 4.3 s. The synthetic presets, every other truth-set row
+(bench3's opaque beeswarms included) and all ten testgraphs fits are unchanged, at the same times.
+
 **Not done, and why.**
 
 - *pathogen* (a fill that varies per dot, by a color scale, under a thin dark outline; and a band over the dots,
