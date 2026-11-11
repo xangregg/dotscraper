@@ -986,10 +986,14 @@ times, and the detector stays off on every other image: the bench gradients have
 and JMP's outlines share their fill's hue. In the browser: 469 dots, 20 flagged weak, no console errors, but 349 s
 against 43 s in Node, with the pane hidden (a throttled background page, probably; not checked).
 
-Not done: the band (divide its transmission out of P: s from the rings' contrast inside it, needing a region
-detector for noisy images); a single fill color under a gray ring (the plane is then undetermined: the normal
-should be the gray direction made orthogonal to the fill's, untested for want of an image); two color families
-under gray rings are fitted as one (their colors aren't reported); the fit's time.
+Deferred for pathogen: the band, until bands over dots turn up more often (it would mean dividing its
+transmission out of P, with s from the rings' contrast inside it and a region detector for noisy images).
+Deferred indefinitely: the rest of pathogen's misses, the deep stacks in the band at 0, and the fit's time (43 s in
+Node).
+
+Still open, beyond pathogen: a single fill color under a gray ring (the plane is then undetermined: its normal
+should be the gray direction made orthogonal to the fill's; untested for want of an image), and two color families
+under gray rings, which are fitted as one, without their colors.
 
 **Not done, and why.**
 
