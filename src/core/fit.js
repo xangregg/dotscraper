@@ -15,6 +15,7 @@
 // patch it touches.
 
 import { createDotModel, renderDots, solidImage, gaussianKernel } from './render.js';
+import { createOutlineModel } from './outline.js';
 
 const HUBER_DELTA = 3; // t units (0–255 scale): residuals beyond this count linearly
 const DOT_COST_PIXELS = 20; // λ = this many pixels …
@@ -32,6 +33,18 @@ const HOUGH_SMOOTH = 1; // px, Gaussian smoothing of the accumulator before peak
 const HOUGH_PEAK_RADIUS = 2.5; // px: votes within this of a peak are its mass
 const HOUGH_MIN_ARC = 0.2; // fraction of the circumference a peak's mass must reach
 const HOUGH_NMS_RADII = 0.3; // × r: of two peaks closer than this, the smaller is dropped
+// Outline-only dots (ringCenters): the ring's mid-radius circle is sampled at this many points, and a center needs
+// this mean count on it: a ring a quarter seen for births, on the residual; the first candidates need more, since
+// in a dense stack the arcs of neighbors add up to spurious centers (pathogen at 0.25: 1125 candidates for 583
+// dots, 668 of them later removed, and 80 s of a 106 s fit spent on them)
+const RING_SAMPLES = 48;
+const RING_MIN_ARC = 0.15;
+const RING_MIN_ARC_FIRST = 0.5;
+// An outlined dot's own fill value (fitFill) is read this far inside its fill, from at least this many pixels it is
+// on top of, and changed only by more than this
+const FILL_FIT_INSET = 1.5; // px
+const FILL_FIT_MIN_PIXELS = 8;
+const FILL_FIT_TOL = 1; // t units
 const BIRTH_MIN_LEVELS = 0.2; // mean missing dots over a dot-sized box to try a birth there
 // Missing dots are counted per pixel in units of what one more dot would change there; where that is below this
 // (very deep stacks, where the colors no longer separate) the pixel can't show a missing dot.
@@ -53,6 +66,9 @@ const MAX_BIRTHS_PER_ROUND = 200;
 // rims are read along their own color line: dots under the curve preset's black line, under 15% visible but
 // correctly found from their rims, were lost when it was.
 const MIN_VISIBLE_OPAQUE = 0.15;
+// An outlined dot needs this much of itself unmasked: a ring under a mask can't be told from no ring, and dots
+// beside pathogen's y-axis ticks, 3–10% unmasked, explained the ticks' gray fringes
+const MIN_VISIBLE_OUTLINE = 0.3;
 // An opaque dot's visible interior must be filled: text in a dot family's color (Laser: black labels, "0", "O",
 // "S") explained enough of a glyph's ring for a dot to pay for itself, but glyphs are hollow.
 const FILL_RADII = 0.75; // × r, the interior checked
@@ -173,6 +189,94 @@ export function houghCenters(D, weight, width, height, r) {
     return kept.map(k => ({ x: k.x, y: k.y, arc: k.mass / (2 * Math.PI * r) }));
 }
 
+/**
+ * Candidate centers for outline-only dots: a matched filter on the overlap count. A ring is too thin for the
+ * gradient vote (the Sobel kernel spans both of its edges, which cancel), so each center is scored by the mean
+ * count on the circle at the ring's mid-radius, sampled at RING_SAMPLES points: about 1 where a whole ring is seen,
+ * the fraction seen where part of it is hidden. Masked samples count as 0. O(pixels · RING_SAMPLES).
+ *
+ * @param {Float32Array} D  ring count (NaN where unknown)
+ * @param {Uint8Array} weight  1 where the fit may look
+ * @param {number} width
+ * @param {number} height
+ * @param {number} r  px, the ring's outer radius
+ * @param {number} inner  the ring's inner radius over r
+ * @param {number} [minArc]  the mean count a center needs
+ * @returns {{x: number, y: number, arc: number}[]}  centers in px, strongest first; arc: the mean count
+ */
+export function ringCenters(D, weight, width, height, r, inner, minArc = RING_MIN_ARC) {
+    const rm = r * (1 + inner) / 2;
+    const offs = [];
+    for (let k = 0; k < RING_SAMPLES; k++) {
+        const a = 2 * Math.PI * k / RING_SAMPLES;
+        offs.push([rm * Math.cos(a), rm * Math.sin(a)]);
+    }
+    // bilinear sample of D at (x, y) in px, 0 off the image or where masked
+    const at = (x, y) => {
+        const fx = x - 0.5;
+        const fy = y - 0.5;
+        const ix = Math.floor(fx);
+        const iy = Math.floor(fy);
+        const tx = fx - ix;
+        const ty = fy - iy;
+        let s = 0;
+        for (const [ox, oy, w] of [[0, 0, (1 - tx) * (1 - ty)], [1, 0, tx * (1 - ty)], [0, 1, (1 - tx) * ty], [1, 1, tx * ty]]) {
+            const xx = ix + ox;
+            const yy = iy + oy;
+            if (xx < 0 || yy < 0 || xx >= width || yy >= height)
+                continue;
+            const q = yy * width + xx;
+            if (weight[q] && !Number.isNaN(D[q]))
+                s += w * D[q];
+        }
+        return s;
+    };
+    const score = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            let s = 0;
+            for (const [ox, oy] of offs)
+                s += at(x + 0.5 + ox, y + 0.5 + oy);
+            score[y * width + x] = s / RING_SAMPLES;
+        }
+    }
+    const nms = Math.max(2, HOUGH_NMS_RADII * r);
+    const peaks = [];
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const p = y * width + x;
+            const v = score[p];
+            if (v < minArc || v < score[p - 1] || v < score[p + 1] || v < score[p - width] || v < score[p + width])
+                continue;
+            // subpixel: score-weighted centroid of the 3 × 3 neighborhood above its smallest value
+            let low = Infinity;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++)
+                    low = Math.min(low, score[p + dy * width + dx]);
+            }
+            let sw = 0;
+            let sx = 0;
+            let sy = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const w = score[p + dy * width + dx] - low;
+                    sw += w;
+                    sx += w * (x + dx + 0.5);
+                    sy += w * (y + dy + 0.5);
+                }
+            }
+            peaks.push(sw > 0 ? { x: sx / sw, y: sy / sw, v } : { x: x + 0.5, y: y + 0.5, v });
+        }
+    }
+    peaks.sort((a, b) => b.v - a.v);
+    const kept = [];
+    for (const pk of peaks) {
+        if (kept.every(k => Math.hypot(k.x - pk.x, k.y - pk.y) >= nms))
+            kept.push(pk);
+    }
+    return kept.map(k => ({ x: k.x, y: k.y, arc: k.v }));
+}
+
 function blurPlane(src, width, height, sigma) {
     const k = gaussianKernel(sigma);
     const h = (k.length - 1) / 2;
@@ -205,6 +309,7 @@ function blurPlane(src, width, height, sigma) {
  * @param {object} input.style   render style with levels (from style.estimateStyle, overrides applied)
  * @param {{B: number[], u: number[]}} input.line  the family's color line
  * @param {Uint8Array} input.mask  1 = ignore
+ * @param {Float32Array} [input.base]  t per pixel under the dots, for outlined dots (style.layered: outline.js)
  * @param {Float32Array} [input.imgT]  the image's values to compare, if not its projection on the line (opaque
  *                                     families: coverage against the local background, in color units)
  */
@@ -225,9 +330,13 @@ export function createFit(input) {
     const lambda = DOT_COST_PIXELS * huber(DOT_COST_STEP);
     // the fit renders along the color line only (one value per pixel); modelImage() renders RGB for display
     const lineStyle = st => ({ ...st, project: line });
-    let model = createDotModel(background, lineStyle(style));
+    // outlined dots (style.layered): an ordered model over the per-pixel base input.base, in t units
+    const makeModel = st => (st.layered
+        ? createOutlineModel(input.base, width, height, { radius: st.radius, ring: st.ring, fillAlpha: st.layered.fillAlpha, ringT: st.layered.ringT, blur: st.blur })
+        : createDotModel(background, lineStyle(st)));
+    let model = makeModel(style);
     const opaque = style.alpha >= 1;
-    const minVisible = opaque ? MIN_VISIBLE_OPAQUE : 0;
+    const minVisible = opaque ? MIN_VISIBLE_OPAQUE : (style.layered ? MIN_VISIBLE_OUTLINE : 0);
     const fillT = FILL_LEVEL * Math.hypot(B[0] - style.color[0], B[1] - style.color[1], B[2] - style.color[2]);
     const pos = new Map(); // id → { x, y }
 
@@ -252,8 +361,9 @@ export function createFit(input) {
     const clampX = x => Math.min(width + style.radius / 2, Math.max(-style.radius / 2, x));
     const clampY = y => Math.min(height + style.radius / 2, Math.max(-style.radius / 2, y));
 
-    function add(x, y) {
-        const id = model.add(x, y);
+    // z: drawing order, for outlined dots only (default: on top)
+    function add(x, y, z) {
+        const id = model.add(x, y, z);
         pos.set(id, { x, y });
         return id;
     }
@@ -520,10 +630,145 @@ export function createFit(input) {
         return made;
     }
 
+    const grow = ([x0, y0, x1, y1], d) => [Math.max(0, x0 - d), Math.max(0, y0 - d), Math.min(width, x1 + d), Math.min(height, y1 + d)];
+
+    // Add a dot at (x, y), refine it, let its neighbors re-settle, and keep it if the neighborhood's loss falls by
+    // more than λ; otherwise restore the neighborhood. Returns the rectangle scored when kept, else null.
+    function tryBirth(x, y, z) {
+        const r = style.radius;
+        const slack = BIRTH_NEIGHBOR_MOVE_RADII * r;
+        const neighbors = near(x, y, NEIGHBOR_RADII * r);
+        let foot = model.footprint(x, y);
+        for (const nid of neighbors) {
+            const q0 = pos.get(nid);
+            foot = union(foot, model.footprint(q0.x, q0.y));
+        }
+        foot = grow(foot, Math.ceil(slack + COMPASS_STEPS[0] + 1));
+        const scoreRect = grow(foot, Math.ceil(style.blur ? 3 * style.blur + 1 : 0));
+        const before = loss(scoreRect);
+        const snap = model.snapshot(foot);
+        const saved = neighbors.map(nid => [nid, pos.get(nid)]);
+        const id = add(x, y, z);
+        refineDot(id, 0, slack + COMPASS_STEPS[0]);
+        for (const nid of neighbors)
+            refineDot(nid, RESWEEP_FIRST_STEP, slack);
+        refineDot(id, RESWEEP_FIRST_STEP, slack);
+        if (style.layered && fitFill(id))
+            refineDot(id, RESWEEP_FIRST_STEP, slack);
+        const born = pos.get(id);
+        if (before - loss(scoreRect) > lambda && visibleFraction(born.x, born.y) >= minVisible && filled(born.x, born.y))
+            return scoreRect;
+        model.restore(snap);
+        pos.delete(id);
+        for (const [nid, p0] of saved)
+            pos.set(nid, p0);
+        birthFailures++;
+        return null;
+    }
+
+    // the neighborhood changed: earlier failures in it may succeed now
+    function forgetTabu(tabu, rect) {
+        for (let i = tabu.length - 1; i >= 0; i--) {
+            if (rect[0] <= tabu[i].x && tabu[i].x < rect[2] && rect[1] <= tabu[i].y && tabu[i].y < rect[3])
+                tabu.splice(i, 1);
+        }
+    }
+
+    // The drawing order for a new outlined dot at (x, y): each gap in its neighbors' order (below all, between two,
+    // above all) is scored with the dot added as it stands, and the best is returned. O(k) renders of its patch for
+    // k neighbors.
+    function bestZ(x, y) {
+        const zs = near(x, y, 2 * style.radius).map(id => model.zOf(id)).sort((a, b) => a - b);
+        if (!zs.length)
+            return undefined;
+        const gaps = [zs[0] - 1, ...zs.slice(1).map((z, i) => (zs[i] + z) / 2), zs[zs.length - 1] + 1];
+        const rect = model.influenceRect(x, y);
+        const foot = model.footprint(x, y);
+        let best = null;
+        for (const z of gaps) {
+            const snap = model.snapshot(foot);
+            model.add(x, y, z);
+            const L = loss(rect);
+            model.restore(snap);
+            if (!best || L < best.L)
+                best = { z, L };
+        }
+        return best.z;
+    }
+
+    // An outlined dot's own fill value from the part of its interior it is on top of, where the image is
+    // (1 − αf)·(what is under it) + αf·f: f = (t − (1 − αf)·under) / αf, the median over those pixels. Interior:
+    // FILL_FIT_INSET px inside the fill, clear of every ring. Returns whether f changed.
+    function fitFill(id) {
+        const p = pos.get(id);
+        const z = model.zOf(id);
+        const aF = style.layered.fillAlpha;
+        const f0 = model.fillOf(id);
+        const rIn = model.fillRadius - FILL_FIT_INSET;
+        const above = near(p.x, p.y, 2 * style.radius).filter(o => o !== id && model.zOf(o) > z).map(o => pos.get(o));
+        const vals = [];
+        for (let y = Math.max(0, Math.floor(p.y - rIn)); y < Math.min(height, Math.ceil(p.y + rIn)); y++) {
+            for (let x = Math.max(0, Math.floor(p.x - rIn)); x < Math.min(width, Math.ceil(p.x + rIn)); x++) {
+                const cx = x + 0.5;
+                const cy = y + 0.5;
+                const q = y * width + x;
+                if (!weight[q] || (cx - p.x) ** 2 + (cy - p.y) ** 2 > rIn * rIn)
+                    continue;
+                if (above.some(o => Math.hypot(cx - o.x, cy - o.y) < style.radius + FILL_FIT_INSET))
+                    continue;
+                // the model's value here is (1 − αf)·under + αf·f0, so under follows from it
+                const under = (modelT(q) - aF * f0) / (1 - aF);
+                vals.push((imgT[q] - (1 - aF) * under) / aF);
+            }
+        }
+        if (vals.length < FILL_FIT_MIN_PIXELS)
+            return false;
+        vals.sort((a, b) => a - b);
+        const f = vals[vals.length >> 1];
+        if (Math.abs(f - f0) < FILL_FIT_TOL)
+            return false;
+        model.setFill(id, f);
+        return true;
+    }
+
+    function fitFills() {
+        let changed = 0;
+        for (const id of [...pos.keys()])
+            changed += fitFill(id) ? 1 : 0;
+        return changed;
+    }
+
+    // Births for outline-only dots (style.alpha 0 with a ring): a missing ring leaves nothing at its center for a
+    // box to find, only its own arc in the residual, so candidates come from ringCenters on the residual counted
+    // in rings, strongest first. O(pixels · RING_SAMPLES) per round.
+    function ringBirths(tabu) {
+        const one = model.valueOf(1 - style.ring.alpha);
+        const Dres = new Float32Array(n);
+        for (let p = 0; p < n; p++)
+            Dres[p] = weight[p] ? Math.max(0, imgT[p] - modelT(p)) / one : NaN;
+        let added = 0;
+        for (const c of ringCenters(Dres, weight, width, height, style.radius, style.ring.inner).slice(0, MAX_BIRTHS_PER_ROUND)) {
+            if (tabu.some(t => Math.hypot(t.x - c.x, t.y - c.y) < BIRTH_TABU_RADII * style.radius))
+                continue;
+            // outlined dots: a missing ring may lie anywhere in its neighbors' order
+            const scoreRect = tryBirth(c.x, c.y, style.layered ? bestZ(c.x, c.y) : undefined);
+            if (scoreRect) {
+                added++;
+                forgetTabu(tabu, scoreRect);
+            }
+            else {
+                tabu.push({ x: c.x, y: c.y });
+            }
+        }
+        return added;
+    }
+
     // Missing dots, (t − t̂)/Δt on unmasked pixels with Δt what one more dot would add at the pixel's current depth,
     // averaged over boxes inscribed in a dot; the best box not near a failed site is tried as a new dot, kept if it
     // pays for itself. The residual and box-mean planes are updated only where an accepted birth changed the model.
     function births(tabu) {
+        if (style.alpha === 0 && style.ring)
+            return ringBirths(tabu);
         return birthsWithBox(tabu, BIRTH_BOX_RADII, BIRTH_MIN_SUPPORT) + birthsWithBox(tabu, BIRTH_WIDE_BOX_RADII, BIRTH_WIDE_MIN_SUPPORT);
     }
 
@@ -593,7 +838,6 @@ export function createFit(input) {
             }
         }
 
-        const grow = ([x0, y0, x1, y1], d) => [Math.max(0, x0 - d), Math.max(0, y0 - d), Math.min(width, x1 + d), Math.min(height, y1 + d)];
         fillResidual([0, 0, width, height]);
         fillMeans([0, 0, width, height]);
         let added = 0;
@@ -611,44 +855,15 @@ export function createFit(input) {
             }
             if (!best)
                 break;
-            // add and refine it, let its neighbors re-settle, and keep it if the neighborhood's loss falls by more
-            // than λ; otherwise restore the neighborhood
-            const r = style.radius;
-            const slack = BIRTH_NEIGHBOR_MOVE_RADII * r;
-            const neighbors = near(best.x, best.y, NEIGHBOR_RADII * r);
-            let foot = model.footprint(best.x, best.y);
-            for (const nid of neighbors) {
-                const q0 = pos.get(nid);
-                foot = union(foot, model.footprint(q0.x, q0.y));
-            }
-            foot = grow(foot, Math.ceil(slack + COMPASS_STEPS[0] + 1));
-            const scoreRect = grow(foot, Math.ceil(style.blur ? 3 * style.blur + 1 : 0));
-            const before = loss(scoreRect);
-            const snap = model.snapshot(foot);
-            const saved = neighbors.map(nid => [nid, pos.get(nid)]);
-            const id = add(best.x, best.y);
-            refineDot(id, 0, slack + COMPASS_STEPS[0]);
-            for (const nid of neighbors)
-                refineDot(nid, RESWEEP_FIRST_STEP, slack);
-            refineDot(id, RESWEEP_FIRST_STEP, slack);
-            const born = pos.get(id);
-            if (before - loss(scoreRect) > lambda && visibleFraction(born.x, born.y) >= minVisible && filled(born.x, born.y)) {
+            const scoreRect = tryBirth(best.x, best.y);
+            if (scoreRect) {
                 added++;
                 fillResidual(scoreRect);
                 fillMeans(grow(scoreRect, h));
-                // the neighborhood changed: earlier failures here may succeed now
-                for (let i = tabu.length - 1; i >= 0; i--) {
-                    if (scoreRect[0] <= tabu[i].x && tabu[i].x < scoreRect[2] && scoreRect[1] <= tabu[i].y && tabu[i].y < scoreRect[3])
-                        tabu.splice(i, 1);
-                }
+                forgetTabu(tabu, scoreRect);
             }
             else {
-                model.restore(snap);
-                pos.delete(id);
-                for (const [nid, p0] of saved)
-                    pos.set(nid, p0);
                 tabu.push({ x: best.x, y: best.y });
-                birthFailures++;
             }
         }
         return added;
@@ -658,9 +873,9 @@ export function createFit(input) {
     // golden-section search of the radius on the whole loss, dots fixed
     function refitRadius() {
         const r0 = style.radius;
-        const dots = [...pos.values()];
+        const dots = style.layered ? model.dots() : [...pos.values()];
         const evalR = r => {
-            const m = createDotModel(background, lineStyle({ ...style, radius: r }));
+            const m = makeModel({ ...style, radius: r });
             m.addAll(dots);
             const saved = model;
             model = m;
@@ -697,12 +912,15 @@ export function createFit(input) {
     }
 
     function setStyle(s) {
+        const dots = style.layered ? model.dots() : [...pos.values()];
         style = s;
-        const dots = [...pos.values()];
-        model = createDotModel(background, lineStyle(style));
+        model = makeModel(style);
         pos.clear();
-        for (const d of dots)
-            add(d.x, d.y);
+        for (const d of dots) {
+            const id = add(d.x, d.y, d.z);
+            if (style.layered)
+                model.setFill(id, d.f);
+        }
     }
 
     function totalLoss() {
@@ -763,6 +981,7 @@ export function createFit(input) {
                 seX: curv[0] > 0 ? sigma / Math.sqrt(curv[0]) : Infinity,
                 seY: curv[1] > 0 ? sigma / Math.sqrt(curv[1]) : Infinity,
                 margin, visible, depth: Math.round(depth * 10) / 10, flags,
+                ...(style.layered ? { z: model.zOf(id) } : {}),
             });
         }
         out.sort((a, b) => a.x - b.x || a.y - b.y);
@@ -774,7 +993,7 @@ export function createFit(input) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, births, splits, deaths, merges, refitRadius, totalLoss, assess,
+        add, remove, refineAll, refineDot, births, splits, deaths, merges, fitFills, refitRadius, totalLoss, assess,
         get birthFailures() {
             return birthFailures;
         },
@@ -812,7 +1031,10 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
         lastReport = now;
         onProgress({ stage, round, dots: fit.dots(), loss: fit.totalLoss() + fit.lambda * fit.ids().length });
     };
-    const initial = opts.initial ?? houghCenters(input.D, fit.weight, width, height, input.style.radius);
+    const st = input.style;
+    const ringOnly = st.alpha === 0 && st.ring;
+    const initial = opts.initial ?? (ringOnly ? ringCenters(input.D, fit.weight, width, height, st.radius, st.ring.inner, RING_MIN_ARC_FIRST)
+        : houghCenters(input.D, fit.weight, width, height, st.radius));
     for (const c of initial)
         fit.add(c.x, c.y);
     log.push({ stage: 'candidates', dots: initial.length });
@@ -823,7 +1045,10 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
     for (let round = 1; round <= MAX_ROUNDS; round++) {
         rounds = round;
         const tr = Date.now();
-        const sweeps = fit.refineAll();
+        let sweeps = fit.refineAll();
+        // outlined dots: each fill's own value, then the positions it frees
+        if (st.layered && fit.fitFills())
+            sweeps += fit.refineAll();
         const msRefine = Date.now() - tr;
         report('refine', round);
         // a site that failed may succeed once its neighbors have moved: forget failures each round

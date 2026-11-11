@@ -28,6 +28,7 @@ const SAMPLE_DIFF_GAIN = 10; // the diff sample shows |image − model| × this
 const SCALE_CAPTION = {
     translucent: 'image as one virtual family (counts along each pixel’s color)',
     opaque: 'image as one virtual opaque family (every dot pixel covered, outlines included)',
+    outline: 'image with the fill colors projected out (rings and their occlusion), model of the ring alone',
 };
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
 const EDIT_HIT_RADII = 0.6; // × r: a click this close to a dot's center removes it in edit mode
@@ -116,13 +117,13 @@ function fitInputFor(k) {
     if (k === currentFamily()) {
         return {
             image: analysisImage(), style: currentStyle(), line: state.estimate.familyMeasure.line,
-            mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT,
+            mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT, base: state.estimate.base,
         };
     }
     const est = state.familyEstimates?.[k] ?? estimateStyle(state.base ?? state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
     const image = est.image ?? state.base ?? state.work;
     const layers = buildMask(image, est, { bounds: plotBounds(state.axes) });
-    return { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
+    return { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base };
 }
 
 function familyLabel(k) {
@@ -300,7 +301,9 @@ function renderStylePanel() {
     est.candidates.forEach((c, i) => {
         const label = c.kind === 'opaque'
             ? `${i + 1}: opaque, r ${fmt(c.radius, 1)}`
-            : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`;
+            : c.kind === 'outline'
+                ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, fills vary`
+                : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`;
         select.add(new Option(label, String(i)));
     });
     if (state.seed)

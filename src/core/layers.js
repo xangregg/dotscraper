@@ -254,6 +254,44 @@ function components8(mask, width, height) {
     return comps;
 }
 
+// Outlined dots (families.js outlineEstimate) bring their own mask: what can't be read in P, plus what lies beyond
+// the axes. Pixels are classed as family where a ring may be (D > 0), other where masked.
+function outlineLayers(estimate, width, height, opts) {
+    const n = width * height;
+    const { D, style } = estimate;
+    const mask = Uint8Array.from(estimate.outlineMask);
+    const classes = new Uint8Array(n);
+    for (let p = 0; p < n; p++)
+        classes[p] = mask[p] ? CLASS_OTHER : (D[p] > 0 ? CLASS_FAMILY : CLASS_BACKGROUND);
+    let outside = 0;
+    const b = opts.bounds;
+    if (b) {
+        const m = OUTSIDE_MARGIN_RADII * style.radius;
+        for (let y = 0; y < height; y++) {
+            const cy = y + 0.5;
+            const rowOut = (b.top !== null && cy < b.top - m) || (b.bottom !== null && cy > b.bottom + m);
+            for (let x = 0; x < width; x++) {
+                const cx = x + 0.5;
+                if (rowOut || (b.left !== null && cx < b.left - m) || (b.right !== null && cx > b.right + m)) {
+                    mask[y * width + x] = 1;
+                    outside++;
+                }
+            }
+        }
+    }
+    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside };
+    for (let p = 0; p < n; p++) {
+        if (classes[p] === CLASS_BACKGROUND)
+            stats.background++;
+        else if (classes[p] === CLASS_FAMILY)
+            stats.family++;
+        else
+            stats.other++;
+        stats.masked += mask[p];
+    }
+    return { classes, thin: new Uint8Array(n), mask, dilate: 0, stats };
+}
+
 /**
  * Classify pixels and build the mask of pixels the fit should ignore.
  *
@@ -272,6 +310,8 @@ export function buildMask(image, estimate, opts = {}) {
     const { width, height } = image;
     const n = width * height;
     const { D, style } = estimate;
+    if (estimate.outlineMask)
+        return outlineLayers(estimate, width, height, opts);
     const classes = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
         const d = D[p];

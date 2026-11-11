@@ -1,6 +1,7 @@
 // Benchmark the extraction (PLAN.md §2.6): synthetic presets over several seeds, every local test image with
 // ground truth in testgraphs/truth/<name>.json ({ "dots": [{ "x", "y" }, …] } in px), and every PNG and JPEG of a
-// truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/). Prints precision, recall,
+// truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/), and every test image with a
+// CSV of its own (testgraphs/<name>.csv, mapped through the detected ticks). Prints precision, recall,
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
 // Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose]
@@ -17,12 +18,16 @@ import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';
 import { detectAxes, plotBounds } from '../src/core/axes.js';
-import { readTruthCsv, truthPixels } from './truth-csv.mjs';
+import { readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_DIR = join(ROOT, 'testgraphs', 'truth');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 const MATCH_TOL_RADII = 0.5;
+// Jittered truth (a test image's CSV with "with jitter"): the truth is each dot's cell, and a dot matches a cell
+// within this box. Measured on pathogen: x up to about ±1 year (12.2 px; dots reach 0.83 year left of the first
+// year), y ±25 px about rows 0–2.
+const JITTER_BOX = { x: 14, y: 27 }; // px, half-widths
 
 function parseArgs(argv) {
     const opts = { seeds: 5, preset: null, set: null, only: null, verbose: false };
@@ -56,7 +61,7 @@ export function extract(image, family = 0, candidates = undefined, jpeg = false,
 // mask and fit for one family's estimate
 function fitEstimate(image, est, bounds) {
     const layers = buildMask(image, est, { bounds });
-    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT };
+    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base };
     const fit = fitDots(input);
     const hough = houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
     return { est, layers, fit, hough };
@@ -205,6 +210,22 @@ export function laneRow(name, truth, laneCenters, results, ms) {
     };
 }
 
+/**
+ * Score every family's dots against jittered truth cells: matched within JITTER_BOX (scaled so one tolerance fits);
+ * positions can't be scored, so rmse is NaN.
+ */
+export function jitterRow(name, truth, results, ms) {
+    const found = results.flatMap(r => r.fit.dots);
+    const k = JITTER_BOX.x / JITTER_BOX.y;
+    const m = matchDots(truth.map(t => ({ x: t.x, y: t.y * k })), found.map(d => ({ x: d.x, y: d.y * k })), JITTER_BOX.x);
+    return {
+        name, n: truth.length, found: found.length, precision: m.precision, recall: m.recall, countError: m.countError,
+        rmse: NaN, houghRecall: NaN, houghPrecision: NaN, flagged: found.filter(d => d.flags.length).length, ms,
+        radius: results.reduce((s, r) => s + r.fit.radius, 0) / results.length, families: results.length,
+        missed: m.missed.map(i => truth[i]), extra: m.extra.map(j => found[j]),
+    };
+}
+
 function print(rows) {
     const f = (v, d = 3) => (Number.isNaN(v) ? '–' : v.toFixed(d));
     console.log('case                           truth found  prec  recall  count  rmse px  hough P/R    flagged  radius   ms');
@@ -266,6 +287,34 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 console.log(label, results.map(q => `${q.est.style.alpha < 1 ? 'translucent' : 'opaque'} ${q.est.style.color.map(Math.round)} r ${q.fit.radius.toFixed(2)}`).join('; '));
                 console.log('   missed', r.missed.map(t => `${t.x.toFixed(1)},${t.y.toFixed(1)}`).join(' '), ' extra', r.extra.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' '));
             }
+        }
+    }
+    // test images with a CSV of their own (data units, ticks in the header)
+    const testDir = join(ROOT, 'testgraphs');
+    if (existsSync(testDir) && !opts.preset && (!opts.set || opts.set === 'testgraphs')) {
+        for (const file of readdirSync(testDir).filter(f => f.endsWith('.csv')).sort()) {
+            const name = basename(file, '.csv');
+            const img = ['.png', '.jpg', '.jpeg'].map(e => join(testDir, name + e)).find(existsSync);
+            if (!img || (opts.only && !`testgraphs/${name}`.includes(opts.only)))
+                continue;
+            const jpeg = /\.jpe?g$/i.test(img);
+            const image = readImage(img);
+            const t0 = Date.now();
+            const px = truthPixelsByTicks(readTruthCsv(join(testDir, file)), detectAxes(jpeg ? restoreChroma(image) : image));
+            if (px.error) {
+                console.log(`testgraphs/${name}: ${px.error}`);
+                continue;
+            }
+            let results;
+            try {
+                results = extractAll(image, jpeg);
+            }
+            catch (e) {
+                console.log(`testgraphs/${name}: ${e.message}`);
+                continue;
+            }
+            const label = `testgraphs/${name}`.slice(0, 30);
+            rows.push(px.jitter ? jitterRow(label, px.dots, results, Date.now() - t0) : groupRow(label, px.dots, results, Date.now() - t0));
         }
     }
     if (existsSync(TRUTH_DIR) && !opts.preset && !opts.set) {

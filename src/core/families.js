@@ -1,13 +1,17 @@
 // Every dot family of an image, ready to fit (PLAN.md phase 5): the style estimates, the shaded regions under or
 // over the dots (background.js), overlays divided out, and each translucent family on its own image (unmix.js).
 // The bench and the app both go through here, so they fit the same thing. Dots colored by a continuous scale are
-// one family on a virtual image of their counts (colormap.js).
+// one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
+// by their rings, in drawing order, with the fill colors projected out (outline.js).
 
 import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCES, EXACT_TOLERANCES } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
+import { findOutlines } from './outline.js';
 
+const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
+const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
 const DEFAULT_RADIUS = 5; // px, for the region test when no family has a radius yet
 // One translucent family over two backgrounds looks like two opaque families when it has too few overlaps to show
 // its levels (bench1 ellipse: orange on white and orange on lavender). Its colors there differ by q·(B − B₂), with
@@ -106,6 +110,63 @@ function colormapEstimate(image, jpeg) {
 }
 
 /**
+ * The estimate for outlined dots with fills that vary (outline.js), or null. Its image is P drawn in gray (what the
+ * fit sees), its fitT and base are P and what lies under the rings in t units, and it brings its own mask.
+ */
+function outlineEstimate(image) {
+    const background = backgroundColor(image);
+    const B = background.color;
+    const found = findOutlines(image, B);
+    if (!found)
+        return null;
+    const { width, height } = image;
+    const { P, under, D, ring } = found;
+    const n = width * height;
+    const data = new Uint8ClampedArray(4 * n);
+    const fitT = new Float32Array(n);
+    const base = new Float32Array(n);
+    const unknown = new Uint8Array(n);
+    for (let p = 0; p < n; p++) {
+        const v = Math.round(255 * (1 - Math.min(1, Math.max(0, P[p]))));
+        data[4 * p] = data[4 * p + 1] = data[4 * p + 2] = v;
+        data[4 * p + 3] = 255;
+        fitT[p] = T_BLACK * P[p];
+        base[p] = T_BLACK * Math.min(under[p], 1);
+        unknown[p] = Number.isNaN(D[p]) ? 1 : 0;
+    }
+    const mask = Uint8Array.from(unknown);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (!unknown[y * width + x])
+                continue;
+            for (let yy = Math.max(0, y - OUTLINE_MASK_DILATE); yy <= Math.min(height - 1, y + OUTLINE_MASK_DILATE); yy++) {
+                for (let xx = Math.max(0, x - OUTLINE_MASK_DILATE); xx <= Math.min(width - 1, x + OUTLINE_MASK_DILATE); xx++)
+                    mask[yy * width + xx] = 1;
+            }
+        }
+    }
+    const style = {
+        color: [0, 0, 0], alpha: 0, radius: ring.radius, blur: ring.blur, measuredLevels: 1,
+        ring: { inner: ring.inner, alpha: ring.alpha },
+        layered: { fillAlpha: found.fillAlpha, ringT: T_BLACK },
+    };
+    const line = { B: [255, 255, 255], u: [1, 1, 1].map(v => v / Math.sqrt(3)) };
+    const notes = [
+        `Outlined dots whose fills vary (${found.plane.pixels} fill pixels within ${found.plane.rms.toFixed(1)} units of one plane): the fill colors are projected out and the dots are fitted by their rings, in drawing order.`,
+        `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, ${Math.round(100 * ring.alpha)}% of the way to black; fills ${Math.round(100 * found.fillAlpha)}% opaque${found.fillAlphaMeasured ? ` (from ${found.pairs} overlapping pairs)` : ' (assumed: too few overlapping pairs to measure)'}.`,
+    ];
+    return {
+        background, family: 0, flat: null, image: { width, height, data },
+        // one candidate, so the app fits one family
+        candidates: [{ kind: 'outline', radius: ring.radius, levels: [], fit: { alpha: ring.alpha } }],
+        familyMeasure: { kind: 'outline', line, levels: [] },
+        style, D, fitT, base, outlineMask: mask,
+        isolated: found.isolated.map(c => ({ cx: c.x, cy: c.y, r: c.r })),
+        edge: null, scale: 'outline', notes,
+    };
+}
+
+/**
  * @param {import('./image.js').RgbaImage} image  as analyzed (a JPEG's chroma already restored)
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]
@@ -115,6 +176,11 @@ function colormapEstimate(image, jpeg) {
  */
 export function estimateFamilies(image, opts = {}) {
     const jpeg = !!opts.jpeg;
+    // a dark ring off the fill plane decides for outlined dots even when the fills also read as a translucent
+    // scale (their overlaps show levels too); JMP's outlines, in the fill's own hue, never pass
+    const outlined = outlineEstimate(image);
+    if (outlined)
+        return { image, layers: null, estimates: [outlined] };
     const scaled = colormapEstimate(image, jpeg);
     if (scaled)
         return { image, layers: null, estimates: [scaled] };

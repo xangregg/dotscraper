@@ -14,6 +14,11 @@
 // x(100) = width − 0.50 px, residuals 0.01–0.03 px). Through it, truth is exact; through detected ticks it would
 // be off by up to 0.25 px, because JMP draws ticks on whole pixels.
 //
+// A test image's own truth (testgraphs/<name>.csv) may have no plot area: its tick values are then paired with the
+// ticks detected in the image (truthPixelsByTicks), and positions are interpolated between ticks in the scale's
+// transform. Scale types: "linear" and "log y+1" (log(v + 1)); "with jitter" after the type means each dot was
+// moved by a random amount, so the truth gives its cell, not its position.
+//
 // When the x tick list is exactly the set of distinct x values (bench3: x is a group, ticks 1 and 2), x names a
 // lane: a beeswarm or jitter layout chose each dot's x, and only its lane and its y are known. Rows without an x
 // are not drawn and are dropped.
@@ -46,7 +51,7 @@ export function readTruthCsv(path) {
         if (!text)
             return null;
         const kv = pairs(text);
-        return { type: text.split(',')[0].trim(), min: Number(kv.min), max: Number(kv.max) };
+        return { type: text.split(',')[0].trim(), min: Number(kv.min), max: Number(kv.max), jitter: /with jitter/i.test(text) };
     };
     const ticks = text => (text ? text.split(',').map(Number) : null);
     const area = text => {
@@ -94,4 +99,47 @@ export function truthPixels(truth) {
     const map = plotAreaMapping(truth);
     const dots = truth.rows.map(r => ({ x: map.x(r.x), y: map.y(r.y), group: r.group, ...(truth.lanes ? { lane: r.x } : {}) }));
     return { dots, laneCenters: truth.lanes ? truth.xTicks.map(map.x) : null };
+}
+
+// the scale's transform: values are interpolated linearly in it between ticks
+function transformOf(type) {
+    if (type === 'linear')
+        return v => v;
+    if (/^log y\s*\+\s*1$/i.test(type))
+        return v => Math.log1p(v);
+    return null;
+}
+
+// px of v from (value, px) tick pairs sorted by value, linear in f between neighbors, extrapolated at the ends
+function interpolate(ticks, f, v) {
+    let i = 0;
+    while (i < ticks.length - 2 && f(v) > f(ticks[i + 1][0]))
+        i++;
+    const [a, pa] = ticks[i];
+    const [b, pb] = ticks[i + 1];
+    return pa + (f(v) - f(a)) / (f(b) - f(a)) * (pb - pa);
+}
+
+/**
+ * Truth dots in pixels through the image's detected ticks (axes.detectAxes), paired in order with the header's tick
+ * values: x ticks left to right, y ticks bottom to top.
+ *
+ * @param {ReturnType<typeof readTruthCsv>} truth
+ * @param {{x: {ticks: {pos: number}[]}|null, y: {ticks: {pos: number}[]}|null}} axes  tick positions in px
+ * @returns {{dots: {x: number, y: number, cell: number[]}[], jitter: boolean}|{error: string}}  px; cell: the data
+ *   values
+ */
+export function truthPixelsByTicks(truth, axes) {
+    const fx = transformOf(truth.xScale?.type);
+    const fy = transformOf(truth.yScale?.type);
+    if (!fx || !fy)
+        return { error: `scale types ${truth.xScale?.type} and ${truth.yScale?.type} aren't supported` };
+    const xs = (axes.x?.ticks ?? []).map(t => t.pos);
+    const ys = (axes.y?.ticks ?? []).map(t => t.pos);
+    if (!truth.xTicks || !truth.yTicks || xs.length !== truth.xTicks.length || ys.length !== truth.yTicks.length)
+        return { error: `${xs.length} x and ${ys.length} y ticks detected for ${truth.xTicks?.length} and ${truth.yTicks?.length} in the header` };
+    const xt = [...truth.xTicks].sort((a, b) => a - b).map((v, i) => [v, [...xs].sort((a, b) => a - b)[i]]);
+    const yt = [...truth.yTicks].sort((a, b) => a - b).map((v, i) => [v, [...ys].sort((a, b) => b - a)[i]]);
+    const dots = truth.rows.map(r => ({ x: interpolate(xt, fx, r.x), y: interpolate(yt, fy, r.y), cell: [r.x, r.y] }));
+    return { dots, jitter: !!(truth.xScale.jitter || truth.yScale.jitter) };
 }

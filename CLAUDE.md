@@ -36,13 +36,15 @@ src/core/               pure algorithms: image.js (hash, pixel access), render.j
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
                         ticks, labels, scales), jpeg.js (chroma restoration for JPEGs), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
-                        dots), colormap.js (dots colored by a continuous scale), families.js (all of the
+                        dots), colormap.js (dots colored by a continuous scale), outline.js (outlined dots whose fills vary,
+                        fitted by their rings in drawing order), families.js (all of the
                         above, per image: what the bench and the app fit), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
                         axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
 src/fit-worker.js       module Web Worker wrapping the fit
-testgraphs/             test images, index.json, ground truth in truth/<name>.json: LOCAL ONLY, git ignores all
+testgraphs/             test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data
+                        cells, ticks in the header): LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,
                         and never let a test fail just because they're absent (skip instead).
 bench1/ bench2/ bench3/  the user's own JMP renderings (PNG and JPEG) of one data set each: data.csv in data units
@@ -74,7 +76,7 @@ test/*.test.js          node:test + node:assert/strict
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose]` runs style, mask and
   fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
-  sets (bench1–3; `--set` picks one, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. Record results in PLAN.md.
 
 ## Conventions

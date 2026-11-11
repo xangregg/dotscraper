@@ -790,8 +790,8 @@ lines meet (all flagged weak and deep), likely phantoms.
 - [x] Outlined dots with one fill: a two-part template (ring and fill).
 - [x] A fill that varies per dot, translucent (bench1–2 gradient-dots, `colormap.js`).
 - [x] Outlined opaque dots of one fill (bench1–2 solid-opaque-stroke).
-- [x] A fill that varies per dot, opaque (bench1–2 gradient-opaque, gradient-opaque-stroke; pathogen still not
-      detected, see below).
+- [x] A fill that varies per dot, opaque (bench1–2 gradient-opaque, gradient-opaque-stroke).
+- [x] Translucent fills that vary per dot under a dark gray outline, fitted by the rings (pathogen; below).
 
 **Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
 fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
@@ -934,14 +934,66 @@ but the virtual image keeps only the union (the same limit as solid-opaque-strok
 colors in the model. Each dot's color isn't reported. pathogen is still not detected: `findColormap` finds no
 chain for it (not investigated further).
 
+**Outlined dots whose fills vary: the rings** (pathogen: 583 dots, ggplot's shape 21 colored by a scale from
+near-white to crimson, under a thin dark gray ring; gridlines under them, a translucent purple band and a black line
+over them; log(y + 1) with zero at its own place; jittered by about ±1 year in x and ±25 px in y; the image noisy,
+as if resampled from a JPEG). Truth: `testgraphs/pathogen-trade-time-scatter.csv` (data cells, ticks in the header,
+mapped through the detected ticks: `truth-csv.mjs` `truthPixelsByTicks`). With the jitter only cells are known, so
+the bench matches within a box of ±14 × ±27 px and reports no RMSE. Rows 0–2 are over 50 px apart, so per-row counts
+are exact checks (286, 86 and 38 dots).
+
+Why nothing was found: the fills vary per dot, are noisy (3% of fill pixels pass the exact flat test), and the scale
+runs from near-white, so no color line or curve held them; the curve finder's largest chain was the gridlines' gray.
+
+- *Projection* (`outline.js`): the fill colors lie in a plane through white (11 106 flat colored pixels within 2.8
+  units). Its normal n gives P = n·(X − B) / n·(K − B), K black: 0 for every fill and every composite of fills, and
+  a ring composites in P like one translucent family. The darkest ring pixels read P 0.26–0.33 on fills from pale to
+  crimson. Gridlines read 0.082, the band −0.077.
+- *Background in P*: the largest of 12 directional linear openings longer than a ring is across keeps gridlines,
+  the band's level and the black line, and drops the rings. Ring ink A = (P − P_bg) / (1 − P_bg); P_bg above 0.5
+  (the line, text, frame) is masked.
+- *Style* from 12 isolated rings (square, hollow components of P): outer radius 8.625, width 1.5, blur 0.5, αk 0.39
+  (0.33–0.38 per ring by hand, across fill colors). αf from 110 pairs of strong candidates: along one ring, its ink
+  inside the other's fill over its ink outside is bimodal, about 1 (the other under it) and 0.2 (on top). The low
+  mode gives αf 0.74. The fills are nearly opaque, so a ring under one fill keeps a quarter of its ink.
+- *Model* (`createOutlineModel`): in drawing order over the base P_bg, each dot lays its fill
+  (P ← (1 − αf)·P + αf·f) and then its ring. Each dot has a z, and its own fill value f, fitted per dot from the
+  interior it is on top of. The scale is a curve, not exactly a plane: P inside isolated fills runs from −0.04 to
+  +0.08. Without f, hidden phantom rings under fills paid for themselves by explaining that offset (row 1: 112 found
+  for 86).
+- *Fit changes* (`fit.js`): ring-only styles (α 0 with a ring) take candidates from `ringCenters`, a matched filter
+  of the mean ring count on the ring's mid-radius circle. Hough on D's gradient fails there: a 1.5 px ring's two
+  edges cancel in the Sobel kernel, giving arcs of 0.25 for whole rings. Births use the same filter on the
+  residual and try the new dot at the best gap in its neighbors' order. A dot needs 30% of itself unmasked: dots
+  beside the y-axis ticks explained their gray fringes.
+- *Tried and dropped*: an order pass trying each dot on top of or under its neighbors (468 found against 469
+  without it, the same recall). Adding the first candidates weakest first (461, recall 0.768).
+
+| Step | Found | Precision | Recall | Rows 0 / 1 / 2 | Time |
+|---|---|---|---|---|---|
+| Rings alone (no fills, no order) | 281 | 0.972 | 0.468 | 72 / 61 / 25 | 1.3 s |
+| + ring births by matched filter | 291 | 0.969 | 0.484 | 78 / 62 / 25 | 41 s |
+| + fills αf 0.8 in drawing order | 513 | 0.914 | 0.804 | 232 / 112 / 28 | 143 s |
+| + each fill's own value | 438 | 0.973 | 0.731 | 186 / 84 / 27 | 106 s |
+| + first candidates at arc 0.5, births at 0.15 | 456 | 0.974 | 0.762 | 204 / 85 / 27 | 35 s |
+| Pipeline (measured style, visibility ≥ 0.3) | 469 | 0.972 | 0.782 | | 43 s |
+
+Of the 583 truth dots, 114 are unmatched: 83 in the band at 0 (up to 41 dots to a cell, under two or more fills),
+28 above row 2, 13 in row 2. Of the 53 cells near the purple band, 27 are missed: the band is drawn over the
+dots and lets part of their ink through, which isn't modeled. (The overlay detector of `background.js` needs a
+region of one exact color, and this image's noise gives none.) Every other bench row is unchanged, at the same
+times, and the detector stays off on every other image: the bench gradients have a fill plane but no ring off it,
+and JMP's outlines share their fill's hue. In the browser: 469 dots, 20 flagged weak, no console errors, but 349 s
+against 43 s in Node, with the pane hidden (a throttled background page, probably; not checked).
+
+Not done: the band (divide its transmission out of P: s from the rings' contrast inside it, needing a region
+detector for noisy images); a single fill color under a gray ring (the plane is then undetermined: the normal
+should be the gray direction made orthogonal to the fill's, untested for want of an image); two color families
+under gray rings are fitted as one (their colors aren't reported); the fit's time.
+
 **Not done, and why.**
 
-- *pathogen* (a fill that varies per dot, by a color scale, under a thin dark outline; and a band over the dots,
-  gridlines, a log scale): there is no color family to find, and the opaque-scale path above doesn't detect it
-  either. It needs a different model: per-dot fill colors,
-  fitted in RGB rather than along one color line, with opaque dots hiding each other in drawing order, detected
-  from the outlines. It also has no ground truth; a JMP truth set colored by a continuous column, with outlines,
-  would make it measurable.
+- *pathogen*: done below, by its rings, except the dots under its purple band and the deepest stacks.
 - *beeswarm-boxplot* fails for another reason than its few outlined outliers: its gray swarm is packed (no
   isolated dot, the discs explain 0.31 of the color's pixels against the 0.35 required), and its red swarm's local
   background reads as dark red (57, 0, 0), probably where the box plot's black lines cross red dots, so no coverage
