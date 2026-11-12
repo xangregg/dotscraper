@@ -152,13 +152,15 @@ function outlineEstimate(image) {
     };
     const line = { B: [255, 255, 255], u: [1, 1, 1].map(v => v / Math.sqrt(3)) };
     const notes = [
-        `Outlined dots whose fills vary (${found.plane.pixels} fill pixels within ${found.plane.rms.toFixed(1)} units of one plane): the fill colors are projected out and the dots are fitted by their rings, in drawing order.`,
+        found.plane.oneColor
+            ? `Outlined dots of one fill color (${found.plane.pixels} fill pixels): the fill is projected out and the dots are fitted by their rings, in drawing order.`
+            : `Outlined dots whose fills vary (${found.plane.pixels} fill pixels within ${found.plane.rms.toFixed(1)} units of one plane): the fill colors are projected out and the dots are fitted by their rings, in drawing order.`,
         `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, ${Math.round(100 * ring.alpha)}% of the way to black; fills ${Math.round(100 * found.fillAlpha)}% opaque${found.fillAlphaMeasured ? ` (from ${found.pairs} overlapping pairs)` : ' (assumed: too few overlapping pairs to measure)'}.`,
     ];
     return {
         background, family: 0, flat: null, image: { width, height, data },
         // one candidate, so the app fits one family
-        candidates: [{ kind: 'outline', radius: ring.radius, levels: [], fit: { alpha: ring.alpha } }],
+        candidates: [{ kind: 'outline', radius: ring.radius, levels: [], fit: { alpha: ring.alpha }, oneColor: found.plane.oneColor }],
         familyMeasure: { kind: 'outline', line, levels: [] },
         style, D, fitT, base, outlineMask: mask,
         isolated: found.isolated.map(c => ({ cx: c.x, cy: c.y, r: c.r })),

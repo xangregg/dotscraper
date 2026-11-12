@@ -302,7 +302,7 @@ function renderStylePanel() {
         const label = c.kind === 'opaque'
             ? `${i + 1}: opaque, r ${fmt(c.radius, 1)}`
             : c.kind === 'outline'
-                ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, fills vary`
+                ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, ${c.oneColor ? 'one fill color' : 'fills vary'}`
                 : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`;
         select.add(new Option(label, String(i)));
     });
@@ -325,7 +325,8 @@ function renderStylePanel() {
         });
     }
     $('family-swatch').style.background = style && !est.scale ? cssColor(style.color) : 'transparent';
-    $('style-c').textContent = !style ? '–' : est.scale ? 'varies by dot (color scale)' : style.color.map(v => v.toFixed(1)).join(', ');
+    const scaleText = est.candidates[0]?.oneColor ? 'one fill color, projected out (rings fitted)' : 'varies by dot (color scale)';
+    $('style-c').textContent = !style ? '–' : est.scale ? scaleText : style.color.map(v => v.toFixed(1)).join(', ');
     $('style-c').title = style && est.scale ? `fitted as one virtual family of color ${style.color.map(v => v.toFixed(1)).join(', ')}` : '';
     $('style-levels').textContent = style ? `${style.measuredLevels} measured` : '–';
     const fam = est.familyMeasure;

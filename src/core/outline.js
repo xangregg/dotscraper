@@ -364,8 +364,9 @@ function principalAxes(sums, count) {
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  0–255
- * @returns {{n: number[], rms: number, spread: number, pixels: number, kOff: number}|null}  n: unit normal; rms
- *   and spread in 0–255 units; kOff = |n·(K − B)| / |K − B|
+ * @returns {{n: number[], rms: number, spread: number, pixels: number, kOff: number, oneColor: boolean}|null}
+ *   n: unit normal; rms and spread in 0–255 units; kOff = |n·(K − B)| / |K − B|; oneColor: the fills lie on one
+ *   line through B
  */
 export function fillPlane(image, B) {
     const { width, height, data } = image;
@@ -404,9 +405,10 @@ export function fillPlane(image, B) {
     const kl = Math.hypot(...kb);
     let n = low.axis;
     let rms = low.rms;
+    const oneColor = mid.rms < PLANE_MIN_SPREAD;
     // One fill color: its pixels lie on a line through B and any plane holding the line will do. The one that
     // sees K best has the normal along K's direction made orthogonal to the line.
-    if (mid.rms < PLANE_MIN_SPREAD) {
+    if (oneColor) {
         const u = high.axis;
         const g = kb.map(v => v / kl);
         const gu = g[0] * u[0] + g[1] * u[1] + g[2] * u[2];
@@ -420,7 +422,7 @@ export function fillPlane(image, B) {
     const kOff = Math.abs(n[0] * kb[0] + n[1] * kb[1] + n[2] * kb[2]) / kl;
     if (rms > PLANE_MAX_RMS || kOff < PLANE_MIN_K)
         return null;
-    return { n, rms, spread: mid.rms, pixels: count, kOff };
+    return { n, rms, spread: mid.rms, pixels: count, kOff, oneColor };
 }
 
 /** P per pixel: n·(X − B) / n·(K − B), 0 for the fills, 1 for K. */
