@@ -697,7 +697,7 @@ export function createFit(input) {
     }
 
     // An outlined dot's own fill value from the part of its interior it is on top of, where the image is
-    // (1 − αf)·(what is under it) + αf·f: f = (t − (1 − αf)·under) / αf, the median over those pixels. Interior:
+    // (1 − αf)·(what is under it) + αf·f: f = f0 + (t − t̂) / αf, the median over those pixels. Interior:
     // FILL_FIT_INSET px inside the fill, clear of every ring. Returns whether f changed.
     function fitFill(id) {
         const p = pos.get(id);
@@ -716,9 +716,9 @@ export function createFit(input) {
                     continue;
                 if (above.some(o => Math.hypot(cx - o.x, cy - o.y) < style.radius + FILL_FIT_INSET))
                     continue;
-                // the model's value here is (1 − αf)·under + αf·f0, so under follows from it
-                const under = (modelT(q) - aF * f0) / (1 - aF);
-                vals.push((imgT[q] - (1 - aF) * under) / aF);
+                // the model's value here is (1 − αf)·under + αf·f0, so f moves it by αf·(f − f0); no division by
+                // 1 − αf, which is 0 for opaque fills
+                vals.push(f0 + (imgT[q] - modelT(q)) / aF);
             }
         }
         if (vals.length < FILL_FIT_MIN_PIXELS)

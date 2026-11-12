@@ -671,4 +671,111 @@ gb = Graph Builder(
 gb << save picture("stroked-dots.png", "png");
 gb << close window;
 
+
+
+dt << New Column( "Score 2",
+	Formula( :Score )
+) << Move Selected Columns( {:Score 2}, after( :Score ) ) << Run Formulas;
+
+dt << New Column( "Response 2",
+	Formula( :Response )
+) << Move Selected Columns( {:Response 2}, after( :Response ) ) << Run Formulas;
+
+dt << New Column( "group 2",
+	Formula( :group )
+) << Run Formulas;
+
+dt:group 2 << Set Modeling Type( "Nominal" );
+
+dt2 = dt << Stack(
+	columns( :Score, :Score 2, :Response, :Response 2, :group, :group 2 ),
+	Number of Series( 3 ),
+	Contiguous,
+	Output Table( "Stack of Test2 (Score etc.)" )
+);
+// Recode column names
+Local( {names},
+	names = Recode(
+		dt2 << Get Column Names( String ),
+		{Map Value(
+			_rcOrig,
+			{"Data", "Score", "Data 2", "Response", "Data 3", "group"},
+			Unmatched( _rcNow )
+		)}
+	);
+	For Each( {name, i}, names, Column( dt2, i ) << Set Name( name ) );
+);
+
+gb = dt2 << Graph Builder(
+	Transform Column( "cc", Character, Formula( :Label || " " || Char( :group ) )),
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :cc ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0, {Line Color( 38 ), Marker( "FilledCircle" ), Marker Size( 7 ), Transparency( 0.4 )}, Item ID( "Score 1", 1 )),
+				Properties( 1, {Line Color( 37 ), Marker( "FilledCircle" ), Marker Size( 7 ), Transparency( 0.4 )}, Item ID( "Score 2", 1 )),
+				Properties( 2, {Line Color( 1 ), Marker( "Circle" ), Marker Size( 7 ), Transparency( 0.7 )}, Item ID( "Score 2 1", 1 )),
+				Properties( 3, {Line Color( 1 ), Marker( "Circle" ), Marker Size( 7 ), Transparency( 0.7 )}, Item ID( "Score 2 2", 1 )),
+				)}
+		)
+	)
+);
+
+gb << save picture("group-graystroke.png", "png");
+gb << close window;
+
+gb = dt2 << Graph Builder(
+	Transform Column( "cc", Character, Formula( :Label || " " || Char( :group ) )),
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :cc ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model( 1,
+				Properties( 0, {Line Color( 38 ), Marker( "FilledCircle" ), Marker Size( 7 )}, Item ID( "Score 1", 1 )),
+				Properties( 1, {Line Color( 37 ), Marker( "FilledCircle" ), Marker Size( 7 )}, Item ID( "Score 2", 1 )),
+				Properties( 2, {Line Color( 1 ), Marker( "Circle" ), Marker Size( 7 )}, Item ID( "Score 2 1", 1 )),
+				Properties( 3, {Line Color( 1 ), Marker( "Circle" ), Marker Size( 7 )}, Item ID( "Score 2 2", 1 )),
+				)}
+		)
+	)
+);
+
+gb << save picture("group-solid-graystroke.png", "png");
+gb << close window;
+
+gb = dt2 << Graph Builder(
+	Size( 598, 511 ),
+	Show Control Panel( 0 ),
+	Show Legend( 0 ),
+	Variables( X( :Score ), Y( :Response ), Color( :Label ) ),
+	Elements( Points( X, Y, Legend( 1 ) ) ),
+	SendToReport(
+		Dispatch( {}, {:Score}, ScaleBox, {Min( 65 ), Max( 100 ), Inc( 5 ), Minor Ticks( 0 )}),
+		Dispatch( {}, {:Response}, ScaleBox, {Min( 30 ), Max( 90 ), Inc( 10 ), Minor Ticks( 0 )} ),
+		Dispatch( {}, "400", ScaleBox,
+			{Legend Model(
+				1,
+				Properties( 0, {Line Color( "light green" ), Marker( "FilledCircle" ), Marker Size( 8 )}, Item ID( "Score", 1 ) ),
+				Properties( 1, {Line Color( "gray" ), Marker Size( 8 ), Marker( "Circle" )}, Item ID( "Score 2", 1 )	)
+			)}
+
+		)
+	)
+);
+
+gb << save picture("solid-graystroke.png", "png");
+gb << close window;
+
+close(dt2, nosave);
 close(dt, nosave);

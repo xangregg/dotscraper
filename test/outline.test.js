@@ -7,7 +7,7 @@ import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
 import { createRng } from '../src/core/rng.js';
 import { readImage } from '../tools/png.mjs';
-import { readTruthCsv, truthPixelsByTicks } from '../tools/truth-csv.mjs';
+import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 import { detectAxes } from '../src/core/axes.js';
 import { extractAll, jitterRow } from '../tools/bench.mjs';
 
@@ -31,7 +31,7 @@ function scaleColor(s) {
 
 // Outlined dots in drawing order: each a fill disc to the ring's middle, then a dark ring, both translucent, over
 // white with gridlines; exact area coverage, no blur
-function outlinedImage(dots, ringColor = RING_COLOR) {
+function outlinedImage(dots, { ringColor = RING_COLOR, fillAlpha = FILL_ALPHA, colorOf = scaleColor, glyph = null } = {}) {
     const img = new Float32Array(3 * W * H);
     for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
@@ -42,18 +42,28 @@ function outlinedImage(dots, ringColor = RING_COLOR) {
     const inner = RADIUS - RING_WIDTH;
     const mid = RADIUS - RING_WIDTH / 2;
     for (const d of dots) {
-        const c = scaleColor(d.s);
+        const c = colorOf(d.s);
         for (let y = Math.floor(d.y - RADIUS - 1); y <= d.y + RADIUS + 1; y++) {
             for (let x = Math.floor(d.x - RADIUS - 1); x <= d.x + RADIUS + 1; x++) {
                 if (x < 0 || y < 0 || x >= W || y >= H)
                     continue;
-                const mf = FILL_ALPHA * pixelCoverage(d.x, d.y, mid, x, y);
+                const mf = fillAlpha * pixelCoverage(d.x, d.y, mid, x, y);
                 const mr = RING_ALPHA * (pixelCoverage(d.x, d.y, RADIUS, x, y) - pixelCoverage(d.x, d.y, inner, x, y));
                 for (let ch = 0; ch < 3; ch++) {
                     const p = 3 * (y * W + x) + ch;
                     img[p] = img[p] + mf * (c[ch] - img[p]);
                     img[p] = img[p] + mr * (ringColor[ch] - img[p]);
                 }
+            }
+        }
+    }
+    // a black "o": a stroke 1.5 px wide around a 4 px hole, like a letter in a title
+    if (glyph) {
+        for (let y = Math.floor(glyph.y - 6); y <= glyph.y + 6; y++) {
+            for (let x = Math.floor(glyph.x - 6); x <= glyph.x + 6; x++) {
+                const m = pixelCoverage(glyph.x, glyph.y, 5.5, x, y) - pixelCoverage(glyph.x, glyph.y, 4, x, y);
+                for (let ch = 0; ch < 3; ch++)
+                    img[3 * (y * W + x) + ch] *= 1 - m;
             }
         }
     }
@@ -132,9 +142,32 @@ test('outlined dots whose fills vary are fitted by their rings, in drawing order
     assert.ok(m.precision >= 0.95, `precision ${m.precision}`);
 });
 
+const GREEN = [106, 255, 107]; // JMP's light green
+const GRAY_RING = [150, 150, 150];
+const GLYPH = { x: 340, y: 225 }; // px, clear of the scene's dots
+
+test('one opaque fill color under gray rings: the plane through the fill line that sees black best', () => {
+    // before: no fill plane (one color spans no plane), and with opaque fills (αf 1) the fill fit divided by 1 − αf,
+    // so every loss was NaN and the fit froze on its first candidates (bench1 solid-graystroke: 172 for 100)
+    // plus a row of overlapping pairs, 11 px apart, where αf shows
+    const dots = [...scene(), ...Array.from({ length: 16 }, (_, i) => ({ x: 20 + 40 * (i >> 1) + 11 * (i & 1), y: 218, s: 0 }))];
+    const image = outlinedImage(dots, { ringColor: GRAY_RING, fillAlpha: 1, colorOf: () => GREEN, glyph: GLYPH });
+    const plane = fillPlane(image, WHITE);
+    assert.ok(plane && plane.spread < 1, `a plane through one fill line: ${JSON.stringify(plane)}`);
+    const found = findOutlines(image, WHITE);
+    assert.ok(found, 'outlined dots');
+    assert.ok(found.fillAlpha > 0.9, `opaque fills: αf ${found.fillAlpha}`);
+    const fit = extractAll(image)[0].fit.dots;
+    const m = matchDots(dots, fit, RADIUS / 2);
+    assert.ok(m.recall >= 0.95, `recall ${m.recall} (${fit.length} found of ${dots.length})`);
+    assert.ok(m.precision >= 0.97, `precision ${m.precision}`);
+    // the black "o" is masked, not a ring (bench1 solid-graystroke: 81 phantom dots on the title's letters)
+    assert.ok(fit.every(d => Math.hypot(d.x - GLYPH.x, d.y - GLYPH.y) > RADIUS), 'no dot on the glyph');
+});
+
 test('findOutlines: fills without a dark ring are not outlined dots', () => {
     // the same scene with white rings: the fills still lie in their plane, but nothing in P is a ring
-    const image = outlinedImage(scene(), WHITE);
+    const image = outlinedImage(scene(), { ringColor: WHITE });
     assert.ok(fillPlane(image, WHITE), 'the fill plane is still found');
     assert.equal(findOutlines(image, WHITE), null);
 });
@@ -166,3 +199,19 @@ test('regression: pathogen, outlined dots colored by a scale, found by their rin
     assert.ok(r.precision >= 0.95, `precision ${r.precision}`);
     assert.ok(r.recall >= 0.75, `recall ${r.recall}`);
 });
+
+const benchFile = (set, name) => new URL(`../${set}/${name}`, import.meta.url).pathname;
+
+for (const [set, lo, hi, recall] of [['bench1', 96, 101, 0.97], ['bench2', 182, 200, 0.9]]) {
+    test(`regression: one opaque fill under gray rings (${set} solid-graystroke)`, { skip: !existsSync(benchFile(set, 'solid-graystroke.png')) && `${set} absent` }, () => {
+        // before: "No dot family found"; then 172 for 100 (the frozen fit), then 210 for 100 (phantoms on the title).
+        // JMP draws these markers half a pixel up and left of the plot area's mapping (fill centroids and rings
+        // agree to 0.05 px), so positions are 0.7 px off the truth; matching is within r/2.
+        const truth = truthPixels(readTruthCsv(benchFile(set, 'data.csv'))).dots;
+        const fit = extractAll(readImage(benchFile(set, 'solid-graystroke.png'))).flatMap(r => r.fit.dots);
+        const m = matchDots(truth, fit, RADIUS / 2);
+        assert.ok(fit.length >= lo && fit.length <= hi, `found ${fit.length}`);
+        assert.ok(m.precision >= 0.98, `precision ${m.precision}`);
+        assert.ok(m.recall >= recall, `recall ${m.recall}`);
+    });
+}

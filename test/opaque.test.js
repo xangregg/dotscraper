@@ -162,18 +162,24 @@ function benchRow(set, name) {
 
 test('regression: outlined opaque dots are a family (bench1 solid-opaque-stroke)', { skip: benchAbsent('bench1', 'solid-opaque-stroke.png') }, () => {
     // before: "No dot family found": every outline pixel read as neither the fill nor its background
-    // 98 at first; 100–101 with splits (one true dot is fitted as two, 4.7 px off)
+    // 98 at first; 100–101 with splits (one true dot is fitted as two, 4.7 px off). Since the one-color fill plane
+    // (outline.js), the outline's darker purple reads as a ring and the dots are fitted by their rings in drawing
+    // order: 98, precision 1.000, recall 0.98, RMSE 0.034 px (the opaque path: 101, 0.990, 1.00, 0.551)
     const { found, m } = benchRow('bench1', 'solid-opaque-stroke.png');
-    assert.ok(found >= 98 && found <= 101, `found ${found}`);
-    assert.equal(m.recall, 1);
+    assert.ok(found >= 97 && found <= 101, `found ${found}`);
+    assert.ok(m.recall >= 0.97, `recall ${m.recall}`);
+    assert.ok(m.precision >= 0.99, `precision ${m.precision}`);
 });
 
 test('regression: bench2 solid-opaque-stroke', { skip: benchAbsent('bench2', 'solid-opaque-stroke.png') }, () => {
     // before: no family. 165 of 204: about 8 dots are under 0.1% visible, and dots in packed clusters are missed
     // because the boundaries between fill and outline inside a cluster aren't used
+    // By its rings (outline.js): 172, precision 0.988, recall 0.833, RMSE 0.284 px (the opaque path with splits:
+    // 179, 0.966, 0.848, 0.944; 165 before splits)
     const { found, m } = benchRow('bench2', 'solid-opaque-stroke.png');
-    assert.ok(found >= 175, `found ${found}`); // 165 before splits
-    assert.ok(m.recall >= 0.84, `recall ${m.recall}`);
+    assert.ok(found >= 168, `found ${found}`);
+    assert.ok(m.recall >= 0.82, `recall ${m.recall}`);
+    assert.ok(m.precision >= 0.98, `precision ${m.precision}`);
 });
 
 test('regression: a cluster of one opaque color is not covered by too few dots (bench2 solid-opaque)', { skip: benchAbsent('bench2', 'solid-opaque.png') }, () => {

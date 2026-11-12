@@ -792,6 +792,8 @@ lines meet (all flagged weak and deep), likely phantoms.
 - [x] Outlined opaque dots of one fill (bench1–2 solid-opaque-stroke).
 - [x] A fill that varies per dot, opaque (bench1–2 gradient-opaque, gradient-opaque-stroke).
 - [x] Translucent fills that vary per dot under a dark gray outline, fitted by the rings (pathogen; below).
+- [x] One fill color under a gray outline (bench1–2 solid-graystroke; below).
+- [ ] Two color families under gray outlines (bench1–2 group-graystroke, group-solid-graystroke; below).
 
 **Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
 fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
@@ -991,9 +993,42 @@ transmission out of P, with s from the rings' contrast inside it and a region de
 Deferred indefinitely: the rest of pathogen's misses, the deep stacks in the band at 0, and the fit's time (43 s in
 Node).
 
-Still open, beyond pathogen: a single fill color under a gray ring (the plane is then undetermined: its normal
-should be the gray direction made orthogonal to the fill's; untested for want of an image), and two color families
-under gray rings, which are fitted as one, without their colors.
+**Gray outlines** (bench1–2, three JMP renderings each, drawn as filled circles plus open circles of the same
+data): solid-graystroke, one opaque light green (106, 255, 107) under opaque gray rings, marker size 8;
+group-graystroke, the two groups' colors at α 0.4 under black rings at α 0.7, size 7; group-solid-graystroke, the
+same opaque. Before: "No dot family found" or "The dot radius is unknown" on all six.
+
+- *One fill color*: its pixels lie on a line through B, so any plane holding the line will do. The normal is K's
+  direction made orthogonal to the line (`fillPlane`), which sees black best (kOff 0.58).
+- *Opaque fills*: αf measured 1.00 (the pairs' low mode is 0: a later fill hides the ring under it, so JMP draws
+  each dot's fill and then its ring). The fill fit divided by 1 − αf, every loss was NaN, and the fit froze on
+  its 172 first candidates. It now uses f = f0 + (t − t̂) / αf.
+- *Text*: the title's letters looked like rings in P (81 phantoms piled on "Response vs. Score"). Ink at P ≥ 0.8 is
+  masked with 2 px around it.
+- *Rings over every fill*: when the pairs show no dimmed mode, αf is 0 (none of these images needed it).
+- *JMP offset*: these dots sit 0.497 px up and left of the plot area's mapping in both x and y. The fill centroids
+  and the fitted rings agree to 0.05 px, so it is the rendering (marker size 8 against 7 elsewhere?), not the fit.
+  RMSE is 0.70 px for that reason.
+
+| Image | Found / truth | Precision | Recall | RMSE px | Time |
+|---|---|---|---|---|---|
+| bench1 solid-graystroke | 98 / 100 | 1.000 | 0.980 | 0.703 | 5.0 s |
+| bench2 solid-graystroke | 189 / 204 | 0.995 | 0.922 | 0.717 | 7.1 s |
+| bench1 solid-opaque-stroke, by rings | 98 / 100 | 1.000 | 0.980 | 0.034 | 4.8 s |
+| bench1 solid-opaque-stroke, opaque path (before) | 101 / 100 | 0.990 | 1.000 | 0.551 | 1.6 s |
+| bench2 solid-opaque-stroke, by rings | 172 / 204 | 0.988 | 0.833 | 0.284 | 8.1 s |
+| bench2 solid-opaque-stroke, opaque path (before) | 179 / 204 | 0.966 | 0.848 | 0.944 | 4.4 s |
+
+With the one-color plane, JMP's outlined markers (a darker purple outline, off the fill's line) read as rings too,
+and solid-opaque-stroke moved to the ring path: positions much better (the inner outlines are used now, in drawing
+order), precision better, recall 0.02 lower, 2–3 times slower. Kept; the two regression tests were updated.
+pathogen is unchanged (468, 0.972, 0.780).
+
+*Two color families* (group-graystroke, group-solid-graystroke) are not detected: blue and orange are nearly
+complementary, so the plane through white that holds both holds gray too (black is 0.05 off it, against 0.32 for
+pathogen), and projecting out the fills would project out the rings. They need the families found first, then a
+ring layer per family: in each family's own plane the other family's fills stay visible, so this is a model with
+several fill colors and one ring color, not a projection.
 
 **Not done, and why.**
 

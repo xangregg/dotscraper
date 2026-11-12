@@ -31,6 +31,11 @@ const PLANE_MIN_K = 0.2; // |n·(K − B)| / |K − B| (pathogen: 0.32)
 const OPEN_DIRECTIONS = 12;
 const OPEN_EXTRA = 2; // px beyond the ring's diameter
 const MASK_BG = 0.5;
+// Ink nearly black (text, ticks) is masked with what lies within MASK_INK_REACH of it: thin strokes don't survive
+// the openings, and letters like "o" and "e" look like rings (bench1 solid-graystroke: 81 phantom dots piled on
+// the title). Rings stay well below: one is about 0.34 in P, three crossing about 0.7.
+const MASK_INK = 0.8;
+const MASK_INK_REACH = 2; // px
 // Isolated rings, for the radius and style: connected components of A above ISO_LEVEL, square within ISO_SQUARE,
 // hollow (under ISO_FILL of their box), ISO_SIZE across
 const ISO_LEVEL = 0.12;
@@ -394,13 +399,28 @@ export function fillPlane(image, B) {
     }
     if (count < PLANE_MIN_PIXELS)
         return null;
-    const [low, mid] = principalAxes(sums, count);
-    const n = low.axis;
+    const [low, mid, high] = principalAxes(sums, count);
     const kb = K.map((v, ch) => v - B[ch]);
-    const kOff = Math.abs(n[0] * kb[0] + n[1] * kb[1] + n[2] * kb[2]) / Math.hypot(...kb);
-    if (low.rms > PLANE_MAX_RMS || mid.rms < PLANE_MIN_SPREAD || kOff < PLANE_MIN_K)
+    const kl = Math.hypot(...kb);
+    let n = low.axis;
+    let rms = low.rms;
+    // One fill color: its pixels lie on a line through B and any plane holding the line will do. The one that
+    // sees K best has the normal along K's direction made orthogonal to the line.
+    if (mid.rms < PLANE_MIN_SPREAD) {
+        const u = high.axis;
+        const g = kb.map(v => v / kl);
+        const gu = g[0] * u[0] + g[1] * u[1] + g[2] * u[2];
+        const m = g.map((v, ch) => v - gu * u[ch]);
+        const ml = Math.hypot(...m);
+        if (ml === 0)
+            return null;
+        n = m.map(v => v / ml);
+        rms = Math.hypot(low.rms, mid.rms);
+    }
+    const kOff = Math.abs(n[0] * kb[0] + n[1] * kb[1] + n[2] * kb[2]) / kl;
+    if (rms > PLANE_MAX_RMS || kOff < PLANE_MIN_K)
         return null;
-    return { n, rms: low.rms, spread: mid.rms, pixels: count, kOff };
+    return { n, rms, spread: mid.rms, pixels: count, kOff };
 }
 
 /** P per pixel: n·(X − B) / n·(K − B), 0 for the fills, 1 for K. */
@@ -682,6 +702,9 @@ function measureFillAlpha(A, width, height, cands, ring) {
                 low.push(ratio);
         }
     }
+    // rings drawn over every fill (JMP plots the outlines as a second layer of open circles): none is dimmed
+    if (low.length < PAIR_MIN && pairs - low.length >= PAIR_MIN)
+        return { fillAlpha: 0, pairs, measured: true };
     if (low.length < PAIR_MIN)
         return { fillAlpha: FILL_ALPHA_DEFAULT, pairs, measured: false };
     low.sort((u, v) => u - v);
@@ -712,9 +735,20 @@ export function findOutlines(image, B) {
         return null;
     const r0 = rings.map(c => c.r).sort((a, b) => a - b)[rings.length >> 1];
     const under = underRings(P, width, height, r0);
+    const ink = new Uint8Array(P.length);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (P[y * width + x] < MASK_INK)
+                continue;
+            for (let yy = Math.max(0, y - MASK_INK_REACH); yy <= Math.min(height - 1, y + MASK_INK_REACH); yy++) {
+                for (let xx = Math.max(0, x - MASK_INK_REACH); xx <= Math.min(width - 1, x + MASK_INK_REACH); xx++)
+                    ink[yy * width + xx] = 1;
+            }
+        }
+    }
     const A = new Float32Array(P.length);
     for (let p = 0; p < P.length; p++)
-        A[p] = under[p] > MASK_BG ? NaN : (P[p] - under[p]) / (1 - under[p]);
+        A[p] = under[p] > MASK_BG || ink[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
     // the most ring-like of the isolated components
     const used = rings.slice().sort((a, b) => Math.abs(a.r - r0) - Math.abs(b.r - r0)).slice(0, ISO_MAX);
     const ring = measureRing(A, width, height, used);
