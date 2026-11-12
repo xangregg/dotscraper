@@ -793,7 +793,7 @@ lines meet (all flagged weak and deep), likely phantoms.
 - [x] A fill that varies per dot, opaque (bench1–2 gradient-opaque, gradient-opaque-stroke).
 - [x] Translucent fills that vary per dot under a dark gray outline, fitted by the rings (pathogen; below).
 - [x] One fill color under a gray outline (bench1–2 solid-graystroke; below).
-- [ ] Two color families under gray outlines (bench1–2 group-graystroke, group-solid-graystroke; below).
+- [x] Two color families under gray outlines (bench1–2 group-graystroke, group-solid-graystroke; below).
 
 **Outlined dots.** bench1 stroked-dots: a light gray fill (229 over white; α 0.31 toward (170, 170, 170), from the
 fill-on-fill level) and a darker ring about 2 px wide at the rim (196 at r ≈ 9). The ring read deeper than one
@@ -1024,11 +1024,35 @@ and solid-opaque-stroke moved to the ring path: positions much better (the inner
 order), precision better, recall 0.02 lower, 2–3 times slower. Kept; the two regression tests were updated.
 pathogen is unchanged (468, 0.972, 0.780).
 
-*Two color families* (group-graystroke, group-solid-graystroke) are not detected: blue and orange are nearly
-complementary, so the plane through white that holds both holds gray too (black is 0.05 off it, against 0.32 for
-pathogen), and projecting out the fills would project out the rings. They need the families found first, then a
-ring layer per family: in each family's own plane the other family's fills stay visible, so this is a model with
-several fill colors and one ring color, not a projection.
+*Two color families* (group-graystroke, group-solid-graystroke). Blue and orange are nearly complementary, so
+the plane through white that holds both almost holds gray: black is 0.05 of |K − B| off it (pathogen: 0.32), and
+the plane test (K at least 0.2 off) refused it. But the projection is linear, so every composite of white, the
+fills and the ring still maps exactly; what a small kOff costs is noise, and these pixels are exact. The test is
+now P's expected noise: the fills' scatter off the plane, with the pixels' rounding (0.5), over K's distance from
+the plane, at most 0.03 (pathogen 0.020, these 0.022). Only these four images newly pass it.
+
+- *Style*, measured: ring 7.75 px, width 1.25–1.37, αk 0.37–0.59, αf 0.44–0.45 for JMP's α 0.4 and 1.00 for the
+  opaque ones.
+- *Colors*: the fit sees rings only, so each dot's color is read afterwards (`dotFamilies`). The fill colors
+  (`fillFamilies`) are the largest bins of flat colored pixels when a few hold 0.75 of them (two colors hold 0.87;
+  pathogen's scale has no bin above 0.02). A dot takes the nearest color to the median of its fill where no other
+  dot reaches. A dot with no such pixels is read where the fit draws it on top, and marked unsure.
+- *Unsure colors*: all 128 and 137 sure dots of bench2 take the right color; of the unsure, 52 of 70 and 41 of 50.
+  The wrong ones are mostly bench2's near-coincident pairs, where the lower fill doesn't show at all. Reading which
+  of two dots is on top from the rings, instead of the fit's z, did no better (50 and 37), so it was dropped.
+- The bench splits the fit into one result per color, so the group scoring checks the colors. The app keeps one
+  family and gives each dot a fill color, shown on hover and in the CSV ("2? #b8d7ff" when unsure).
+
+| Image | Found / truth | Precision (by group) | Recall | Sure colors right |
+|---|---|---|---|---|
+| bench1 group-graystroke | 100 / 100 | 1.000 | 1.000 | all |
+| bench1 group-solid-graystroke | 98 / 100 | 1.000 | 0.980 | all |
+| bench2 group-graystroke | 198 / 204 | 0.914 | 0.887 | 128 of 128 |
+| bench2 group-solid-graystroke | 187 / 204 | 0.957 | 0.877 | 137 of 137 |
+
+Pooled over groups, precision is 1.000 on all four (recall 1.000, 0.980, 0.971, 0.917). RMSE is 0.70 px from
+JMP's half-pixel offset, as in solid-graystroke (at marker size 7 too). In the browser: bench2 group-graystroke
+198 dots, 128 sure colors, no console errors.
 
 **Not done, and why.**
 

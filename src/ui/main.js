@@ -12,6 +12,7 @@ import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
 import { refitNear } from '../core/fit.js';
+import { dotFamilies } from '../core/outline.js';
 import { detectAxes, plotBounds } from '../core/axes.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
@@ -97,7 +98,29 @@ function familyFit(k = currentFamily()) {
 /** Set the fit from per-family results; every dot carries its family and radius. */
 function setFits(families, extra = {}) {
     const dots = families.flatMap(f => f.dots.map(d => ({ ...d, family: f.family, r: f.radius })));
+    labelFills(dots);
     state.fit = { families, dots, ...extra };
+}
+
+// Outlined dots of a few fill colors are fitted as one family of rings; each dot's fill color comes from its pixels
+// (outline.dotFamilies): fill is its index in the estimate's fillFamilies, fillSure false where its fill is mostly
+// hidden and the color may not be in the image at all.
+function labelFills(dots) {
+    const fams = state.estimate?.fillFamilies;
+    if (!fams || !dots.length)
+        return;
+    const r = dots[0].r;
+    const which = dotFamilies(state.work, dots, fams, r, r * (1 + state.estimate.style.ring.inner) / 2);
+    dots.forEach((d, i) => {
+        d.fill = which[i].family;
+        d.fillSure = which[i].sure;
+    });
+}
+
+// '2 #b8d7ff', with '?' where the fill is mostly hidden
+function fillLabel(d) {
+    const c = state.estimate.fillFamilies[d.fill];
+    return `${d.fill + 1}${d.fillSure ? '' : '?'} #${c.map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
 }
 
 /** The style the current family's fitted dots were drawn with: the style in effect, with the fit's radius. */
@@ -198,7 +221,8 @@ function showPixel(x, y) {
     const extra = d.visible === undefined ? '' : `; ${Math.round(100 * d.visible)}% visible, depth ${d.depth}, margin ${d.margin.toFixed(0)}λ`;
     const dd = dataAt(d.x, d.y);
     const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
-    $('pixel-dot').textContent = `${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    const fill = d.fill === undefined ? '' : `; fill ${fillLabel(d)}${d.fillSure ? '' : ' (mostly hidden: color unsure)'}`;
+    $('pixel-dot').textContent = `${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
 }
 
 function showMessage(text, isError = false) {
@@ -302,7 +326,7 @@ function renderStylePanel() {
         const label = c.kind === 'opaque'
             ? `${i + 1}: opaque, r ${fmt(c.radius, 1)}`
             : c.kind === 'outline'
-                ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, ${c.oneColor ? 'one fill color' : 'fills vary'}`
+                ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`
                 : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`;
         select.add(new Option(label, String(i)));
     });
@@ -325,7 +349,9 @@ function renderStylePanel() {
         });
     }
     $('family-swatch').style.background = style && !est.scale ? cssColor(style.color) : 'transparent';
-    const scaleText = est.candidates[0]?.oneColor ? 'one fill color, projected out (rings fitted)' : 'varies by dot (color scale)';
+    const c0 = est.candidates[0];
+    const scaleText = c0?.oneColor ? 'one fill color, projected out (rings fitted)'
+        : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale)';
     $('style-c').textContent = !style ? '–' : est.scale ? scaleText : style.color.map(v => v.toFixed(1)).join(', ');
     $('style-c').title = style && est.scale ? `fitted as one virtual family of color ${style.color.map(v => v.toFixed(1)).join(', ')}` : '';
     $('style-levels').textContent = style ? `${style.measuredLevels} measured` : '–';
@@ -605,7 +631,10 @@ function dotsCsv() {
     const head = ['family', 'x_px', 'y_px', 'se_noise_x_px', 'se_noise_y_px'];
     if (hasData)
         head.push('x', 'y', 'se_noise_x', 'se_noise_y');
+    const fills = state.fit.dots.some(d => d.fill !== undefined);
     head.push('visible', 'depth', 'flags');
+    if (fills)
+        head.push('fill');
     const rows = [head.join('\t')];
     for (const d of state.fit.dots) {
         const color = d.family >= 0 ? state.estimate.candidates[d.family]?.seed : state.seed;
@@ -618,6 +647,8 @@ function dotsCsv() {
             row.push(formatData(dd.x, dd.resX), formatData(dd.y, dd.resY), se(d.seX, dd.resX), se(d.seY, dd.resY));
         }
         row.push(d.visible?.toFixed(2) ?? '', d.depth ?? '', d.flags.join(' '));
+        if (fills)
+            row.push(d.fill === undefined ? '' : fillLabel(d));
         rows.push(row.join('\t'));
     }
     return rows.join('\n') + '\n';
@@ -666,7 +697,7 @@ function saveTruth() {
         image: state.name, hash: state.hash,
         note: 'Dot centers in image px. Review every dot before using this as ground truth.',
         families: state.fit.families.map(f => ({ family: f.family, color: f.family >= 0 ? state.estimate.candidates[f.family].seed : state.seed, radius: f.radius })),
-        dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2), family: d.family })),
+        dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2), family: d.family, ...(d.fill === undefined ? {} : { fill: d.fill, fillSure: d.fillSure }) })),
     };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(truth, null, 1) + '\n'], { type: 'application/json' }));

@@ -17,6 +17,7 @@ import { buildMask } from '../src/core/layers.js';
 import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';
+import { dotFamilies } from '../src/core/outline.js';
 import { detectAxes, plotBounds } from '../src/core/axes.js';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 
@@ -79,7 +80,23 @@ export function extractAll(image, jpeg = false) {
     const missing = estimates.find(e => !e.style);
     if (missing)
         throw new Error(missing.notes.join(' '));
-    return estimates.map(e => fitEstimate(e.image, e, bounds));
+    return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds)));
+}
+
+// Outlined dots of a few fill colors are fitted as one family of rings; each dot's family comes from its fill
+// (outline.dotFamilies), and each family becomes a result of its own, so the group scoring checks the colors.
+function splitByFill(image, res) {
+    const fams = res.est.fillFamilies;
+    if (!fams)
+        return [res];
+    const st = res.est.style;
+    const which = dotFamilies(image, res.fit.dots, fams, res.fit.radius, res.fit.radius * (1 + st.ring.inner) / 2);
+    return fams.map((color, k) => ({
+        ...res,
+        est: { ...res.est, style: { ...st, color } },
+        fit: { ...res.fit, dots: res.fit.dots.filter((_, i) => which[i].family === k).map(d => ({ ...d, familySure: which[res.fit.dots.indexOf(d)].sure })) },
+        hough: [],
+    }));
 }
 
 // truth families matched to found families by color (each found family to the nearest truth color)

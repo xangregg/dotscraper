@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { pixelCoverage } from '../src/core/render.js';
-import { createOutlineModel, fillPlane, findOutlines } from '../src/core/outline.js';
+import { createOutlineModel, fillPlane, findOutlines, fillFamilies } from '../src/core/outline.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
 import { createRng } from '../src/core/rng.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 import { detectAxes } from '../src/core/axes.js';
-import { extractAll, jitterRow } from '../tools/bench.mjs';
+import { extractAll, jitterRow, groupRow } from '../tools/bench.mjs';
 
 const WHITE = [255, 255, 255];
 const W = 360;
@@ -165,6 +165,40 @@ test('one opaque fill color under gray rings: the plane through the fill line th
     assert.ok(fit.every(d => Math.hypot(d.x - GLYPH.x, d.y - GLYPH.y) > RADIUS), 'no dot on the glyph');
 });
 
+// JMP's two group colors, nearly complementary: the plane through white that holds both almost holds gray
+const ORANGE = [255, 145, 56];
+const BLUE = [78, 156, 255];
+
+test('two nearly complementary fill colors under black rings: fitted by the rings, each dot its color', () => {
+    // before: no plane (black only 0.05 of |K − B| off it, under the 0.2 required), though P's noise is small
+    const dots = [...scene(), ...Array.from({ length: 16 }, (_, i) => ({ x: 20 + 40 * (i >> 1) + 11 * (i & 1), y: 218, s: (i >> 1) % 2 }))];
+    const colorOf = s => (s < 0.5 ? ORANGE : BLUE);
+    const image = outlinedImage(dots, { ringColor: [0, 0, 0], fillAlpha: 1, colorOf });
+    const plane = fillPlane(image, WHITE);
+    assert.ok(plane && plane.kOff < 0.1, `a plane nearly holding gray: ${JSON.stringify(plane)}`);
+    const fills = fillFamilies(image);
+    assert.equal(fills?.length, 2, `fill families ${JSON.stringify(fills)}`);
+    const results = extractAll(image);
+    assert.equal(results.length, 2, 'one result per fill color');
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(dots, found, RADIUS / 2);
+    assert.ok(m.recall >= 0.95, `recall ${m.recall} (${found.length} found of ${dots.length})`);
+    // every dot read where its fill shows takes its own color
+    for (const [k, r] of results.entries()) {
+        const color = fills[k];
+        for (const d of r.fit.dots.filter(q => q.familySure)) {
+            const t = dots.reduce((a, b) => (Math.hypot(b.x - d.x, b.y - d.y) < Math.hypot(a.x - d.x, a.y - d.y) ? b : a));
+            const want = colorOf(t.s);
+            assert.ok(Math.hypot(...want.map((v, ch) => v - color[ch])) < 10, `dot at ${d.x.toFixed(1)}, ${d.y.toFixed(1)} read as ${color}`);
+        }
+    }
+});
+
+test('fillFamilies: a scale and one color are not families', () => {
+    assert.equal(fillFamilies(outlinedImage(scene())), null, 'a scale');
+    assert.equal(fillFamilies(outlinedImage(scene(), { fillAlpha: 1, colorOf: () => GREEN })), null, 'one color');
+});
+
 test('findOutlines: fills without a dark ring are not outlined dots', () => {
     // the same scene with white rings: the fills still lie in their plane, but nothing in P is a ring
     const image = outlinedImage(scene(), { ringColor: WHITE });
@@ -213,5 +247,23 @@ for (const [set, lo, hi, recall] of [['bench1', 96, 101, 0.97], ['bench2', 182, 
         assert.ok(fit.length >= lo && fit.length <= hi, `found ${fit.length}`);
         assert.ok(m.precision >= 0.98, `precision ${m.precision}`);
         assert.ok(m.recall >= recall, `recall ${m.recall}`);
+    });
+}
+
+for (const [set, name, precision, recall] of [
+    ['bench1', 'group-graystroke', 1, 1], ['bench1', 'group-solid-graystroke', 1, 0.97],
+    ['bench2', 'group-graystroke', 0.9, 0.87], ['bench2', 'group-solid-graystroke', 0.94, 0.86],
+]) {
+    test(`regression: two fill colors under gray rings, each dot its group (${set} ${name})`, { skip: !existsSync(benchFile(set, name + '.png')) && `${set} absent` }, () => {
+        // before: "No dot family found" or "The dot radius is unknown". Scored by group: a dot of the wrong color is
+        // wrong. bench2's misses and wrong colors are near-coincident pairs, where the lower fill doesn't show.
+        const truth = truthPixels(readTruthCsv(benchFile(set, 'data.csv'))).dots;
+        const results = extractAll(readImage(benchFile(set, name + '.png')));
+        const r = groupRow(name, truth, results, 0);
+        assert.ok(r.precision >= precision, `precision ${r.precision}`);
+        assert.ok(r.recall >= recall, `recall ${r.recall}`);
+        // the dots whose fill shows are all in the right group
+        const sure = groupRow(name, truth, results.map(q => ({ ...q, fit: { ...q.fit, dots: q.fit.dots.filter(d => d.familySure) } })), 0);
+        assert.equal(sure.precision, 1, `sure dots' precision ${sure.precision}`);
     });
 }

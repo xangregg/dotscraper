@@ -17,14 +17,25 @@ import { ringCenters } from './fit.js';
 const RING_EDGE_MARGIN = 1; // px around a dot's rectangle for antialiasing
 const K = [0, 0, 0]; // the ring color P is measured toward
 // The fill plane: flat pixels (3 × 3 within PLANE_FLAT_TOL; pathogen's fills carry ±5–8 units of noise) at least
-// PLANE_MIN_SATURATION from gray. Through B, the smallest principal axis is n. It is a scale's plane when the fills
-// spread in two directions (the middle axis), lie close to it (the smallest), and K is well off it.
+// PLANE_MIN_SATURATION from gray. Through B, the smallest principal axis is n. It is a fill plane when the fills lie
+// close to it and K is off it by enough that P isn't noise: the fills' scatter off the plane, with the pixels'
+// rounding, over K's distance from it, is at most PLANE_MAX_P_NOISE in P. K may be close to the plane: two nearly
+// complementary fills (bench1–2 group-graystroke, blue and orange) span a plane that almost holds gray, K only 0.05
+// of |K − B| off it, but their pixels are exact, so P's noise is 0.022 (pathogen: K 0.32 off, noise 0.020).
 const PLANE_FLAT_TOL = 6; // 0–255 units
 const PLANE_MIN_SATURATION = 20; // 0–255 units, max − min channel
 const PLANE_MIN_PIXELS = 1000; // (pathogen: 11 106; the 360 × 240 synthetic test: 1631)
 const PLANE_MAX_RMS = 4; // 0–255 units off the plane (pathogen: 2.8)
 const PLANE_MIN_SPREAD = 10; // 0–255 units rms along the middle axis (pathogen: 30.7; one family's line: ~1)
-const PLANE_MIN_K = 0.2; // |n·(K − B)| / |K − B| (pathogen: 0.32)
+const PLANE_ROUNDING = 0.5; // 0–255 units, a pixel's rounding
+// Discrete fill families (fillFamilies, dotFamilies)
+const FAMILY_BIN = 8; // 0–255 units per channel
+const FAMILY_MIN_SHARE = 0.05; // of the flat colored pixels, for a bin to be a family
+const FAMILY_MIN_TOTAL = 0.75; // the families together
+const FAMILY_MAX = 6;
+const FAMILY_INSET = 1.5; // px inside a fill, and beyond another dot's rim
+const FAMILY_MIN_PIXELS = 6;
+const PLANE_MAX_P_NOISE = 0.03; // P units
 // Ring ink A = (P − P_bg) / (1 − P_bg): P_bg, what is under the rings, is the largest of linear openings of P in
 // OPEN_DIRECTIONS directions with a segment longer than a ring is across, which keeps lines and areas and drops
 // rings. Where P_bg is above MASK_BG (the black line, text) nothing can be read.
@@ -420,9 +431,129 @@ export function fillPlane(image, B) {
         rms = Math.hypot(low.rms, mid.rms);
     }
     const kOff = Math.abs(n[0] * kb[0] + n[1] * kb[1] + n[2] * kb[2]) / kl;
-    if (rms > PLANE_MAX_RMS || kOff < PLANE_MIN_K)
+    if (rms > PLANE_MAX_RMS || !(kOff > 0) || Math.hypot(rms, PLANE_ROUNDING) / (kOff * kl) > PLANE_MAX_P_NOISE)
         return null;
     return { n, rms, spread: mid.rms, pixels: count, kOff, oneColor };
+}
+
+/**
+ * The fill colors, when they are a few discrete families rather than a scale: flat colored pixels binned by
+ * FAMILY_BIN; the largest bins, each holding at least FAMILY_MIN_SHARE of them, are families if together they hold
+ * FAMILY_MIN_TOTAL (bench1–2 group-graystroke: two colors hold 0.87 of the flat pixels, their overlaps the rest;
+ * pathogen's scale: no bin above 0.02). Each family's color is the mean of its bin and the bins beside it.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @returns {number[][]|null}  colors 0–255, largest first, or null for a scale
+ */
+export function fillFamilies(image) {
+    const { width, height, data } = image;
+    const bins = new Map();
+    let total = 0;
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const p = 4 * (y * width + x);
+            const r = data[p];
+            const g = data[p + 1];
+            const b = data[p + 2];
+            if (Math.max(r, g, b) - Math.min(r, g, b) < PLANE_MIN_SATURATION)
+                continue;
+            let flat = true;
+            for (let dy = -1; dy <= 1 && flat; dy++) {
+                for (let dx = -1; dx <= 1 && flat; dx++) {
+                    const q = p + 4 * (dy * width + dx);
+                    if (Math.abs(data[q] - r) > PLANE_FLAT_TOL || Math.abs(data[q + 1] - g) > PLANE_FLAT_TOL || Math.abs(data[q + 2] - b) > PLANE_FLAT_TOL)
+                        flat = false;
+                }
+            }
+            if (!flat)
+                continue;
+            const key = [r, g, b].map(v => Math.floor(v / FAMILY_BIN)).join(',');
+            let e = bins.get(key);
+            if (!e) {
+                e = { n: 0, sum: [0, 0, 0], key: [r, g, b].map(v => Math.floor(v / FAMILY_BIN)) };
+                bins.set(key, e);
+            }
+            e.n++;
+            e.sum[0] += r;
+            e.sum[1] += g;
+            e.sum[2] += b;
+            total++;
+        }
+    }
+    if (!total)
+        return null;
+    const sorted = [...bins.values()].sort((a, b) => b.n - a.n);
+    const families = [];
+    let held = 0;
+    for (const e of sorted) {
+        if (e.n < FAMILY_MIN_SHARE * total || families.length >= FAMILY_MAX)
+            break;
+        // a bin beside one already taken is the same family split by the binning
+        const near = families.find(f => f.key.every((v, i) => Math.abs(v - e.key[i]) <= 1));
+        if (near) {
+            near.n += e.n;
+            near.sum = near.sum.map((v, i) => v + e.sum[i]);
+        }
+        else {
+            families.push({ ...e, sum: [...e.sum] });
+        }
+        held += e.n;
+    }
+    if (held < FAMILY_MIN_TOTAL * total || families.length < 2)
+        return null;
+    return families.map(f => f.sum.map(v => v / f.n));
+}
+
+/**
+ * Each dot's fill family: the median color of its fill where no other dot reaches (FAMILY_INSET inside its fill,
+ * clear of the others' rims), the nearest family color. A dot with fewer than FAMILY_MIN_PIXELS such pixels is read
+ * where the fit draws it over every dot covering it, and marked unsure. Its color may simply not be in the image:
+ * bench2's near-coincident pairs hide the lower dot's fill (bench2 group-graystroke: 128 sure dots all right, 52 of
+ * 70 unsure; group-solid-graystroke: 137, 41 of 50). Reading the order from the rings instead of the fit's z did no
+ * better (50 and 37).
+ *
+ * @param {import('./image.js').RgbaImage} image  the original RGB
+ * @param {{x: number, y: number, z: number}[]} dots  px; z the fit's drawing order
+ * @param {number[][]} families  fill colors
+ * @param {number} radius  px, the ring's outer radius
+ * @param {number} fillRadius  px
+ * @returns {{family: number, sure: boolean}[]}
+ */
+export function dotFamilies(image, dots, families, radius, fillRadius) {
+    const { width, height, data } = image;
+    const rIn = fillRadius - FAMILY_INSET;
+    const median = a => a.sort((u, v) => u - v)[a.length >> 1];
+    return dots.map(d => {
+        const others = dots.filter(o => o !== d && Math.hypot(o.x - d.x, o.y - d.y) < radius + fillRadius);
+        const own = [];
+        const top = [];
+        for (let y = Math.max(0, Math.floor(d.y - rIn)); y < Math.min(height, Math.ceil(d.y + rIn)); y++) {
+            for (let x = Math.max(0, Math.floor(d.x - rIn)); x < Math.min(width, Math.ceil(d.x + rIn)); x++) {
+                const cx = x + 0.5;
+                const cy = y + 0.5;
+                if ((cx - d.x) ** 2 + (cy - d.y) ** 2 > rIn * rIn)
+                    continue;
+                const p = 4 * (y * width + x);
+                const c = [data[p], data[p + 1], data[p + 2]];
+                const covering = others.filter(o => Math.hypot(cx - o.x, cy - o.y) < radius + FAMILY_INSET);
+                if (!covering.length)
+                    own.push(c);
+                else if (covering.every(o => o.z < d.z))
+                    top.push(c);
+            }
+        }
+        const sure = own.length >= FAMILY_MIN_PIXELS;
+        const use = sure ? own : top.length ? top : own;
+        if (!use.length)
+            return { family: 0, sure: false };
+        const med = [0, 1, 2].map(ch => median(use.map(c => c[ch])));
+        let best = 0;
+        families.forEach((f, k) => {
+            if (Math.hypot(...f.map((v, ch) => v - med[ch])) < Math.hypot(...families[best].map((v, ch) => v - med[ch])))
+                best = k;
+        });
+        return { family: best, sure };
+    });
 }
 
 /** P per pixel: n·(X − B) / n·(K − B), 0 for the fills, 1 for K. */
