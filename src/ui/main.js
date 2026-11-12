@@ -327,7 +327,7 @@ function renderStylePanel() {
             ? `${i + 1}: opaque, r ${fmt(c.radius, 1)}`
             : c.kind === 'outline'
                 ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`
-                : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.length} levels`;
+                : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.filter(L => !L.inferred).length} levels`;
         select.add(new Option(label, String(i)));
     });
     if (state.seed)
@@ -340,11 +340,13 @@ function renderStylePanel() {
     // a color scale is fitted as a virtual family whose color and levels no dot has: don't show them as the dots'
     if (style && !est.scale) {
         const K = style.measuredLevels;
+        const inferred = style.inferredLevels ?? [];
         style.levels.slice(1, K + 1 + EXTRAPOLATED_SWATCHES).forEach((c, i) => {
             const el = document.createElement('span');
-            el.className = 'swatch' + (i >= K ? ' extrapolated' : '');
+            const guessed = i >= K || inferred.includes(i + 1);
+            el.className = 'swatch' + (guessed ? ' extrapolated' : '');
             el.style.background = cssColor(c);
-            el.title = `${i + 1} overlapping: ${c.map(v => v.toFixed(1)).join(', ')}${i >= K ? ' (extrapolated)' : ' (measured)'}`;
+            el.title = `${i + 1} overlapping: ${c.map(v => v.toFixed(1)).join(', ')}${i >= K ? ' (extrapolated)' : guessed ? ' (inferred: too few flat pixels show it)' : ' (measured)'}`;
             swatches.append(el);
         });
     }
@@ -354,7 +356,8 @@ function renderStylePanel() {
         : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale)';
     $('style-c').textContent = !style ? '–' : est.scale ? scaleText : style.color.map(v => v.toFixed(1)).join(', ');
     $('style-c').title = style && est.scale ? `fitted as one virtual family of color ${style.color.map(v => v.toFixed(1)).join(', ')}` : '';
-    $('style-levels').textContent = style ? `${style.measuredLevels} measured` : '–';
+    const nInferred = style?.inferredLevels?.length ?? 0;
+    $('style-levels').textContent = style ? `${style.measuredLevels - nInferred} measured${nInferred ? `, ${nInferred} inferred` : ''}` : '–';
     const fam = est.familyMeasure;
     if (fam?.kind === 'opaque')
         $('style-fit').textContent = 'opaque: overlaps aren’t seen, α = 1';

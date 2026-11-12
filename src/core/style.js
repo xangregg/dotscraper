@@ -45,6 +45,7 @@ const WEAK_LEVEL_RATIO = [1.05, 1.95];
 const FIT_MAX_RMS = 2; // 0–255 units
 const FIT_C_TOL = 10; // 0–255 units c may fall outside [0, 255] (fitting noise)
 const EXTRA_LEVELS = 12; // geometric levels appended beyond the deepest measured one
+const MAX_MISSING_LEVELS = 1; // overlap counts that may lack a level between measured ones (JPEG lenses)
 const ISOLATED_MAX_LEVEL = 1.25; // components never above this count are single dots
 const ISOLATED_MIN_AREA = 12; // px² (JMP's tiny dots: r 2.6, area 21)
 const ISOLATED_MAX_ASPECT = 1.05; // ratio of principal second-moment radii
@@ -131,11 +132,14 @@ const OUTLINE_MAX_THICK = 0.25; // … all but this share of it
  * @property {number} minLevelT      0–255 units: flat pixels this close to B along the line don't vote for levels
  * @property {number} nearB          0–255 units: off-line distance always accepted in the count image
  * @property {number} isolatedFloor  counts below this weigh 0 in an isolated dot's area and moments
+ * @property {number} levelSmooth    bins either side summed before the level histogram's peaks are found: JPEG noise
+ *                                   spreads a small level over several bins (bench2 group-smoother.jpg's red level 2:
+ *                                   29 flat pixels over 7 bins, none reaching PEAK_MIN_PIXELS)
  */
 /** @type {Tolerances} */
-export const EXACT_TOLERANCES = { flat: FLAT_TOL, minLevelT: LEVEL_SEPARATION / 2, nearB: NEAR_B_ABS_TOL, isolatedFloor: 0 };
+export const EXACT_TOLERANCES = { flat: FLAT_TOL, minLevelT: LEVEL_SEPARATION / 2, nearB: NEAR_B_ABS_TOL, isolatedFloor: 0, levelSmooth: 0 };
 /** @type {Tolerances} */
-export const JPEG_TOLERANCES = { flat: 6, minLevelT: 15, nearB: 8, isolatedFloor: 0.1 };
+export const JPEG_TOLERANCES = { flat: 6, minLevelT: 15, nearB: 8, isolatedFloor: 0.1, levelSmooth: 3 };
 
 /**
  * @typedef {object} ColorLine
@@ -256,14 +260,15 @@ function votesForLevel(t, perp) {
 export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
     const { t, perp } = proj;
     const nb = Math.ceil(LEVEL_MAX_T / LEVEL_BIN);
-    const hist = new Float64Array(nb + 1);
+    const raw = new Float64Array(nb + 1);
     let total = 0;
     for (let p = 0; p < t.length; p++) {
         if (flat[p] && t[p] > tol.minLevelT && votesForLevel(t[p], perp[p])) {
-            hist[Math.min(nb, Math.round(t[p] / LEVEL_BIN))]++;
+            raw[Math.min(nb, Math.round(t[p] / LEVEL_BIN))]++;
             total++;
         }
     }
+    const hist = smoothed(raw, tol.levelSmooth);
     const minPeak = Math.max(PEAK_MIN_PIXELS, PEAK_MIN_FRACTION * total);
     const peaks = [];
     for (let b = 1; b < nb; b++) {
@@ -286,9 +291,10 @@ export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
         // ratios 1.05–1.07: beeswarm-boxplot, fibers, nicest language, violin)
         const lo = Math.ceil(Math.max(WEAK_LEVEL_RATIO[0] * peaks[0], peaks[0] + LEVEL_SEPARATION / LEVEL_BIN));
         const hi = Math.min(nb - 1, Math.floor(WEAK_LEVEL_RATIO[1] * peaks[0]));
+        // raw counts: smoothing would carry the first peak's shoulder past LEVEL_SEPARATION (bench3 dots-packed.jpg)
         for (let b = lo; b <= hi; b++) {
-            const c = hist[b - 1] + hist[b] + hist[b + 1];
-            if (hist[b] > 0 && c > bestCount) {
+            const c = raw[b - 1] + raw[b] + raw[b + 1];
+            if (raw[b] > 0 && c > bestCount) {
                 best = b;
                 bestCount = c;
             }
@@ -320,14 +326,27 @@ export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
     return { levels: found.slice(0, nSeq), beyond: found.slice(nSeq) };
 }
 
+// box sum over `half` bins either side
+function smoothed(hist, half) {
+    if (!half)
+        return hist;
+    const out = new Float64Array(hist.length);
+    for (let b = 0; b < hist.length; b++) {
+        for (let k = Math.max(0, b - half); k <= Math.min(hist.length - 1, b + half); k++)
+            out[b] += hist[k];
+    }
+    return out;
+}
+
 /**
  * Least-squares fit of L_n = c + (B − c) q^n per channel with one q = 1 − α shared by the channels, to colors
  * L_0 = B, L_1, …: golden-section search over q, c in closed form per channel for each q.
  *
- * @param {number[][]} colors  L_0 … L_K, K ≥ 1
+ * @param {number[][]} colors  B and the measured levels
+ * @param {number[]} [ns]  each color's overlap count, increasing from 0 (default 0, 1, 2, …: no level missing)
  * @returns {{alpha: number, c: number[], rms: number, maxAbs: number}}
  */
-export function fitGeometric(colors) {
+export function fitGeometric(colors, ns = colors.map((_, n) => n)) {
     const evaluate = q => {
         const c = [];
         let sse = 0;
@@ -337,14 +356,14 @@ export function fitGeometric(colors) {
             // L_n − B q^n = c (1 − q^n): regression through the origin on w_n = 1 − q^n
             let sw = 0;
             let swy = 0;
-            for (let n = 0; n < colors.length; n++) {
-                const w = 1 - q ** n;
+            for (let i = 0; i < colors.length; i++) {
+                const w = 1 - q ** ns[i];
                 sw += w * w;
-                swy += w * (colors[n][ch] - B * q ** n);
+                swy += w * (colors[i][ch] - B * q ** ns[i]);
             }
             c.push(swy / sw);
-            for (let n = 0; n < colors.length; n++) {
-                const r = colors[n][ch] - (c[ch] + (B - c[ch]) * q ** n);
+            for (let i = 0; i < colors.length; i++) {
+                const r = colors[i][ch] - (c[ch] + (B - c[ch]) * q ** ns[i]);
                 sse += r * r;
                 maxAbs = Math.max(maxAbs, Math.abs(r));
             }
@@ -535,14 +554,79 @@ export function familyCandidates(image, B, flat, tol = EXACT_TOLERANCES) {
 export function measureFamily(image, B, seed, flat, tol = EXACT_TOLERANCES) {
     const line = colorLine(B, seed);
     const proj = projectOnLine(image, line);
-    const { levels, beyond } = findLevels(image, proj, flat, tol);
-    const fit = levels.length ? fitGeometric([B, ...levels.map(L => L.color)]) : null;
-    const plausible = fit !== null && fit.rms <= FIT_MAX_RMS && fit.c.every(v => v >= -FIT_C_TOL && v <= 255 + FIT_C_TOL);
+    const found = findLevels(image, proj, flat, tol);
+    let { levels } = found;
+    let fit = levels.length ? fitGeometric([B, ...levels.map(L => L.color)]) : null;
+    let plausible = isPlausible(fit);
+    if (levels.length >= 2 && !plausible) {
+        const gapped = withMissingLevels(B, line, levels);
+        if (gapped) {
+            ({ levels, fit } = gapped);
+            plausible = true;
+        }
+    }
     return {
-        seed, line, proj, levels, beyond, fit,
+        seed, line, proj, levels, beyond: found.beyond, fit,
         pixels: levels.reduce((s, L) => s + L.count, 0),
         translucent: levels.length >= 2 && plausible,
     };
+}
+
+function isPlausible(fit) {
+    return fit !== null && fit.rms <= FIT_MAX_RMS && fit.c.every(v => v >= -FIT_C_TOL && v <= 255 + FIT_C_TOL);
+}
+
+/**
+ * Levels whose geometric fit fails as consecutive counts may skip one: in a JPEG, the lens-shaped two-dot overlaps
+ * are too narrow for many flat pixels to survive the block noise (bench2 group-smoother.jpg's red: 4 flat pixels at
+ * level 2 against 14 at level 3), so the next level was read as level 2 and the fit put c far outside the cube.
+ * Counts after the first level may skip up to MAX_MISSING_LEVELS; the fewest skips with a plausible fit win, then
+ * the lowest rms. The missing levels get the fitted colors, with count 0 and `inferred` set.
+ *
+ * @returns {{levels: Level[], fit: object}|null}
+ */
+function withMissingLevels(B, line, levels) {
+    const colors = [B, ...levels.map(L => L.color)];
+    let best = null;
+    for (let missing = 1; missing <= MAX_MISSING_LEVELS && !best; missing++) {
+        for (const ns of countAssignments(levels.length, missing)) {
+            const fit = fitGeometric(colors, [0, ...ns]);
+            if (isPlausible(fit) && (!best || fit.rms < best.fit.rms))
+                best = { ns, fit };
+        }
+    }
+    if (!best)
+        return null;
+    const { ns, fit } = best;
+    const q = 1 - fit.alpha;
+    const out = [];
+    for (let n = 1; n <= ns[ns.length - 1]; n++) {
+        const i = ns.indexOf(n);
+        if (i >= 0) {
+            out.push(levels[i]);
+            continue;
+        }
+        const color = B.map((v, ch) => fit.c[ch] + (v - fit.c[ch]) * q ** n);
+        const t = (line.B[0] - color[0]) * line.u[0] + (line.B[1] - color[1]) * line.u[1] + (line.B[2] - color[2]) * line.u[2];
+        out.push({ t, color, count: 0, inferred: true });
+    }
+    return { levels: out, fit };
+}
+
+// increasing counts for k levels, the first at 1, with exactly `missing` counts skipped below the last
+function countAssignments(k, missing) {
+    const out = [];
+    const extend = (ns, left) => {
+        if (ns.length === k) {
+            if (left === 0)
+                out.push(ns);
+            return;
+        }
+        for (let skip = 0; skip <= left; skip++)
+            extend([...ns, ns[ns.length - 1] + 1 + skip], left - skip);
+    };
+    extend([1], missing);
+    return out;
 }
 
 /** Connected components (4-neighbor) of pixels with D > 0.5. */
@@ -1311,10 +1395,13 @@ export function estimateStyle(image, opts = {}) {
     else {
         notes.push('No isolated whole dot found, so the radius and edge blur must be set by hand.');
     }
+    const inferredLevels = fam.levels.flatMap((L, i) => L.inferred ? [i + 1] : []);
+    if (inferredLevels.length)
+        notes.push(`Too few flat pixels show ${inferredLevels.length > 1 ? 'levels' : 'level'} ${inferredLevels.join(', ')} (overlap count), so its color was inferred from the levels around it.`);
     return {
         background, candidates, family: familyIndex, flat,
         familyMeasure: fam,
-        style: { color: fam.fit.c, alpha: fam.fit.alpha, levels: table, measuredLevels: fam.levels.length, radius, blur, ...(ring ? { ring } : {}) },
+        style: { color: fam.fit.c, alpha: fam.fit.alpha, levels: table, measuredLevels: fam.levels.length, inferredLevels, radius, blur, ...(ring ? { ring } : {}) },
         D, isolated, edge, notes,
     };
 }

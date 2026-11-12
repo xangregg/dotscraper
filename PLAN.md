@@ -1114,6 +1114,44 @@ Not done: fibers' band (3 votes: its opaque dots barely enter it; left "unknown"
 band over outlined dots (milestone 2 first); the JPEG band charts are short of their PNGs, and bench1
 smoother-ci.jpg's positions are worse (0.258 px against 0.038 before; not examined).
 
+**How many of bench2's misses can be found at all** (measured 2026-11-12). For each truth dot, the share of its
+disc that no other truth dot covers (for one color with no ring, where drawing order can't be seen), or that no
+later row covers (with rings or several colors), sampled every 0.25 px at the fitted radius. The rings confirm
+that JMP draws in row order: in close pairs the later row's ring shows 85 times to 3 (solid-opaque-stroke), 83 to 9
+(gradient-opaque-stroke) and 25 to 1 (solid-graystroke). Each image has 5 exact duplicates.
+
+| image | missed | under 10% shown | 10% or more shown |
+|---|---|---|---|
+| solid-opaque (one color, any dot) | 15 | 14 | 1 |
+| gradient-opaque (any dot) | 15 | 14 | 1 |
+| solid-opaque-stroke (ring, later rows) | 34 | 22 | 12 |
+| gradient-opaque-stroke (ring, later rows) | 35 | 15 | 20 (14 show ≥ 35%) |
+| solid-graystroke (ring, later rows) | 16 | 8 | 8 |
+| group-smoother.png (later rows) | 1 | 0 | 1 |
+| group-smoother.jpg (later rows) | 74 | 11 | 63 (41 show ≥ 35%) |
+
+So the opaque rows without rings are at their limit: their misses are dots hidden under others. (gradient-opaque
+counted by later rows has 7 misses that show ≥ 35% on top, but neighbors' colors may be too close to tell; not
+checked.) The stroked rows have 8–20 misses that show, gradient-opaque-stroke the most. group-smoother.jpg is the
+real gap: its misses are visible dots that the PNG finds, so the loss is in the JPEG path, not in occlusion.
+
+**bench2 group-smoother.jpg fixed** (2026-11-12). Its red family was taken for opaque pink (240, 155, 168), the
+single-dot tint, so overlaps were hidden dots. The two-dot lenses are narrow, and JPEG noise left few flat pixels
+in them: 29 at level 2, spread over 7 one-unit bins, none reaching PEAK_MIN_PIXELS (20). The weak-level search
+then took a deeper level for level 2, and the fit put c outside the cube. Two changes in `style.js`:
+
+- JPEG tolerances sum the level histogram over ±3 bins (`levelSmooth`) before finding peaks; exact images don't.
+  The weak-level search keeps the raw counts: on the smoothed ones it took the first peak's shoulder 10 units on
+  for a level (bench3 dots-packed.jpg and bench2 smoother-ci.jpg lost their radius).
+- When the levels' geometric fit fails as consecutive counts, one count may be missing (`MAX_MISSING_LEVELS`): the
+  red's levels at t 137, 205 and 258 are counts 1, 2 and 4. The missing level gets the fitted color, marked
+  `inferred`, and the panel says so ("3 measured, 1 inferred", a dim swatch, a note).
+
+Red α 1 → 0.495 (truth 0.5); group-smoother.jpg 131 → 200 found, precision 0.992 → 0.995, recall 0.637 → 0.975,
+flagged 57 → 21. Every other row is unchanged but for small shifts in JPEG RMSE (±0.013 px) and flags (bench2
+large-dots.jpg 14 → 2, smoother.jpg 27 → 15). In the page: 204 dots (89 + 115; the browser decodes JPEGs a little
+differently from jpeg-js), 24 flagged, no console errors.
+
 **Milestone 4.**
 
 - [ ] Ground truth and benchmark rows for each test image. (bench1–3 have exact truth for their 59 renderings.)

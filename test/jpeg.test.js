@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { restoreChroma } from '../src/core/jpeg.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
+import { extractAll, groupRow } from '../tools/bench.mjs';
 
 const BENCH = new URL('../bench1/', import.meta.url).pathname;
 const MEDIUM_R = 6.72; // px, bench1 medium-dots
@@ -60,4 +61,21 @@ test('restoreChroma leaves a flat image and a two-color edge as they are (±1 fo
     const out = restoreChroma(image);
     for (let i = 0; i < data.length; i++)
         assert.ok(Math.abs(out.data[i] - data[i]) <= 1, `value ${i}: ${out.data[i]} vs ${data[i]}`);
+});
+
+const BENCH2 = new URL('../bench2/', import.meta.url).pathname;
+
+// The red family's two-dot lenses are too narrow for many flat pixels to survive JPEG noise: its level 2 was spread
+// over 7 histogram bins with none reaching a peak, the next level was read as level 2, the fit failed, and the family
+// was taken for opaque pink (131 of 204 found, recall 0.637). Smoothing the level histogram finds level 2; level 3
+// is still missing and is inferred.
+test('regression: bench2 group-smoother.jpg reads its red family as translucent at α 0.5', { skip: !existsSync(BENCH2 + 'group-smoother.jpg') && 'bench2 absent' }, () => {
+    const results = extractAll(readImage(BENCH2 + 'group-smoother.jpg'), true);
+    assert.equal(results.length, 2);
+    for (const res of results) {
+        assert.ok(Math.abs(res.est.style.alpha - 0.5) <= 0.02, `α ${res.est.style.alpha} for ${res.est.style.color.map(Math.round)}`);
+    }
+    const r = groupRow('group-smoother.jpg', truthPixels(readTruthCsv(BENCH2 + 'data.csv')).dots, results, 0);
+    assert.ok(r.precision >= 0.98, `precision ${r.precision}`);
+    assert.ok(r.recall >= 0.95, `recall ${r.recall}`);
 });

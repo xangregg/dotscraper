@@ -19,6 +19,18 @@ test('fitGeometric recovers α and c from exact levels, and flags a single level
     assert.ok(fitGeometric(levels.slice(0, 2)).underdetermined);
 });
 
+test('fitGeometric with a missing level: counts 1, 2 and 4 fit exactly; read as 1, 2, 3 they do not', () => {
+    const B = [255, 255, 255];
+    const c = [239, 49, 70];
+    const at = n => c.map((v, ch) => v + (B[ch] - v) * 0.5 ** n);
+    const colors = [B, at(1), at(2), at(4)];
+    const fit = fitGeometric(colors, [0, 1, 2, 4]);
+    near(fit.alpha, 0.5, 1e-6, 'α');
+    for (let ch = 0; ch < 3; ch++)
+        near(fit.c[ch], c[ch], 1e-3, 'c');
+    assert.ok(fitGeometric(colors).rms > 1, 'consecutive counts should not fit');
+});
+
 // presets: true α, c, r, and the blur the renderer should use (null where upsampling makes it only approximate)
 const EXPECTED = {
     sparse: { alpha: 0.35, c: [40, 110, 200], radius: 10, blur: 0 },
