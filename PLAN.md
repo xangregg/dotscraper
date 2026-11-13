@@ -1295,4 +1295,27 @@ pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
   Not scored: hair1, hair2, protrusion3 (no x tick marks to pair the lanes with), protrusion1–2 (a translucent
   family with no isolated dot: "the dot radius is unknown"). primates1 (no CSV) finds its 27 dots in the app,
   every dot in the image (regression test in jpeg.test.js).
+- **JPEG mode whenever the noise shows?** (2026-11-13, asked because pathogen is hard for other reasons.) Every
+  noise-flagged PNG, exact mode (with the fallback) against JPEG mode, truth paired through the original image's
+  ticks (the restored image's ticks differ: autocor1 4 y ticks for 7, tumour1 none on x):
+
+| image | exact | JPEG | |
+|---|---|---|---|
+| escape1 | P 1.000 R 0.868 | P 1.000 R 1.000 | better |
+| escape2 | 43 of 145, R 0.297 | 136 of 145, R 0.938 | better |
+| autocor1, fanc2, hair3 | | | the same |
+| pathogen | 468, P 0.972 R 0.780 | 867, P 0.637 R 0.947, 3.7× slower | worse |
+| engagement1 (the user's 46-dot export) | 33, P 0.879 R 0.630 | 40 in 2 families, P 0.650 R 0.565 | worse |
+| violin-beeswarm (no truth) | 734 at r 7.4, 23 s | 3190 at r 4.4, 497 s | worse |
+| tumour1 | a wrong family, P 0.231 | no family | neither |
+
+  Without truth, fibers, kite1, molar1, primates1–2, wave1 and hair1 come out within a dot or two either way;
+  beeswarm-boxplot, fanc1, kite2, hair2 and protrusion3 fail both ways. So JPEG mode helps some and hurts as many,
+  pathogen not the only one: kept as a fallback for now. Better: run both and keep the one the image supports (the
+  residual), since analysis by synthesis can score itself. Also seen: in JPEG mode the bench's extractAll finds the
+  plot bounds on the restored image, whose ticks differ; the app uses the original's.
+- To make the fallback visible, the option moved from the Image section to Dot families as **Noisy color matching**
+  (JPEG named in its tooltip), with a line under it saying why it is set: on by itself (no family with exact
+  colors, and the noise), on for a JPEG file, or, when the image has JPEG-like noise and the box is off, "try this
+  if dots are missed".
 

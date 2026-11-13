@@ -57,6 +57,7 @@ const state = {
     jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type or JPEG noise, or set by the user)
     noise: null, // jpegNoise of the image
     jpegAuto: false, // JPEG mode was turned on because no family showed with exact colors and the image has JPEG noise
+    jpegFile: false, // the file is a JPEG
     work: null, // the image the analysis sees: for a JPEG, its chroma restored (src/core/jpeg.js); else the image
     base: null, // state.work with any translucent layer over the dots divided out (src/core/background.js)
     hash: null,
@@ -408,7 +409,7 @@ function analyze({ auto = false } = {}) {
     if (auto && !state.jpeg && state.noise.likely && prepared.estimates.every(e => !e.style)) {
         setJpeg(true, true);
         prepared = estimateFamilies(state.work, { jpeg: true });
-        const note = `No dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so it was analyzed as a JPEG.`;
+        const note = `No dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
         for (const e of prepared.estimates)
             e.notes = [note, ...e.notes];
     }
@@ -420,7 +421,7 @@ function analyze({ auto = false } = {}) {
     state.dilate = null;
     selectFamily(0);
     $('analysis-time').textContent = `families ${Math.round(t1 - t0)} ms`;
-    setStatus(auto && state.jpegAuto ? 'No dot family with exact colors: analyzed as a JPEG (it has JPEG-like noise).' : '');
+    setStatus(auto && state.jpegAuto ? 'No dot family with exact colors: noisy color matching turned on (JPEG-like noise).' : '');
 }
 
 /** Show family k in the panel and the overlays; the fit is kept. */
@@ -1151,7 +1152,15 @@ function setJpeg(jpeg, auto = false) {
     const kind = state.jpegAuto ? ', JPEG-like noise' : jpeg ? ', JPEG' : '';
     $('image-summary').textContent = state.image ? `${state.image.width} × ${state.image.height}${kind}` : '';
     $('info-noise').textContent = !state.noise ? '–'
-        : `${state.noise.likely ? 'yes, JPEG-like' : 'none'}: ${noiseText()}${state.jpegAuto ? '; JPEG mode turned on, since no dot family showed with exact colors' : ''}`;
+        : `${state.noise.likely ? 'yes, JPEG-like' : 'none'}: ${noiseText()}`;
+    // why the box is set as it is, beside it, where it can be changed
+    const hint = $('noise-hint');
+    hint.textContent = !state.image ? ''
+        : state.jpegAuto ? `On by itself: no dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}).`
+        : jpeg && state.jpegFile ? 'On: the file is a JPEG.'
+        : !jpeg && state.noise?.likely ? `The image has JPEG-like noise (${noiseText()}): try this if dots are missed.`
+        : '';
+    hint.hidden = !hint.textContent;
 }
 
 /** Show the new image and estimate its families. Resolves false if a later load took over while it waited. */
@@ -1163,6 +1172,7 @@ async function setImage(name, image, jpeg, load) {
     state.name = name;
     state.image = image;
     state.noise = jpegNoise(image);
+    state.jpegFile = jpeg;
     setJpeg(jpeg);
     state.hash = pixelHash(image);
     $('info-name').textContent = name;

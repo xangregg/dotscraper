@@ -368,6 +368,11 @@ input.overridden {
     margin-top: 6px;
 }
 
+/* under the checkbox's text */
+#noise-hint {
+    margin: 2px 0 6px 22px;
+}
+
 #viewer {
     flex: 1;
     min-width: 0;
