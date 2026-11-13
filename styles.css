@@ -490,8 +490,45 @@ input.overridden {
     pointer-events: none;
 }
 
+/* a box, so the message reads over an image */
+#stage-message .box {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 100%;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
 #stage-message.error {
     color: var(--warning);
+}
+
+/* a transform animation runs on the compositor, so it keeps turning while the main thread is busy */
+#stage-message.busy .box::before {
+    content: '';
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #stage-message.busy .box::before {
+        animation-duration: 3s;
+    }
 }
 
 #mode-hint {

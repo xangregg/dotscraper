@@ -45,6 +45,8 @@ const STATUS_TICK = 250; // ms between updates of the elapsed time while a fit r
 
 const JPEG_NAME = /\.jpe?g$/i;
 
+let loads = 0; // counts image loads and rescans, so a slow one that a newer one overtook drops its result
+
 const $ = id => document.getElementById(id);
 
 const state = {
@@ -312,11 +314,22 @@ function setHoverDot(i) {
     refreshMarks();
 }
 
-function showMessage(text, isError = false) {
+/** The message over the view, in a box so it reads over an image; busy adds a spinner for work in progress. */
+function showMessage(text, { error = false, busy = false } = {}) {
     const el = $('stage-message');
-    el.textContent = text;
-    el.classList.toggle('error', isError);
+    const box = document.createElement('span');
+    box.className = 'box';
+    box.textContent = text;
+    el.replaceChildren(box);
+    el.classList.toggle('error', error);
+    el.classList.toggle('busy', busy);
     el.hidden = !text;
+}
+
+// The style estimate runs on the main thread for a second or two and blocks painting; let the browser paint
+// the message first (a frame, then a task after it) so it shows during the wait.
+function nextPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
 function setStatus(text, kind = '') {
@@ -1043,7 +1056,12 @@ function setJpeg(jpeg) {
     $('image-summary').textContent = state.image ? `${state.image.width} × ${state.image.height}${jpeg ? ', JPEG' : ''}` : '';
 }
 
-function setImage(name, image, jpeg) {
+/** Show the new image and estimate its families. Resolves false if a later load took over while it waited. */
+async function setImage(name, image, jpeg, load) {
+    showMessage(`Scanning ${name} for dot colors and sizes…`, { busy: true });
+    await nextPaint();
+    if (load !== loads)
+        return false;
     state.name = name;
     state.image = image;
     setJpeg(jpeg);
@@ -1051,39 +1069,48 @@ function setImage(name, image, jpeg) {
     $('info-name').textContent = name;
     $('info-size').textContent = `${image.width} × ${image.height} px`;
     $('info-hash').textContent = state.hash;
-    showMessage('');
     setMode(null);
     view.setImage(image);
     state.axes = detectAxes(image);
     state.axisEntries = loadEntries(state.hash, state.axes);
     renderAxesPanel();
     analyze();
+    showMessage('');
     $('stage').focus();
+    return true;
 }
 
 async function openTestImage(name) {
-    showMessage(`Loading ${name}…`);
+    const load = ++loads;
+    showMessage(`Loading ${name}…`, { busy: true });
     try {
-        setImage(name, await loadTestImage(name), JPEG_NAME.test(name));
+        const image = await loadTestImage(name);
+        if (load !== loads || !await setImage(name, image, JPEG_NAME.test(name), load))
+            return;
         history.replaceState(null, '', `#image=${encodeURIComponent(name)}`);
         $('test-image').value = name;
     }
     catch (err) {
-        showMessage(`Could not open ${name}: ${err.message}`, true);
+        if (load === loads)
+            showMessage(`Could not open ${name}: ${err.message}`, { error: true });
     }
 }
 
 async function openFile(file) {
     const name = file.name && file.name !== 'image.png' ? file.name : 'pasted image';
-    showMessage(`Decoding ${name}…`);
+    const load = ++loads;
+    showMessage(`Loading ${name}…`, { busy: true });
     try {
-        setImage(name, await decodeImage(file), file.type === 'image/jpeg' || JPEG_NAME.test(file.name ?? ''));
+        const image = await decodeImage(file);
+        if (load !== loads || !await setImage(name, image, file.type === 'image/jpeg' || JPEG_NAME.test(file.name ?? ''), load))
+            return;
         // a pasted or uploaded image can't be reopened from a link
         history.replaceState(null, '', location.pathname);
         $('test-image').value = '';
     }
     catch (err) {
-        showMessage(`Could not decode ${name}: ${err.message}`, true);
+        if (load === loads)
+            showMessage(`Could not decode ${name}: ${err.message}`, { error: true });
     }
 }
 
@@ -1121,11 +1148,17 @@ function wireSections() {
 const typing = e => e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement;
 
 function wireControls() {
-    $('jpeg').addEventListener('change', e => {
+    $('jpeg').addEventListener('change', async e => {
         if (!state.image)
+            return;
+        const load = ++loads;
+        showMessage(`Scanning ${state.name} for dot colors and sizes…`, { busy: true });
+        await nextPaint();
+        if (load !== loads)
             return;
         setJpeg(e.target.checked);
         analyze();
+        showMessage('');
     });
     $('pick-color').addEventListener('click', () => setMode(state.mode === 'pick' ? null : 'pick'));
     $('fit-run').addEventListener('click', runFit);
