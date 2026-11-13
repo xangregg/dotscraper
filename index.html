@@ -29,6 +29,8 @@
         <div class="group" role="group" aria-label="Edit dots">
             <button type="button" id="edit-add" aria-pressed="false" disabled title="Click to add a dot to the selected family; the dots nearby are refit (A; Esc to finish)">+ Add dot</button>
             <button type="button" id="edit-remove" aria-pressed="false" disabled title="Click a dot of the selected family to remove it; the dots nearby are refit (R; Esc to finish)">− Remove dot</button>
+            <button type="button" id="edit-move" aria-pressed="false" disabled title="Click a dot of the selected family, then move it with the arrow keys: 1 px, or 0.1 px with Shift; it isn't refit (M; Esc to finish)">Move dot</button>
+            <button type="button" id="edit-clear" disabled title="Remove every dot of every family; Undo brings them back">Clear all</button>
             <button type="button" id="edit-undo" disabled title="Undo the last edit (⌘Z)">Undo</button>
         </div>
         <div class="group" role="group" aria-label="Export">
@@ -106,6 +108,7 @@
                     <dt>Source</dt><dd id="info-name">none</dd>
                     <dt>Size</dt><dd id="info-size">–</dd>
                     <dt>Pixel hash</dt><dd id="info-hash" title="FNV-1a of the RGBA values, to compare with the Node tools">–</dd>
+                    <dt>Noise near marks</dt><dd id="info-noise" title="Background pixels 3–6 px from any mark that aren't exactly the background color: none in a rendered graph, many in a JPEG or a PNG made from one (or a noisy image)">–</dd>
                 </dl>
                 <label class="check" title="JPEG compression smears colors and adds noise; this loosens the thresholds that assume exact pixel values. Set from the file type; check it for a JPEG that was pasted or saved as PNG."><input type="checkbox" id="jpeg"> JPEG-compressed</label>
             </details>

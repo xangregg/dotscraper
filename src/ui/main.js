@@ -7,7 +7,7 @@
 // adds a family of its own.
 
 import { pixelAt, pixelHash } from '../core/image.js';
-import { restoreChroma } from '../core/jpeg.js';
+import { restoreChroma, jpegNoise } from '../core/jpeg.js';
 import { estimateStyle } from '../core/style.js';
 import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
@@ -35,6 +35,8 @@ const SCALE_CAPTION = {
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
 const REMOVE_HIT_RADII = 1; // × r: Remove takes the nearest dot of the selected family within this of the click
 const UNDO_DEPTH = 100; // edits kept for Undo
+const NUDGE_STEP = 1; // px, an arrow key in Move mode
+const NUDGE_FINE = 0.1; // px, Shift + an arrow key
 // Find dots progress: a family's share of its bar at each stage the fit reports (rounds share the middle; a fit
 // may converge before MAX_ROUNDS, so the bar can jump at the end)
 const PROGRESS_CANDIDATES = 0.05;
@@ -52,7 +54,9 @@ const $ = id => document.getElementById(id);
 const state = {
     name: null, // display name of the current image
     image: null, // RgbaImage
-    jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type, or set by the user)
+    jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type or JPEG noise, or set by the user)
+    noise: null, // jpegNoise of the image
+    jpegAuto: false, // JPEG mode was turned on because no family showed with exact colors and the image has JPEG noise
     work: null, // the image the analysis sees: for a JPEG, its chroma restored (src/core/jpeg.js); else the image
     base: null, // state.work with any translucent layer over the dots divided out (src/core/background.js)
     hash: null,
@@ -64,14 +68,16 @@ const state = {
     dilate: null, // user's mask dilation for the selected family, px, or null for the default
     layers: null, // the selected family's buildMask result
     overlay: 'image',
-    mode: null, // null, 'pick', 'add' or 'remove': what a click in the view does
+    mode: null, // null, 'pick', 'add', 'remove' or 'move': what a click in the view does
+    moving: null, // Move mode's chosen dot, { family, i } with i its index in that family's dots
+    nudged: false, // the chosen dot has been nudged since it was chosen: its first nudge saved an undo step
     fit: null, // { families: [{ family, dots, radius, sigma }], dots (all, with family and r), ms, edited, partial }
     undo: [], // earlier fits, for Undo
     worker: null,
     fitStart: 0,
     tick: null, // the status timer while a fit runs
     showDots: true,
-    hoverDot: -1, // index into fit.dots of the dot Remove would take, highlighted
+    hoverDot: -1, // index into fit.dots of the dot Remove would take or Move has chosen, highlighted
     axes: null, // from detectAxes
     axisEntries: { x: null, y: null }, // typed tick values and scale types
     showAxes: true,
@@ -288,7 +294,7 @@ function showPixel(x, y) {
     swatch.style.background = `rgb(${r} ${g} ${b})`;
     $('pixel-line').replaceChildren(swatch, parts.join(' · '));
 
-    if (state.mode === 'remove' && state.fit)
+    if ((state.mode === 'remove' || (state.mode === 'move' && !state.moving)) && state.fit)
         setHoverDot(nearestDot(state.fit.dots, x + 0.5, y + 0.5, REMOVE_HIT_RADII, d => d.family === state.current));
     const i = state.fit ? nearestDot(state.fit.dots, x + 0.5, y + 0.5) : -1;
     if (i < 0) {
@@ -304,7 +310,7 @@ function showPixel(x, y) {
     const dd = dataAt(d.x, d.y);
     const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
     const fill = d.fill === undefined ? '' : `; fill ${fillLabel(d)}${d.fillSure ? '' : ' (mostly hidden: color unsure)'}`;
-    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.moved ? ' (moved by hand)' : ''}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
 }
 
 function setHoverDot(i) {
@@ -392,10 +398,20 @@ function refreshMarks(dots = state.fit?.dots) {
 }
 
 /** Estimate every family and select the first. Fitted dots are dropped: they were fitted to other estimates. */
-function analyze() {
+function analyze({ auto = false } = {}) {
     stopFit(false);
     const t0 = performance.now();
-    const prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
+    let prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
+    // A PNG made from a JPEG (a screenshot of a web figure) fails the exact-color tests; when nothing shows with
+    // exact colors and the image has JPEG noise, analyze it as a JPEG. Only on loading: the box is the user's after.
+    // Not whenever the noise shows: restoring chroma cost pathogen precision (0.972 → 0.637), which worked as is.
+    if (auto && !state.jpeg && state.noise.likely && prepared.estimates.every(e => !e.style)) {
+        setJpeg(true, true);
+        prepared = estimateFamilies(state.work, { jpeg: true });
+        const note = `No dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so it was analyzed as a JPEG.`;
+        for (const e of prepared.estimates)
+            e.notes = [note, ...e.notes];
+    }
     state.base = prepared.image;
     state.families = prepared.estimates.map(estimate => ({ estimate, picked: null, enabled: !!estimate.style, overrides: {} }));
     const t1 = performance.now();
@@ -404,7 +420,7 @@ function analyze() {
     state.dilate = null;
     selectFamily(0);
     $('analysis-time').textContent = `families ${Math.round(t1 - t0)} ms`;
-    setStatus('');
+    setStatus(auto && state.jpegAuto ? 'No dot family with exact colors: analyzed as a JPEG (it has JPEG-like noise).' : '');
 }
 
 /** Show family k in the panel and the overlays; the fit is kept. */
@@ -644,7 +660,7 @@ function renderLayersPanel() {
 function renderLegend() {
     const legend = $('overlay-legend');
     const item = (color, text) => `<span class="key" style="background:${typeof color === 'string' ? color : cssColor(color)}"></span>${text}`;
-    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${item(MARK_COLORS.selected, 'Remove would take it')}`;
+    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${item(MARK_COLORS.selected, 'Remove would take it, or Move has chosen it')}`;
     const fam = state.estimate ? ` (${familyName(state.current)})` : '';
     if (state.overlay === 'residual') {
         legend.innerHTML = `Residual${fam}, image − model along the dot color line: ${item(RESIDUAL_DARKER, 'image darker (missing ink)')} `
@@ -679,6 +695,8 @@ function clickAt(x, y) {
     }
     if (state.mode === 'add' || state.mode === 'remove')
         editAt(state.mode, x + 0.5, y + 0.5);
+    if (state.mode === 'move')
+        chooseMoving(x + 0.5, y + 0.5);
 }
 
 /** A family of a picked color, fitted on its own (on the image with any overlay divided out). */
@@ -694,18 +712,20 @@ function addPickedFamily(rgb) {
     setStatus(`Added a family of color ${rgb.join(', ')}.`);
 }
 
-/** What a click in the view does: null (pan only), 'pick', 'add' or 'remove'. */
+/** What a click in the view does: null (pan only), 'pick', 'add', 'remove' or 'move'. */
 function setMode(mode) {
     state.mode = mode;
+    state.moving = null;
+    state.nudged = false;
     $('pick-color').setAttribute('aria-pressed', String(mode === 'pick'));
     $('edit-add').setAttribute('aria-pressed', String(mode === 'add'));
     $('edit-remove').setAttribute('aria-pressed', String(mode === 'remove'));
+    $('edit-move').setAttribute('aria-pressed', String(mode === 'move'));
     const stage = $('stage');
     stage.classList.toggle('picking', mode === 'pick');
     stage.classList.toggle('adding', mode === 'add');
-    stage.classList.toggle('removing', mode === 'remove');
-    if (mode !== 'remove')
-        setHoverDot(-1);
+    stage.classList.toggle('removing', mode === 'remove' || mode === 'move');
+    setHoverDot(-1);
     updateModeHint();
 }
 
@@ -715,6 +735,8 @@ function updateModeHint() {
     const text = state.mode === 'pick' ? 'Click a dot to add a family of its color · Esc to cancel'
         : state.mode === 'add' ? `Adding to ${name}: click to add a dot · drag to pan · Esc to finish`
         : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it · drag to pan · Esc to finish`
+        : state.mode === 'move' && !state.moving ? `Moving in ${name}: click a dot to choose it · drag to pan · Esc to finish`
+        : state.mode === 'move' ? `Arrow keys move the dot ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · click another dot · Esc to finish`
         : '';
     hint.textContent = text;
     hint.hidden = !text;
@@ -731,6 +753,8 @@ function renderFitControls() {
     const editable = !running && !!currentStyle()?.radius;
     $('edit-add').disabled = !editable;
     $('edit-remove').disabled = !editable || !familyFit()?.dots.length;
+    $('edit-move').disabled = !editable || !familyFit()?.dots.length;
+    $('edit-clear').disabled = running || !state.fit?.dots.length;
     $('edit-undo').disabled = running || !state.undo.length;
     $('copy-table').disabled = !state.fit?.dots.length || running;
     $('save-csv').disabled = !state.fit?.dots.length || running;
@@ -738,7 +762,7 @@ function renderFitControls() {
     $('pick-color').disabled = running || !state.image;
     if (!editable && (state.mode === 'add' || state.mode === 'remove'))
         setMode(null);
-    if (state.mode === 'remove' && $('edit-remove').disabled)
+    if ((state.mode === 'remove' && $('edit-remove').disabled) || (state.mode === 'move' && $('edit-move').disabled))
         setMode(null);
 }
 
@@ -903,6 +927,9 @@ function undo() {
     else
         state.fit = null;
     state.hoverDot = -1;
+    state.moving = null;
+    state.nudged = false;
+    updateModeHint();
     setStatus('Undone.');
     fitChanged();
 }
@@ -932,6 +959,68 @@ function editAt(kind, x, y) {
     setFits([...others, updated].sort((a, b) => a.family - b.family), { ...(state.fit ? extraOf(state.fit) : {}), edited: true });
     state.hoverDot = -1;
     setStatus(`${kind === 'add' ? 'Added a dot to' : 'Removed a dot from'} ${familyName(k)}: ${updated.dots.length} dots.`);
+    fitChanged();
+}
+
+// index into fit.dots of dot i of family k (setFits concatenates the families in order)
+function globalIndex(k, i) {
+    let n = 0;
+    for (const f of state.fit.families) {
+        if (f.family === k)
+            return n + i;
+        n += f.dots.length;
+    }
+    return -1;
+}
+
+// Move mode: choose the selected family's dot nearest the click, or none when no dot is there
+function chooseMoving(x, y) {
+    const f = familyFit();
+    const i = f ? nearestDot(f.dots.map(d => ({ ...d, r: f.radius })), x, y, REMOVE_HIT_RADII) : -1;
+    state.moving = i < 0 ? null : { family: f.family, i };
+    state.nudged = false;
+    state.hoverDot = i < 0 ? -1 : globalIndex(f.family, i);
+    refreshMarks();
+    updateModeHint();
+    if (i >= 0)
+        setStatus(`Chosen: dot at ${f.dots[i].x.toFixed(2)}, ${f.dots[i].y.toFixed(2)} px. Arrow keys move it.`);
+}
+
+// Move the chosen dot by (dx, dy) px, as placed by hand: no refit, which would pull it back. The fit's per-dot
+// numbers (standard errors, visibility, flags) no longer describe it, so they are dropped and it is marked moved.
+// A run of nudges to one dot is one undo step.
+function nudge(dx, dy) {
+    const { family, i } = state.moving;
+    if (!state.nudged)
+        pushUndo();
+    state.nudged = true;
+    const families = state.fit.families.map(f => {
+        if (f.family !== family)
+            return f;
+        const dots = f.dots.map((d, j) => {
+            if (j !== i)
+                return d;
+            const { seX, seY, visible, depth, margin, ...rest } = d;
+            return { ...rest, x: d.x + dx, y: d.y + dy, flags: [], moved: true };
+        });
+        return { ...f, dots };
+    });
+    setFits(families, { ...extraOf(state.fit), edited: true });
+    const d = familyFit(family).dots[i];
+    state.hoverDot = globalIndex(family, i);
+    setStatus(`Moved the dot to ${d.x.toFixed(2)}, ${d.y.toFixed(2)} px.`);
+    fitChanged();
+}
+
+// remove every dot of every family; Undo brings them back
+function clearDots() {
+    const n = state.fit?.dots.length ?? 0;
+    if (!n || state.worker)
+        return;
+    pushUndo();
+    state.fit = null;
+    setMode(state.mode === 'add' ? 'add' : null);
+    setStatus(`Cleared ${n} dots (Undo restores them).`);
     fitChanged();
 }
 
@@ -1048,12 +1137,21 @@ function saveTruth() {
     setStatus(`Saved ${state.fit.dots.length} dots as ${name}.`);
 }
 
-function setJpeg(jpeg) {
+// '21.7% of the background pixels near marks are slightly off'
+function noiseText() {
+    return `${(100 * state.noise.fraction).toFixed(state.noise.fraction < 0.01 ? 2 : 1)}% of the background pixels near marks are slightly off`;
+}
+
+function setJpeg(jpeg, auto = false) {
     state.jpeg = jpeg;
+    state.jpegAuto = jpeg && auto;
     state.work = jpeg ? restoreChroma(state.image) : state.image;
     state.base = null;
     $('jpeg').checked = jpeg;
-    $('image-summary').textContent = state.image ? `${state.image.width} × ${state.image.height}${jpeg ? ', JPEG' : ''}` : '';
+    const kind = state.jpegAuto ? ', JPEG-like noise' : jpeg ? ', JPEG' : '';
+    $('image-summary').textContent = state.image ? `${state.image.width} × ${state.image.height}${kind}` : '';
+    $('info-noise').textContent = !state.noise ? '–'
+        : `${state.noise.likely ? 'yes, JPEG-like' : 'none'}: ${noiseText()}${state.jpegAuto ? '; JPEG mode turned on, since no dot family showed with exact colors' : ''}`;
 }
 
 /** Show the new image and estimate its families. Resolves false if a later load took over while it waited. */
@@ -1064,6 +1162,7 @@ async function setImage(name, image, jpeg, load) {
         return false;
     state.name = name;
     state.image = image;
+    state.noise = jpegNoise(image);
     setJpeg(jpeg);
     state.hash = pixelHash(image);
     $('info-name').textContent = name;
@@ -1074,7 +1173,7 @@ async function setImage(name, image, jpeg, load) {
     state.axes = detectAxes(image);
     state.axisEntries = loadEntries(state.hash, state.axes);
     renderAxesPanel();
-    analyze();
+    analyze({ auto: !jpeg });
     showMessage('');
     $('stage').focus();
     return true;
@@ -1165,6 +1264,8 @@ function wireControls() {
     $('fit-stop').addEventListener('click', () => stopFit());
     $('edit-add').addEventListener('click', () => setMode(state.mode === 'add' ? null : 'add'));
     $('edit-remove').addEventListener('click', () => setMode(state.mode === 'remove' ? null : 'remove'));
+    $('edit-move').addEventListener('click', () => setMode(state.mode === 'move' ? null : 'move'));
+    $('edit-clear').addEventListener('click', clearDots);
     $('edit-undo').addEventListener('click', undo);
     $('show-axes').addEventListener('change', e => {
         state.showAxes = e.target.checked;
@@ -1224,6 +1325,13 @@ function wireControls() {
         }
         if (typing(e))
             return;
+        const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+        if (arrow && state.mode === 'move' && state.moving && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            e.preventDefault();
+            const step = e.shiftKey ? NUDGE_FINE : NUDGE_STEP;
+            nudge(arrow[0] * step, arrow[1] * step);
+            return;
+        }
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
             e.preventDefault();
             undo();
@@ -1233,6 +1341,9 @@ function wireControls() {
         }
         else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'r' && !$('edit-remove').disabled) {
             setMode(state.mode === 'remove' ? null : 'remove');
+        }
+        else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'm' && !$('edit-move').disabled) {
+            setMode(state.mode === 'move' ? null : 'move');
         }
     });
 }

@@ -3,7 +3,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { detectAxes } from '../src/core/axes.js';
 import { matchDots } from '../src/core/metrics.js';
 import { readImage } from '../tools/png.mjs';
@@ -86,4 +88,18 @@ test('regression: label glyphs below the x axis aren’t dots (bench2 tiny-dots:
     const { found, m } = score('bench2', 'tiny-dots.png');
     assert.equal(found.length, 204);
     assert.equal(m.recall, 1);
+});
+
+test('truth CSV: category-name ticks become lanes 1, 2, … in the listed order', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'truth-')), 'named.csv');
+    writeFileSync(path, '# x ticks: early, late\n# y ticks: 0, 50, 100\n# x scale: linear, with jitter\n# y scale: linear\n'
+        + 'group,speed\nlate,37.5\nearly,31.4\n');
+    const truth = readTruthCsv(path);
+    assert.deepEqual(truth.xTicks, [1, 2]);
+    assert.deepEqual(truth.yTicks, [0, 50, 100]);
+    assert.deepEqual(truth.rows.map(r => [r.x, r.y]), [[2, 37.5], [1, 31.4]]);
+    assert.equal(truth.lanes, true);
+    assert.equal(truth.xScale.jitter, true);
+    writeFileSync(path, '# x ticks: early, late\n# y ticks: 0, 100\ngroup,speed\nmiddle,3\n');
+    assert.throws(() => readTruthCsv(path), /"middle" isn't one of the tick names/);
 });

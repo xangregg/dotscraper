@@ -34,7 +34,7 @@ styles.css
 src/core/               pure algorithms: image.js (hash, pixel access), render.js (forward model), style.js (dot
                         style), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
-                        ticks, labels, scales), jpeg.js (chroma restoration for JPEGs), unmix.js (separating
+                        ticks, labels, scales), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale), outline.js (outlined dots whose fills vary,
                         fitted by their rings in drawing order), families.js (all of the
@@ -76,7 +76,7 @@ test/*.test.js          node:test + node:assert/strict
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose]` runs style, mask and
   fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
-  sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. Record results in PLAN.md.
 
 ## Conventions

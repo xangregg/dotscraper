@@ -1,7 +1,8 @@
 // Benchmark the extraction (PLAN.md §2.6): synthetic presets over several seeds, every local test image with
 // ground truth in testgraphs/truth/<name>.json ({ "dots": [{ "x", "y" }, …] } in px), and every PNG and JPEG of a
 // truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/), and every test image with a
-// CSV of its own (testgraphs/<name>.csv, mapped through the detected ticks). Prints precision, recall,
+// CSV of its own (testgraphs/<name>.csv and bench-nature/<name>.csv, mapped through the detected ticks; lane data
+// scored by lane, "(J)" after a name when JPEG noise turned JPEG mode on). Prints precision, recall,
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
 // Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose]
@@ -16,7 +17,7 @@ import { estimateFamilies } from '../src/core/families.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
-import { restoreChroma } from '../src/core/jpeg.js';
+import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { dotFamilies } from '../src/core/outline.js';
 import { detectAxes, plotBounds } from '../src/core/axes.js';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
@@ -24,6 +25,8 @@ import { readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_DIR = join(ROOT, 'testgraphs', 'truth');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
+// directories of images with a CSV each (data units, ticks in the header), mapped through the detected ticks
+const CSV_SETS = ['testgraphs', 'bench-nature'];
 const MATCH_TOL_RADII = 0.5;
 // Jittered truth (a test image's CSV with "with jitter"): the truth is each dot's cell, and a dot matches a cell
 // within this box. Measured on pathogen: x up to about ±1 year (12.2 px; dots reach 0.83 year left of the first
@@ -73,14 +76,22 @@ function fitEstimate(image, est, bounds) {
  * own images), each fitted with what lies beyond the axes masked.
  */
 export function extractAll(image, jpeg = false) {
+    const source = image;
     if (jpeg)
         image = restoreChroma(image);
-    const bounds = plotBounds(detectAxes(image));
-    const { estimates } = estimateFamilies(image, { jpeg });
-    const missing = estimates.find(e => !e.style);
+    let { estimates } = estimateFamilies(image, { jpeg });
+    // as the app does: a PNG with JPEG noise in which no family shows with exact colors is analyzed as a JPEG
+    let missing = estimates.find(e => !e.style);
+    const jpegAuto = !jpeg && !!missing && jpegNoise(source).likely;
+    if (jpegAuto) {
+        image = restoreChroma(source);
+        ({ estimates } = estimateFamilies(image, { jpeg: true }));
+        missing = estimates.find(e => !e.style);
+    }
     if (missing)
         throw new Error(missing.notes.join(' '));
-    return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds)));
+    const bounds = plotBounds(detectAxes(image));
+    return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds))).map(r => ({ ...r, jpegAuto }));
 }
 
 // Outlined dots of a few fill colors are fitted as one family of rings; each dot's family comes from its fill
@@ -307,19 +318,21 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         }
     }
     // test images with a CSV of their own (data units, ticks in the header)
-    const testDir = join(ROOT, 'testgraphs');
-    if (existsSync(testDir) && !opts.preset && (!opts.set || opts.set === 'testgraphs')) {
+    for (const set of CSV_SETS) {
+        const testDir = join(ROOT, set);
+        if (!existsSync(testDir) || opts.preset || (opts.set && opts.set !== set))
+            continue;
         for (const file of readdirSync(testDir).filter(f => f.endsWith('.csv')).sort()) {
             const name = basename(file, '.csv');
             const img = ['.png', '.jpg', '.jpeg'].map(e => join(testDir, name + e)).find(existsSync);
-            if (!img || (opts.only && !`testgraphs/${name}`.includes(opts.only)))
+            if (!img || (opts.only && !`${set}/${name}`.includes(opts.only)))
                 continue;
             const jpeg = /\.jpe?g$/i.test(img);
             const image = readImage(img);
             const t0 = Date.now();
             const px = truthPixelsByTicks(readTruthCsv(join(testDir, file)), detectAxes(jpeg ? restoreChroma(image) : image));
             if (px.error) {
-                console.log(`testgraphs/${name}: ${px.error}`);
+                console.log(`${set}/${name}: ${px.error}`);
                 continue;
             }
             let results;
@@ -327,11 +340,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 results = extractAll(image, jpeg);
             }
             catch (e) {
-                console.log(`testgraphs/${name}: ${e.message}`);
+                console.log(`${set}/${name}: ${e.message}`);
                 continue;
             }
-            const label = `testgraphs/${name}`.slice(0, 30);
-            rows.push(px.jitter ? jitterRow(label, px.dots, results, Date.now() - t0) : groupRow(label, px.dots, results, Date.now() - t0));
+            const mark = results[0]?.jpegAuto ? ' (J)' : '';
+            const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
+            const ms = Date.now() - t0;
+            rows.push(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
+                : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms));
         }
     }
     if (existsSync(TRUTH_DIR) && !opts.preset && !opts.set) {

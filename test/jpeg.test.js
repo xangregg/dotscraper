@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { restoreChroma } from '../src/core/jpeg.js';
+import { readdirSync } from 'node:fs';
+import jpegJs from 'jpeg-js';
+import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
+import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
 import { extractAll, groupRow } from '../tools/bench.mjs';
@@ -78,4 +81,37 @@ test('regression: bench2 group-smoother.jpg reads its red family as translucent 
     const r = groupRow('group-smoother.jpg', truthPixels(readTruthCsv(BENCH2 + 'data.csv')).dots, results, 0);
     assert.ok(r.precision >= 0.98, `precision ${r.precision}`);
     assert.ok(r.recall >= 0.95, `recall ${r.recall}`);
+});
+
+const JPEG_QUALITY = 85; // a typical web figure's
+
+test('jpegNoise: a clean render has none; the same graph through JPEG has it', () => {
+    const { image } = synthGraph(SYNTH_PRESETS.sparse(1));
+    const clean = jpegNoise(image);
+    assert.equal(clean.fraction, 0);
+    assert.equal(clean.likely, false);
+    const enc = jpegJs.encode({ width: image.width, height: image.height, data: Buffer.from(image.data) }, JPEG_QUALITY);
+    const dec = jpegJs.decode(enc.data, { useTArray: true, formatAsRGBA: true });
+    const lossy = jpegNoise({ width: dec.width, height: dec.height, data: new Uint8ClampedArray(dec.data) });
+    assert.ok(lossy.likely && lossy.fraction > 0.2, `fraction ${lossy.fraction}`);
+});
+
+test('jpegNoise: the bench renders have none and their JPEGs have it', { skip: !existsSync(BENCH) && 'bench1 absent' }, () => {
+    for (const f of readdirSync(BENCH).filter(f => /\.(png|jpg)$/.test(f))) {
+        const r = jpegNoise(readImage(BENCH + f));
+        assert.equal(r.likely, f.endsWith('.jpg'), `${f}: ${(100 * r.fraction).toFixed(3)}%`);
+    }
+});
+
+const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
+const PRIMATES1 = 'primates1-10.1038-s41586-026-11005-5.png';
+
+test('regression: a PNG made from a JPEG is analyzed as a JPEG when no family shows with exact colors', { skip: !existsSync(NATURE + PRIMATES1) && 'bench-nature absent' }, () => {
+    // before: "No dot family found" (the blue dots' edges leave the white–blue line, so no isolated dot passed)
+    const results = extractAll(readImage(NATURE + PRIMATES1), false);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].jpegAuto, true);
+    assert.ok(Math.abs(results[0].fit.radius - 13) < 1, `radius ${results[0].fit.radius}`);
+    const n = results[0].fit.dots.length;
+    assert.ok(n >= 26 && n <= 28, `${n} dots`); // 27, every dot in the image (checked on an overlay)
 });

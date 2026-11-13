@@ -247,6 +247,14 @@ as poorly determined rather than silently placed or dropped.
 6. **Drawing order** for several translucent families (economist red over blue): by family, estimated from
    overlaps of different colors, or per dot?
 7. **Size-encoded dots** (bubble charts): out of scope for now; revisit if a test image needs it.
+9. **Non-dot mark shapes** (triangles, squares, plus, ×, diamonds): future. The forward model renders discs; a
+   shape would be a family attribute with its own coverage function (and orientation, for ×), estimated from
+   isolated marks like the radius is now.
+10. **Rings as a family attribute.** The ring readers decide globally (outline.js: one fill plane, or each pixel's
+   darkness against its local fill) whether the image is outlined dots, before any family is known. Real figures
+   mix them (hair2–3: black outlines around pink and gray fills, a gray fill putting black in the fill plane, and
+   outlines as dark as text, which the ink mask removes). Rethink: each family gets its fill and its ring (color,
+   width, opacity), measured from its own isolated dots, so outlined and plain families can share an image.
 8. ~~License.~~ **Decided: 0BSD**, like lafspline.
 
 ## 6. What to borrow from the sibling projects
@@ -1210,6 +1218,7 @@ No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
 - [x] Layout and editing review (2026-11-12, below).
 - [ ] About panel, CSV/JSON export, copy to clipboard, URL state, dark theme.
 - [ ] Optional OCR of tick labels (open question 2).
+- [x] Move dot, Clear all, Copy table and Save CSV (2026-11-13, below).
 - [ ] GitHub Pages workflow and live-site check.
 
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
@@ -1237,4 +1246,53 @@ No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
 Not done: an automated test of the page's edit flow (checked by hand in the Browser pane with clicks: remove,
 add, add on top of another dot, ⌘Z, an outlined family's add); fit speed in the app, which a hidden Browser
 pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
+
+**Manual truth editing and bench-nature** (2026-11-13).
+
+- **Move dot** (M): click a dot of the selected family, then the arrow keys move it 1 px, or 0.1 px with Shift. It
+  isn't refit, which would pull it back; its fit numbers (standard errors, visibility, flags) are dropped and it is
+  marked moved. A run of nudges to one dot is one undo step. **Clear all** removes every dot, undoably.
+- Copy CSV became **Copy table** (tab-separated, as before) beside **Save CSV** (RFC 4180, a file); missing data
+  values are empty cells.
+- `bench-nature/` (git-ignored): Nature figures, DOI in each file name, CSV truth in data units. Headers added
+  (ticks, scales, source); tick lists include unlabeled minor ticks, which detectAxes counts (protrusion1–3).
+  Category-name ticks (escape2: early, late) now become lanes 1, 2, … in truth-csv.mjs. Not paired yet: hair1,
+  hair2 and protrusion3 have no x tick marks (hair2's six "ticks" are dots resting on the axis), so their lanes
+  need a plot area or lane centers. The bench reads the set (`--set bench-nature`, below).
+- **No dot family** on 8 of 19 images, all PNGs. Most are JPEGs in their history (screenshots of web figures): the
+  edges' colors leave the line between dot and background (primates1's isolated dot: 207, 233, 243 then
+  128, 182, 213 between white and 33, 118, 183), so no edge passes the opaque test (0 isolated dots, 1 strong
+  Hough center). With the JPEG-compressed box checked, autocor1, kite1 (both colors), primates1 and hair1 are
+  found. Still none or wrong: fanc1 (a dozen colors of 1–4 dots each, under the family thresholds), hair2 and hair3
+  (black outlines on pink and gray fills; JPEG mode finds hair3's light gray instead, open question 10), kite2
+  (translucent, no isolated dot for a radius).
+- **JPEG history detected** (`jpegNoise` in jpeg.js). Tried first: how far restoreChroma moves the chroma at luma
+  edges. It doesn't separate: clean PNGs with outlines score high (three colors meet at a ring: bench1
+  solid-graystroke p90 37.7 units) and JPEGs of gray dots score 0 (no chroma to bleed). Kept: of the background
+  pixels 3–6 px from any mark, the share that isn't exactly the background color. A render leaves them exact; JPEG
+  ringing reaches across its 8 px blocks. Over 98 images: the bench renders 0%, the testgraphs PNGs at most 0.013%
+  (dog-ages), the bench JPEGs 19–51%, the Nature PNGs 4.8–51%, and four testgraphs PNGs 27–37% (pathogen,
+  beeswarm-boxplot, fibers-distance, violin-beeswarm). Threshold 1%. Noisy synth.js presets read 29–40%: noise of
+  any kind looks the same, so the app calls it "JPEG-like".
+- **When it acts:** only when the exact analysis finds no family. Always on would cost: pathogen in JPEG mode found
+  867 dots for 583 (precision 0.972 → 0.637, recall 0.780 → 0.947, 3.7× slower), restored chroma pulling its fills
+  off their plane beside the rings. The app measures the noise on loading, shows it under Image ("Noise near
+  marks"), and if no family shows, turns JPEG mode on and says so in the status and the family notes; the box stays
+  the user's. The bench's extractAll does the same and marks the row "(J)". Every existing bench row is unchanged
+  (synthetic, bench1–3, testgraphs: diffed against HEAD without times).
+- **bench-nature in the bench:** the CSV sets are testgraphs and bench-nature; lane data paired through ticks is
+  scored by lane (laneRow; truthPixelsByTicks now returns lane centers). Baseline:
+
+| case | truth | found | precision | recall | rmse px | note |
+|---|---|---|---|---|---|---|
+| autocor1 (J) | 804 | 675 | 0.948 | 0.796 | 0.762 | no family before |
+| escape1 | 38 | 33 | 1.000 | 0.868 | 0.121 | lanes |
+| escape2 | 145 | 43 | 1.000 | 0.297 | 0.486 | lanes; dense translucent gray |
+| fanc2 | 52 | 37 | 1.000 | 0.712 | 0.148 | many ties at y = 0 |
+| hair3 (J) | 34 | 25 | 1.000 | 0.735 | 0.427 | lanes; the light-gray fills only, scored by y in the lane |
+| tumour1 | 44 | 13 | 0.231 | 0.068 | 2.501 | white fills, black outlines: the wrong family |
+
+  Not scored: hair1, hair2, protrusion3 (no x tick marks to pair the lanes with), protrusion1–2 (a translucent
+  family with no isolated dot: "the dot radius is unknown"). primates1 (no CSV) finds its 27 dots in the app,
+  every dot in the image (regression test in jpeg.test.js).
 

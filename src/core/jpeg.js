@@ -12,6 +12,15 @@
 const GUIDE_RADIUS = 4; // px: window half-width; covers a dot's edge and some background at r 5–13
 const GUIDE_EPS = 4; // (0–255 units)²: regularization; luma variance below this counts as flat
 
+// JPEG noise (jpegNoise): background pixels a few px from any mark that aren't exactly the background color
+const NOISE_NEAR = 12; // 0–255 units, max channel: a pixel this close to the background is background-ish …
+const NOISE_BAND = [3, 6]; // px from the nearest mark: … and examined in this band, beyond any antialiased rim
+const NOISE_MIN_FRACTION = 0.01; // of the band: JPEG noise (clean renders at most 0.013%, JPEGs 19–51%, PNGs from them 4.8–51%)
+const NOISE_MIN_PIXELS = 1000; // band pixels needed to judge
+
+import { backgroundColor } from './style.js';
+import { distanceTransform } from './layers.js';
+
 // BT.601 full range, as JPEG (JFIF) uses
 const KR = 0.299;
 const KG = 0.587;
@@ -123,3 +132,42 @@ export function restoreChroma(image) {
     }
     return { width, height, data: out };
 }
+
+/**
+ * Whether an image carries JPEG noise, whatever its file type: a PNG screenshot of a web figure is often a JPEG
+ * underneath, and its marks fail the exact-color tests (bench-nature primates1: an isolated dot's edge runs 207, 233,
+ * 243 then 128, 182, 213, off the line from white to its 33, 118, 183, so no dot was found). A rendered graph is
+ * piecewise constant: a few px from any mark, the background is exactly the background color (the bench
+ * renders: none of those pixels differ; the testgraphs: at most 0.013%). JPEG's ringing reaches across its 8 px
+ * blocks, so there many are slightly off (the bench JPEGs 19–51%; the Nature PNGs 4.8–51%). Other noise reads the
+ * same (synth.js presets with noise: 29–40%). O(pixels).
+ *
+ * @param {import('./image.js').RgbaImage} image  sRGB 0–255
+ * @returns {{fraction: number, pixels: number, likely: boolean}}  fraction: of the band pixels that are slightly
+ *   off the background; pixels: the band's size
+ */
+export function jpegNoise(image) {
+    const { width, height, data } = image;
+    const B = backgroundColor(image).color;
+    const n = width * height;
+    const mark = new Uint8Array(n);
+    const off = new Uint8Array(n);
+    for (let p = 0; p < n; p++) {
+        const d = Math.max(Math.abs(data[4 * p] - B[0]), Math.abs(data[4 * p + 1] - B[1]), Math.abs(data[4 * p + 2] - B[2]));
+        mark[p] = d > NOISE_NEAR ? 1 : 0;
+        off[p] = d > 0 ? 1 : 0;
+    }
+    const d2 = distanceTransform(mark, width, height);
+    const [lo, hi] = NOISE_BAND.map(v => v * v);
+    let pixels = 0;
+    let noisy = 0;
+    for (let p = 0; p < n; p++) {
+        if (d2[p] < lo || d2[p] > hi)
+            continue;
+        pixels++;
+        noisy += off[p];
+    }
+    const fraction = pixels ? noisy / pixels : 0;
+    return { fraction, pixels, likely: pixels >= NOISE_MIN_PIXELS && fraction >= NOISE_MIN_FRACTION };
+}
+

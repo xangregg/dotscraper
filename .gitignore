@@ -7,3 +7,5 @@ CLAUDE.local.md
 # testgraphs/ but its README, which keeps the directory in every clone
 testgraphs/*
 !testgraphs/README.md
+# real-world test set from Nature figures (third-party, not cleared for redistribution): local only for now
+bench-nature/
