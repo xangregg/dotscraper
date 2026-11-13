@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { pixelCoverage } from '../src/core/render.js';
-import { createOutlineModel, fillPlane, findOutlines, fillFamilies } from '../src/core/outline.js';
+import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness } from '../src/core/outline.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
 import { createRng } from '../src/core/rng.js';
@@ -265,5 +265,46 @@ for (const [set, name, precision, recall] of [
         // the dots whose fill shows are all in the right group
         const sure = groupRow(name, truth, results.map(q => ({ ...q, fit: { ...q.fit, dots: q.fit.dots.filter(d => d.familySure) } })), 0);
         assert.equal(sure.precision, 1, `sure dots' precision ${sure.precision}`);
+    });
+}
+
+test('relativeDarkness: fills and the edge between them read 0, a ring its RGB distance from its own fill', () => {
+    // bench2 gradient-opaque-stroke's darkest and palest fills, each with a 1 px line of its own ring color
+    const DARK = [189, 90, 78];
+    const DARK_RING = [120, 53, 45];
+    const PALE = [242, 196, 114];
+    const PALE_RING = [232, 157, 22];
+    const width = 40;
+    const height = 20;
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const c = x === 8 ? DARK_RING : x === 30 ? PALE_RING : x < 20 ? DARK : PALE;
+            data.set([...c, 255], 4 * (y * width + x));
+        }
+    }
+    const P = relativeDarkness({ width, height, data });
+    const at = x => P[10 * width + x];
+    const WHITE_LENGTH = 255 * Math.sqrt(3);
+    for (const x of [3, 14, 19, 20, 25, 36])
+        assert.ok(at(x) < 1e-6, `fill or edge at x ${x}: ${at(x)}`);
+    assert.ok(Math.abs(at(8) - Math.hypot(...DARK.map((v, ch) => v - DARK_RING[ch])) / WHITE_LENGTH) < 1e-6, `dark ring ${at(8)}`);
+    assert.ok(Math.abs(at(30) - Math.hypot(...PALE.map((v, ch) => v - PALE_RING[ch])) / WHITE_LENGTH) < 1e-6, `pale ring ${at(30)}`);
+});
+
+for (const [set, lo, hi, precision, recall, rmse] of [['bench1', 97, 101, 0.99, 0.97, 0.1], ['bench2', 165, 182, 0.97, 0.8, 0.2]]) {
+    test(`regression: outlines in each fill's own darker shade, on a scale (${set} gradient-opaque-stroke)`, { skip: !existsSync(benchFile(set, 'gradient-opaque-stroke.png')) && `${set} absent` }, () => {
+        // before: the color-scale path, every dot pixel covered and the outlines unused: bench1 100 found, RMSE
+        // 0.478 px; bench2 177, precision 0.955, RMSE 0.885, 18 misses that show and 8 dots 6–8 px off in its stacks
+        const image = readImage(benchFile(set, 'gradient-opaque-stroke.png'));
+        const est = estimateFamilies(image).estimates[0];
+        assert.equal(est.scale, 'outline');
+        const truth = truthPixels(readTruthCsv(benchFile(set, 'data.csv'))).dots;
+        const fit = extractAll(image).flatMap(r => r.fit.dots);
+        const m = matchDots(truth, fit, est.style.radius / 2);
+        assert.ok(fit.length >= lo && fit.length <= hi, `found ${fit.length}`);
+        assert.ok(m.precision >= precision, `precision ${m.precision}`);
+        assert.ok(m.recall >= recall, `recall ${m.recall}`);
+        assert.ok(m.rmse <= rmse, `rmse ${m.rmse}`);
     });
 }

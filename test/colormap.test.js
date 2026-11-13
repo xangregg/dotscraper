@@ -165,12 +165,9 @@ test('regression: bench2 gradient-dots, with the scale’s darkest dot alone in 
 const OPAQUE_ROWS = [
     // before: 114 found, recall 0.82, as one opaque family of the most common fill
     ['bench1', 'gradient-opaque.png', 99, 102, 0.99],
-    // before: 46, recall 0.33
-    ['bench1', 'gradient-opaque-stroke.png', 99, 102, 0.98],
     // before: "The dot radius is unknown"; bench2 solid-opaque, the same dots in one color: 196, 0.926
     ['bench2', 'gradient-opaque.png', 188, 200, 0.91],
-    // before: "No dot family found"; solid-opaque-stroke: 179, 0.848
-    ['bench2', 'gradient-opaque-stroke.png', 172, 184, 0.81],
+    // the stroked renderings are fitted by their rings: outline.test.js
 ];
 
 for (const [set, name, lo, hi, recall] of OPAQUE_ROWS) {

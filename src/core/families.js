@@ -8,7 +8,7 @@ import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCE
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
-import { findOutlines, fillFamilies } from './outline.js';
+import { findOutlines, findHueOutlines, fillFamilies } from './outline.js';
 
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
@@ -115,10 +115,12 @@ function colormapEstimate(image, jpeg) {
  */
 function outlineEstimate(image) {
     const background = backgroundColor(image);
-    const B = background.color;
-    const found = findOutlines(image, B);
-    if (!found)
-        return null;
+    const found = findOutlines(image, background.color);
+    return found && outlinedEstimate(image, background, found);
+}
+
+// the estimate from outline.findOutlines or findHueOutlines
+function outlinedEstimate(image, background, found) {
     const { width, height } = image;
     const { P, under, D, ring } = found;
     const n = width * height;
@@ -152,19 +154,22 @@ function outlineEstimate(image) {
     };
     const line = { B: [255, 255, 255], u: [1, 1, 1].map(v => v / Math.sqrt(3)) };
     // discrete fill colors (two groups under gray rings), for dotFamilies after the fit; null for a scale or one
-    const fills = found.plane.oneColor ? null : fillFamilies(image);
+    const oneColor = found.plane?.oneColor ?? false;
+    const fills = !found.plane || oneColor ? null : fillFamilies(image);
     const notes = [
-        fills
+        !found.plane
+            ? 'Outlined dots whose outlines are a darker shade of their own fills, colored by a scale: each pixel is read as how much darker it is than the fill around it, so the fills drop out, and the dots are fitted by their rings, in drawing order.'
+            : fills
             ? `Outlined dots of ${fills.length} fill colors (${fills.map(c => c.map(Math.round).join(', ')).join('; ')}): the fills are projected out, the dots are fitted by their rings in drawing order, and each dot's color is read from its fill where it shows.`
             : found.plane.oneColor
             ? `Outlined dots of one fill color (${found.plane.pixels} fill pixels): the fill is projected out and the dots are fitted by their rings, in drawing order.`
             : `Outlined dots whose fills vary (${found.plane.pixels} fill pixels within ${found.plane.rms.toFixed(1)} units of one plane): the fill colors are projected out and the dots are fitted by their rings, in drawing order.`,
-        `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, ${Math.round(100 * ring.alpha)}% of the way to black; fills ${Math.round(100 * found.fillAlpha)}% opaque${found.fillAlphaMeasured ? ` (from ${found.pairs} overlapping pairs)` : ' (assumed: too few overlapping pairs to measure)'}.`,
+        `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, ${found.plane ? `${Math.round(100 * ring.alpha)}% of the way to black` : `darker than its fill by ${Math.round(100 * ring.alpha)}% of white's distance from black (the median of the isolated rings)`}; fills ${Math.round(100 * found.fillAlpha)}% opaque${found.fillAlphaMeasured ? ` (from ${found.pairs} overlapping pairs)` : ' (assumed: too few overlapping pairs to measure)'}.`,
     ];
     return {
         background, family: 0, flat: null, image: { width, height, data },
         // one candidate, so the app fits one family
-        candidates: [{ kind: 'outline', radius: ring.radius, levels: [], fit: { alpha: ring.alpha }, oneColor: found.plane.oneColor, fillColors: fills?.length ?? 0 }],
+        candidates: [{ kind: 'outline', radius: ring.radius, levels: [], fit: { alpha: ring.alpha }, oneColor, fillColors: fills?.length ?? 0 }],
         familyMeasure: { kind: 'outline', line, levels: [] },
         style, D, fitT, base, outlineMask: mask,
         fillFamilies: fills,
@@ -189,6 +194,13 @@ export function estimateFamilies(image, opts = {}) {
     if (outlined)
         return { image, layers: null, estimates: [outlined] };
     const scaled = colormapEstimate(image, jpeg);
+    if (scaled?.scale === 'opaque') {
+        // opaque fills on a scale whose outlines are a darker shade of each fill: the rings place the dots where
+        // the union of discs can't (bench2 gradient-opaque-stroke's dense stacks)
+        const hue = findHueOutlines(image);
+        if (hue)
+            return { image, layers: null, estimates: [outlinedEstimate(image, backgroundColor(image), hue)] };
+    }
     if (scaled)
         return { image, layers: null, estimates: [scaled] };
     let first = estimateStyle(image, { jpeg });

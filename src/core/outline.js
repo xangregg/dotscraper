@@ -9,7 +9,9 @@
 // gridlines under it. So in P the picture is rings and their occlusion, in drawing order, and the fill colors drop
 // out. Gridlines, a band's level and thick lines are a per-pixel base under the dots. A scale's colors are a curve,
 // not exactly a plane, so each fill keeps a small value of its own, f (pathogen: P from −0.04 to +0.08 inside
-// isolated fills, against 0.345 for a ring), which the fit sets per dot.
+// isolated fills, against 0.345 for a ring), which the fit sets per dot. Outlines drawn in a darker shade of each
+// dot's own fill (findHueOutlines) are off any plane by an amount that depends on the fill, so there P is read
+// against the local fill instead.
 
 import { pixelCoverage, gaussianKernel, blurRect, createDotModel, solidImage } from './render.js';
 import { ringCenters } from './fit.js';
@@ -41,6 +43,10 @@ const PLANE_MAX_P_NOISE = 0.03; // P units
 // rings. Where P_bg is above MASK_BG (the black line, text) nothing can be read.
 const OPEN_DIRECTIONS = 12;
 const OPEN_EXTRA = 2; // px beyond the ring's diameter
+// relativeDarkness: a closing's segment, longer than a ring and its antialiasing are across (bench2
+// gradient-opaque-stroke: 1.5 px rings, 3 px with their edges), short enough to keep narrow slivers of a darker fill
+const CLOSE_LEN = 5; // px
+const WHITE_LENGTH = 255 * Math.sqrt(3); // 0–255 units, white's distance from black
 const MASK_BG = 0.5;
 // Ink nearly black (text, ticks) is masked with what lies within MASK_INK_REACH of it: thin strokes don't survive
 // the openings, and letters like "o" and "e" look like rings (bench1 solid-graystroke: 81 phantom dots piled on
@@ -858,11 +864,67 @@ const PAIR_MIN_OUTSIDE = 40;
  *            fillAlpha: number, fillAlphaMeasured: boolean, pairs: number, isolated: object[]}|null}
  */
 export function findOutlines(image, B) {
-    const { width, height } = image;
     const plane = fillPlane(image, B);
     if (!plane)
         return null;
-    const P = planeValue(image, B, plane.n);
+    const found = outlinesInP(planeValue(image, B, plane.n), image.width, image.height);
+    return found && { plane, ...found };
+}
+
+/**
+ * Outlined dots whose outlines are a darker shade of each dot's own fill (JMP's outlined markers on a color scale:
+ * fill 238, 218, 145 → ring 229, 199, 89; 189, 90, 78 → 146, 68, 58), if the image has them. Their fills needn't
+ * lie in a plane, and a ring's distance off any plane depends on its fill, so P is read against the local fill
+ * instead (relativeDarkness). Every fill, and every edge between two fills, is then 0, and a ring about 0.21. Null when no consistent ring shows.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @returns {{plane: null, P: Float32Array, under: Float32Array, A: Float32Array, ring: object,
+ *            fillAlpha: number, fillAlphaMeasured: boolean, pairs: number, isolated: object[]}|null}
+ */
+export function findHueOutlines(image) {
+    const found = outlinesInP(relativeDarkness(image), image.width, image.height);
+    return found && { plane: null, ...found };
+}
+
+/**
+ * How much darker each pixel is than the fill around it: |F − X| over |white|, the RGB distance from the fill, F per
+ * channel the largest of linear closings in OPEN_DIRECTIONS directions with a CLOSE_LEN segment. A closing fills
+ * dark structures narrower than its segment (rings) and keeps edges between areas, whatever their colors. On bench1–2
+ * gradient-opaque-stroke's isolated dots a ring is 85–101 units from its fill, from dark red to pale yellow, so the
+ * distance reads every ring alike, about 0.21; relative to the fill (|F − X| / |F|) it read 0.27–0.61, and the
+ * darkest fills' rings, stronger than the fitted αk, drew second dots stacked on the first.
+ * O(pixels · OPEN_DIRECTIONS · CLOSE_LEN).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @returns {Float32Array}  0 for fills, 1 for black on white
+ */
+export function relativeDarkness(image) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const F = [0, 1, 2].map(ch => {
+        // closing(X) = −opening(−X)
+        const neg = new Float32Array(n);
+        for (let p = 0; p < n; p++)
+            neg[p] = -data[4 * p + ch];
+        const fill = new Float32Array(n).fill(-Infinity);
+        for (let k = 0; k < OPEN_DIRECTIONS; k++) {
+            const o = lineOpening(neg, width, height, Math.PI * k / OPEN_DIRECTIONS, CLOSE_LEN);
+            for (let p = 0; p < n; p++)
+                fill[p] = Math.max(fill[p], -o[p]);
+        }
+        return fill;
+    });
+    const out = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+        const d = Math.hypot(...[0, 1, 2].map(ch => Math.max(0, F[ch][p] - data[4 * p + ch])));
+        out[p] = Math.min(1, d / WHITE_LENGTH);
+    }
+    return out;
+}
+
+// Rings from P (fills near 0, rings toward 1): the isolated rings, what is under the rings, ring ink A, the ring's
+// style and αf
+function outlinesInP(P, width, height) {
     const rings = isolatedRings(P, width, height);
     if (rings.length < ISO_MIN)
         return null;
@@ -895,5 +957,5 @@ export function findOutlines(image, B) {
     }
     const cands = ringCenters(D, weight, width, height, ring.radius, ring.inner, PAIR_MIN_ARC);
     const fa = measureFillAlpha(A, width, height, cands, ring);
-    return { plane, P, under, A, D, ring, fillAlpha: fa.fillAlpha, fillAlphaMeasured: fa.measured, pairs: fa.pairs, isolated: used };
+    return { P, under, A, D, ring, fillAlpha: fa.fillAlpha, fillAlphaMeasured: fa.measured, pairs: fa.pairs, isolated: used };
 }

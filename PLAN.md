@@ -1152,6 +1152,56 @@ flagged 57 → 21. Every other row is unchanged but for small shifts in JPEG RMS
 large-dots.jpg 14 → 2, smoother.jpg 27 → 15). In the page: 204 dots (89 + 115; the browser decodes JPEGs a little
 differently from jpeg-js), 24 flagged, no console errors.
 
+
+**The stroked rows' visible misses, looked at** (2026-11-12). The table above overcounts them: of a coincident pair
+(5 exact duplicates per image, more within 1 px), the dot on top is found and the matcher may give it to the hidden
+one, so the top one reads as a visible miss. Leaving out misses with a found dot within 1 px:
+
+- solid-graystroke: 1.
+- solid-opaque-stroke: 7. Three are near pairs 2.7–4.4 px apart (the lower dot a crescent of 10–16% of its ring);
+  four are a stack near (175, 330), where adding three of them at their true places raises the loss (their
+  neighbors are fitted wrong), and the fourth was tried in round 1, failed, and not proposed again.
+- gradient-opaque-stroke: 18, on the color-scale path, which counts every dot pixel as covered and ignores the
+  outlines, so a dense stack's centers are poorly determined; 8 extras sit 6–8 px from truth in the same stack.
+
+Added to the finished solid-opaque-stroke fit at their true places, four of its misses lower the loss by 3 300–17 500,
+far above λ = 510: the births never proposed them, since ring births look only at missing ring ink (0.16 of a ring
+there, at RING_MIN_ARC 0.15). Tried: adding to the birth score the mean negative residual inside the dot (rings the
+model draws where a missing opaque fill hides them). It found three of those four, but lost three others, mostly the
+partner of a near pair: solid-opaque-stroke 172 → 176 (RMSE 0.284 → 0.426 px), solid-graystroke 189 → 187, the group
+graystrokes +1 and +2. Not kept.
+
+gradient-opaque-stroke's outlines are a darker, more saturated shade of each dot's fill (fill 238, 218, 145 → ring
+224, 188, 57; 189, 90, 78 → 120, 53, 45). Its fills lie 4.2 units rms off their best plane through white, and the
+rings' distance off that plane ranges from 2 (yellow fills) to 55 (dark red), so the fill-plane projection can't
+separate them.
+
+**Outlines in each fill's own shade, fitted by their rings** (2026-11-12): `outline.findHueOutlines`. P is read
+against the local fill instead of a plane: the RGB distance of a pixel from F, F per channel the largest of linear
+closings in 12 directions with a 5 px segment (`relativeDarkness`), over white's length. A closing fills thin dark
+structures and keeps edges between areas, so every fill and every edge between fills reads 0. The rest is the ring
+path as it was (isolated rings, ring style, αf from pairs, the ordered fit). Tried first, on the isolated rings:
+
+| P | ring, dark red to pale yellow |
+|---|---|
+| 1 − S / S_fill, S = R + G + B | 0.22–0.39 (0.61 on the darkest fill) |
+| \|F − X\| / \|F\| | 0.27–0.38 (0.61) |
+| \|F − X\| / \|white\| (kept) | 0.19–0.23 (85–101 units) |
+
+The first two read pale fills' rings weakly and dark fills' strongly; a dark fill's ring, stronger than the one
+fitted αk, drew a second dot stacked on the first. It is used only when the color-scale path finds opaque fills:
+it also finds the rings of stroked-dots (translucent, already 1.000), and nothing on gradient-opaque, solid-opaque,
+gradient-dots-stroke or medium-dots.
+
+| image | before (color scale) | now (rings) |
+|---|---|---|
+| bench1 gradient-opaque-stroke | 100, precision 0.990, recall 0.990, RMSE 0.478 px, 1.3 s | 98, 1.000, 0.980, 0.062 px, 5.2 s |
+| bench2 gradient-opaque-stroke | 177, 0.955, 0.828, 0.885 px, 3.5 s | 171, 0.982, 0.824, 0.126 px, 9.9 s |
+
+bench2's misses that show (a found dot more than 1 px away, at least 10% of the ring on top) went from 18 to 9, most
+showing 10–24% of their ring, about where solid-opaque-stroke is (7); its 8 dots 6–8 px off in the stacks are gone.
+No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
+
 **Milestone 4.**
 
 - [ ] Ground truth and benchmark rows for each test image. (bench1–3 have exact truth for their 59 renderings.)
