@@ -719,7 +719,8 @@ function renderFitControls() {
     $('edit-add').disabled = !editable;
     $('edit-remove').disabled = !editable || !familyFit()?.dots.length;
     $('edit-undo').disabled = running || !state.undo.length;
-    $('copy-csv').disabled = !state.fit?.dots.length || running;
+    $('copy-table').disabled = !state.fit?.dots.length || running;
+    $('save-csv').disabled = !state.fit?.dots.length || running;
     $('save-truth').disabled = !state.fit?.dots.length || running;
     $('pick-color').disabled = running || !state.image;
     if (!editable && (state.mode === 'add' || state.mode === 'remove'))
@@ -921,7 +922,9 @@ function editAt(kind, x, y) {
     fitChanged();
 }
 
-function dotsCsv() {
+// The dot table as rows of cells: header first, then one row per dot. Copied as tab-separated text (pastes into
+// spreadsheets as columns) and downloaded as CSV.
+function dotsTable() {
     const s = scales();
     const hasData = s.x?.kind === 'numeric' || s.x?.kind === 'category' || s.y?.kind === 'numeric' || s.y?.kind === 'category';
     // se_noise: standard errors from pixel noise alone; the real error is larger (see the Axes note)
@@ -932,7 +935,7 @@ function dotsCsv() {
     head.push('visible', 'depth', 'flags');
     if (fills)
         head.push('fill');
-    const rows = [head.join('\t')];
+    const rows = [head];
     for (const d of state.fit.dots) {
         const color = colorOf(d.family);
         const fam = `${d.family + 1}${color ? ' ' + hex(color) : ''}`;
@@ -941,14 +944,38 @@ function dotsCsv() {
             const dd = dataAt(d.x, d.y);
             // standard errors in data units: the px error times the local data units per px
             const se = (sePx, res) => (sePx === undefined || res === null ? '' : (sePx * res).toPrecision(2));
-            row.push(formatData(dd.x, dd.resX), formatData(dd.y, dd.resY), se(d.seX, dd.resX), se(d.seY, dd.resY));
+            // a missing value is an empty cell, which spreadsheets read as missing (formatData shows it as a dash)
+            const value = (v, res) => (v === null || v === undefined ? '' : formatData(v, res));
+            row.push(value(dd.x, dd.resX), value(dd.y, dd.resY), se(d.seX, dd.resX), se(d.seY, dd.resY));
         }
-        row.push(d.visible?.toFixed(2) ?? '', d.depth ?? '', d.flags.join(' '));
+        row.push(d.visible?.toFixed(2) ?? '', String(d.depth ?? ''), d.flags.join(' '));
         if (fills)
             row.push(d.fill === undefined ? '' : fillLabel(d));
-        rows.push(row.join('\t'));
+        rows.push(row);
     }
-    return rows.join('\n') + '\n';
+    return rows;
+}
+
+function tableText(rows) {
+    return rows.map(r => r.join('\t')).join('\n') + '\n';
+}
+
+// RFC 4180: quote a cell that holds a comma, quote or line break (category names and dates can), doubling quotes
+function csvText(rows) {
+    const cell = v => (/[",\r\n]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v);
+    return rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';
+}
+
+function download(text, type, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function baseName() {
+    return state.name.replace(/\.[a-z]+$/i, '');
 }
 
 function renderAxesPanel() {
@@ -962,7 +989,7 @@ function renderAxesPanel() {
     const s = scales();
     const note = [];
     if (s.x?.kind === 'numeric' && s.y?.kind === 'numeric')
-        note.push('Data coordinates appear in the readout under the image, the dot hover and the CSV. Dot standard errors count pixel noise only; '
+        note.push('Data coordinates appear in the readout under the image, the dot hover and the exported table. Dot standard errors count pixel noise only; '
             + 'with resampled or antialiased edges the real position error is several times larger (a few tenths of a px), '
             + 'and tick placement adds the scale residual shown above.');
     else
@@ -1003,12 +1030,9 @@ function saveTruth() {
         families: state.fit.families.map(f => ({ family: f.family, color: colorOf(f.family), radius: f.radius })),
         dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2), family: d.family, ...(d.fill === undefined ? {} : { fill: d.fill, fillSure: d.fillSure }) })),
     };
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(truth, null, 1) + '\n'], { type: 'application/json' }));
-    a.download = state.name.replace(/\.[a-z]+$/i, '') + '.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setStatus(`Saved ${state.fit.dots.length} dots as ${a.download}.`);
+    const name = baseName() + '.json';
+    download(JSON.stringify(truth, null, 1) + '\n', 'application/json', name);
+    setStatus(`Saved ${state.fit.dots.length} dots as ${name}.`);
 }
 
 function setJpeg(jpeg) {
@@ -1117,14 +1141,19 @@ function wireControls() {
         state.showDots = e.target.checked;
         refreshMarks();
     });
-    $('copy-csv').addEventListener('click', async () => {
+    $('copy-table').addEventListener('click', async () => {
         try {
-            await navigator.clipboard.writeText(dotsCsv());
-            setStatus(`Copied ${state.fit.dots.length} dots as CSV.`);
+            await navigator.clipboard.writeText(tableText(dotsTable()));
+            setStatus(`Copied ${state.fit.dots.length} dots as a table.`);
         }
         catch (err) {
             setStatus(`Could not copy: ${err.message}`, 'error');
         }
+    });
+    $('save-csv').addEventListener('click', () => {
+        const name = baseName() + '-dots.csv';
+        download(csvText(dotsTable()), 'text/csv', name);
+        setStatus(`Saved ${state.fit.dots.length} dots as ${name}.`);
     });
     $('save-truth').addEventListener('click', saveTruth);
     for (const key of ['radius', 'alpha', 'blur']) {
