@@ -10,6 +10,7 @@ import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 import { detectAxes } from '../src/core/axes.js';
 import { extractAll, jitterRow, groupRow } from '../tools/bench.mjs';
+import { refitNear } from '../src/core/fit.js';
 
 const WHITE = [255, 255, 255];
 const W = 360;
@@ -140,6 +141,26 @@ test('outlined dots whose fills vary are fitted by their rings, in drawing order
     // clusters of 5 hide some rings almost entirely under two or three fills (0.25 or less of their ink shows)
     assert.ok(m.recall >= 0.9, `recall ${m.recall} (${fit.length} found of ${dots.length})`);
     assert.ok(m.precision >= 0.95, `precision ${m.precision}`);
+});
+
+test('regression: refitNear keeps outlined dots in drawing order and puts an added one where it belongs', () => {
+    // before: edits re-added every dot without its z, so all were redrawn in list order, and an added dot went on top
+    const image = outlinedImage(scene());
+    const { est, layers, fit } = extractAll(image)[0];
+    const input = { image: est.image, style: { ...est.style, radius: fit.radius }, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base };
+    const overlapping = d => fit.dots.filter(e => e !== d && Math.hypot(e.x - d.x, e.y - d.y) < 1.5 * fit.radius);
+    // the dot with the most overlapping neighbors, and some drawn above it and some below
+    const gone = fit.dots.filter(d => overlapping(d).some(e => e.z > d.z) && overlapping(d).some(e => e.z < d.z))
+        .sort((a, b) => overlapping(b).length - overlapping(a).length)[0];
+    assert.ok(gone, 'a dot with neighbors above and below');
+    const kept = fit.dots.filter(d => d !== gone);
+    const res = refitNear(input, [...kept.map(d => ({ x: d.x, y: d.y, z: d.z })), { x: gone.x + 0.6, y: gone.y - 0.6, added: true }], gone.x, gone.y);
+    assert.equal(res.dots.length, fit.dots.length);
+    const at = d => res.dots.reduce((b, e) => (Math.hypot(e.x - d.x, e.y - d.y) < Math.hypot(b.x - d.x, b.y - d.y) ? e : b));
+    const back = at(gone);
+    assert.ok(Math.hypot(back.x - gone.x, back.y - gone.y) < 0.3, `added dot at ${back.x}, ${back.y}, fitted ${gone.x}, ${gone.y}`);
+    for (const e of overlapping(gone))
+        assert.equal(Math.sign(at(e).z - back.z), Math.sign(e.z - gone.z), `order against the neighbor at ${e.x}, ${e.y}`);
 });
 
 const GREEN = [106, 255, 107]; // JMP's light green

@@ -12,131 +12,133 @@
 <body>
     <noscript><p class="warning">dotscraper runs in the browser and needs JavaScript.</p></noscript>
     <header>
-        <div class="title">
-            <h1>dotscraper</h1>
-            <p class="subtitle">Dot locations from images of graphs</p>
-        </div>
-        <div class="source" role="group" aria-label="Image source">
-            <label for="test-image">Test image</label>
-            <select id="test-image">
-                <option value="">Choose…</option>
+        <h1 title="Dot locations from images of graphs">dotscraper</h1>
+        <div class="group" role="group" aria-label="Image source">
+            <select id="test-image" aria-label="Test image" title="Local test images">
+                <option value="">Test image…</option>
             </select>
-            <button type="button" id="open-file">Open file…</button>
+            <button type="button" id="open-file" title="Open an image file; you can also paste (⌘V) or drop one on the view">Open…</button>
             <input type="file" id="file-input" accept="image/*" hidden>
-            <span class="hint">or paste (⌘V) or drop an image</span>
+        </div>
+        <div class="group" role="group" aria-label="Find dots">
+            <button type="button" id="fit-run" class="primary" disabled>Find dots</button>
+            <button type="button" id="fit-stop" disabled title="Stop the fit and keep the dots found so far (not assessed)">Stop</button>
+            <progress id="fit-progress" max="1" value="0" hidden></progress>
+            <span id="fit-status" class="status" role="status"></span>
+        </div>
+        <div class="group" role="group" aria-label="Edit dots">
+            <button type="button" id="edit-add" aria-pressed="false" disabled title="Click to add a dot to the selected family; the dots nearby are refit (A; Esc to finish)">+ Add dot</button>
+            <button type="button" id="edit-remove" aria-pressed="false" disabled title="Click a dot of the selected family to remove it; the dots nearby are refit (R; Esc to finish)">− Remove dot</button>
+            <button type="button" id="edit-undo" disabled title="Undo the last edit (⌘Z)">Undo</button>
+        </div>
+        <div class="group" role="group" aria-label="Export">
+            <button type="button" id="copy-csv" disabled title="Copy the dots as tab-separated text: pixel and data coordinates, standard errors, flags">Copy CSV</button>
+            <button type="button" id="save-truth" disabled title="Save the current dots as ground truth JSON (for testgraphs/truth/)">Save truth</button>
         </div>
     </header>
     <main>
         <aside id="panel" aria-label="Details">
-            <section>
-                <h2>Image</h2>
-                <dl id="image-info">
-                    <dt>Source</dt><dd id="info-name">none</dd>
-                    <dt>Size</dt><dd id="info-size">–</dd>
-                    <dt>Pixel hash</dt><dd id="info-hash" title="FNV-1a of the RGBA values, to compare with the Node tools">–</dd>
-                </dl>
-                <label class="check" title="JPEG compression smears colors and adds noise; this loosens the thresholds that assume exact pixel values. Set from the file type; check it for a JPEG that was pasted or saved as PNG."><input type="checkbox" id="jpeg"> JPEG-compressed</label>
-            </section>
-            <section>
-                <h2>Dot style</h2>
+            <details id="sec-families" open>
+                <summary>Dot families</summary>
+                <ul id="family-list" class="family-list" aria-label="Dot families: checked ones are found by Find dots"></ul>
                 <div class="row">
-                    <span id="family-swatch" class="swatch" aria-hidden="true"></span>
-                    <select id="family" aria-label="Dot family"></select>
-                    <button type="button" id="pick-color" aria-pressed="false" title="Click a dot in the image to use its color (Esc cancels)">Pick</button>
+                    <button type="button" id="pick-color" aria-pressed="false" title="Click a dot in the image to add a family of its color (Esc cancels)">+ Add family by color</button>
                 </div>
-                <div id="levels" class="levels" aria-label="Overlap level colors"></div>
-                <dl>
-                    <dt>Full color</dt><dd id="style-c">–</dd>
-                    <dt>Levels</dt><dd id="style-levels">–</dd>
-                    <dt>Fit</dt><dd id="style-fit" title="Geometric model of the levels, 0–255 units">–</dd>
-                    <dt>Isolated</dt><dd id="style-isolated" title="Whole single dots used for the radius and blur">–</dd>
-                    <dt><label for="style-radius">Radius</label></dt><dd><input type="number" id="style-radius" step="0.01" min="0.5"> px</dd>
-                    <dt><label for="style-alpha">Alpha</label></dt><dd><input type="number" id="style-alpha" step="0.001" min="0.01" max="1"></dd>
-                    <dt><label for="style-blur">Blur</label></dt><dd><input type="number" id="style-blur" step="0.01" min="0"> px</dd>
-                </dl>
-                <button type="button" id="style-reset" title="Use the estimated values again">Reset to estimate</button>
-                <div id="style-notes" class="notes" role="status"></div>
-                <figure id="sample" hidden>
-                    <div class="row">
-                        <canvas id="sample-real"></canvas>
-                        <canvas id="sample-model"></canvas>
-                        <canvas id="sample-diff"></canvas>
+                <div id="family-detail">
+                    <h3 id="family-title"></h3>
+                    <div class="levels-row">
+                        <span class="label" title="The color of one dot, and of 2, 3, … dots stacked: translucent dots darken where they overlap. Dashed ones are extrapolated or inferred, not seen.">Overlap levels</span>
+                        <div id="levels" class="levels" aria-label="Overlap level colors"></div>
                     </div>
-                    <figcaption id="sample-caption" class="fine"></figcaption>
-                </figure>
-            </section>
-            <section>
-                <h2>Layers</h2>
-                <div class="overlay-choice" role="radiogroup" aria-label="Show">
-                    <label><input type="radio" name="overlay" value="image" checked> Image</label>
-                    <label><input type="radio" name="overlay" value="count"> Count</label>
-                    <label><input type="radio" name="overlay" value="mask"> Mask</label>
-                    <label><input type="radio" name="overlay" value="classes"> Classes</label>
-                    <label><input type="radio" name="overlay" value="model"> Model</label>
-                    <label><input type="radio" name="overlay" value="residual"> Residual</label>
+                    <dl>
+                        <dt>Full color</dt><dd id="style-c">–</dd>
+                        <dt data-levels>Levels</dt><dd id="style-levels" data-levels>–</dd>
+                        <dt data-levels>Fit</dt><dd id="style-fit" data-levels title="Geometric model of the levels, 0–255 units">–</dd>
+                        <dt>Isolated</dt><dd id="style-isolated" title="Whole single dots used for the radius and blur">–</dd>
+                    </dl>
+                    <div class="params">
+                        <label>Radius <input type="number" id="style-radius" step="0.01" min="0.5"> px</label>
+                        <label>Alpha <input type="number" id="style-alpha" step="0.001" min="0.01" max="1"></label>
+                        <label>Blur <input type="number" id="style-blur" step="0.01" min="0"> px</label>
+                        <button type="button" id="style-reset" title="Use the estimated values again">Reset</button>
+                    </div>
+                    <div id="style-notes" class="notes" role="status"></div>
+                    <details id="sample" class="sub">
+                        <summary>Isolated dot vs. model</summary>
+                        <div class="row">
+                            <canvas id="sample-real"></canvas>
+                            <canvas id="sample-model"></canvas>
+                            <canvas id="sample-diff"></canvas>
+                        </div>
+                        <p id="sample-caption" class="fine"></p>
+                    </details>
                 </div>
-                <p id="overlay-legend" class="fine"></p>
-                <dl>
-                    <dt><label for="layer-dilate">Mask grow</label></dt><dd><input type="number" id="layer-dilate" step="0.5" min="0"> px</dd>
-                </dl>
-                <p id="layer-stats" class="fine">–</p>
-                <p id="analysis-time" class="fine"></p>
-            </section>
-            <section>
-                <h2>Dots</h2>
-                <div class="row">
-                    <button type="button" id="fit-run" title="Find the dots: Hough candidates, then refine, births, deaths, merges and a radius refit" disabled>Find dots</button>
-                    <button type="button" id="fit-stop" disabled>Stop</button>
-                    <button type="button" id="fit-edit" aria-pressed="false" title="Click empty space to add a dot, click a dot to remove it; the dots nearby are refit">Edit</button>
-                </div>
-                <p id="fit-status" class="fine" role="status"></p>
+            </details>
+            <details id="sec-dots" open>
+                <summary>Dots</summary>
                 <dl>
                     <dt>Dots</dt><dd id="fit-count">–</dd>
                     <dt>Flagged</dt><dd id="fit-flags" title="weak: removing it costs little; hidden: under half visible; deep: in a stack deeper than the measured levels">–</dd>
                     <dt>Radius</dt><dd id="fit-radius" title="After the fit's radius refit">–</dd>
                     <dt>Residual sd</dt><dd id="fit-sigma" title="Robust sd of image − model inside dots, 0–255 units along the color line">–</dd>
                 </dl>
-                <label class="check"><input type="checkbox" id="show-dots" checked> Show dots</label>
                 <p class="fine" id="dots-legend"></p>
-                <div class="row">
-                    <button type="button" id="copy-csv" disabled title="Pixel coordinates, standard errors and flags, tab-separated">Copy CSV</button>
-                    <button type="button" id="save-truth" disabled title="Save the current dots as ground truth JSON for testgraphs/truth/">Save truth</button>
-                </div>
-            </section>
-            <section>
-                <h2>Axes</h2>
-                <label class="check"><input type="checkbox" id="show-axes" checked> Show axes and ticks</label>
+                <p class="fine" id="fit-note"></p>
+            </details>
+            <details id="sec-axes">
+                <summary>Axes <span id="axes-summary" class="summary-note"></span></summary>
                 <div id="axis-x" class="axis"></div>
                 <div id="axis-y" class="axis"></div>
                 <p id="axes-note" class="fine"></p>
-            </section>
-            <section>
-                <h2>Pixel</h2>
+            </details>
+            <details id="sec-layers">
+                <summary>Mask</summary>
                 <dl>
-                    <dt>Position</dt><dd id="pixel-pos">–</dd>
-                    <dt>RGBA</dt><dd id="pixel-rgba">–</dd>
-                    <dt>Count</dt><dd id="pixel-count" title="Fractional number of overlapping dots">–</dd>
-                    <dt>Class</dt><dd id="pixel-class">–</dd>
-                    <dt>Data</dt><dd id="pixel-data" title="The pixel center in data units, from the axes">–</dd>
-                    <dt>Dot</dt><dd id="pixel-dot">–</dd>
+                    <dt><label for="layer-dilate">Mask grow</label></dt><dd><input type="number" id="layer-dilate" step="0.5" min="0"> px</dd>
                 </dl>
-                <div id="pixel-swatch" aria-hidden="true"></div>
-            </section>
-            <section>
-                <h2>View</h2>
+                <p id="layer-stats" class="fine">–</p>
+                <p id="analysis-time" class="fine"></p>
+            </details>
+            <details id="sec-image">
+                <summary>Image <span id="image-summary" class="summary-note"></span></summary>
+                <dl id="image-info">
+                    <dt>Source</dt><dd id="info-name">none</dd>
+                    <dt>Size</dt><dd id="info-size">–</dd>
+                    <dt>Pixel hash</dt><dd id="info-hash" title="FNV-1a of the RGBA values, to compare with the Node tools">–</dd>
+                </dl>
+                <label class="check" title="JPEG compression smears colors and adds noise; this loosens the thresholds that assume exact pixel values. Set from the file type; check it for a JPEG that was pasted or saved as PNG."><input type="checkbox" id="jpeg"> JPEG-compressed</label>
+            </details>
+        </aside>
+        <div id="viewer">
+            <div class="viewbar" role="toolbar" aria-label="View">
+                <div class="segmented" role="radiogroup" aria-label="Show">
+                    <label title="The image as loaded"><input type="radio" name="overlay" value="image" checked><span>Image</span></label>
+                    <label title="The selected family's overlap count per pixel"><input type="radio" name="overlay" value="count"><span>Count</span></label>
+                    <label title="Pixels the fit ignores"><input type="radio" name="overlay" value="mask"><span>Mask</span></label>
+                    <label title="Background, dot color and other marks"><input type="radio" name="overlay" value="classes"><span>Classes</span></label>
+                    <label title="The selected family's fitted dots, rendered"><input type="radio" name="overlay" value="model"><span>Model</span></label>
+                    <label title="Image − model for the selected family"><input type="radio" name="overlay" value="residual"><span>Residual</span></label>
+                </div>
+                <label class="toggle"><input type="checkbox" id="show-dots" checked> Dots</label>
+                <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
                 <div class="zoom" role="group" aria-label="Zoom">
                     <button type="button" id="zoom-fit" title="Fit the image in the view (0)">Fit</button>
                     <button type="button" id="zoom-1" title="One image pixel per screen pixel (1)">1:1</button>
-                    <button type="button" id="zoom-out" title="Zoom out (−)">−</button>
-                    <button type="button" id="zoom-in" title="Zoom in (+)">+</button>
-                    <span id="zoom-level" role="status">–</span>
+                    <button type="button" id="zoom-out" title="Zoom out (−)" aria-label="Zoom out">−</button>
+                    <button type="button" id="zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+                    <span id="zoom-level" role="status" title="Scroll or pinch to zoom at the pointer; drag to pan">–</span>
                 </div>
-                <p class="fine">Scroll or pinch to zoom at the pointer; drag to pan.</p>
-            </section>
-        </aside>
-        <div id="stage" tabindex="0" aria-label="Image view">
-            <canvas id="view"></canvas>
-            <p id="stage-message" role="status">Choose a test image, open a file, or paste or drop an image.</p>
+            </div>
+            <div id="stage" tabindex="0" aria-label="Image view">
+                <canvas id="view"></canvas>
+                <p id="stage-message" role="status">Choose a test image, open a file, or paste or drop an image.</p>
+                <p id="mode-hint" role="status" hidden></p>
+            </div>
+            <div id="readout" aria-live="off">
+                <p id="pixel-line">–</p>
+                <p id="dot-line"></p>
+                <p id="overlay-legend" class="fine"></p>
+            </div>
         </div>
     </main>
 </body>

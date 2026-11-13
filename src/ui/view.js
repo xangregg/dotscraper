@@ -30,6 +30,9 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     let originX = 0; // image px at the left edge of the view
     let originY = 0; // image px at the top edge of the view
     let drag = null;
+    // the view shows the whole image as last fitted, so a resize should fit it again (the stage can be laid out,
+    // or resized, after the image arrives); any zoom or pan by the user ends that
+    let fitted = false;
     let marks = null; // { dots: [{ x, y, flags }], radius, selected }
     let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos] }]
 
@@ -105,6 +108,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     function setScale(newScale, anchorX, anchorY) {
         // keep the image point under (anchorX, anchorY), in CSS px within the stage, fixed
         const s = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+        fitted = false;
         const ix = originX + anchorX / scale;
         const iy = originY + anchorY / scale;
         scale = s;
@@ -122,6 +126,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min((w - 2 * FIT_MARGIN) / width, (h - 2 * FIT_MARGIN) / height)));
         originX = -(w / scale - width) / 2;
         originY = -(h / scale - height) / 2;
+        fitted = true;
         onZoom(scale);
         draw();
     }
@@ -149,9 +154,10 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         stage.classList.add('dragging');
     });
     stage.addEventListener('pointermove', e => {
-        if (drag) {
+        if (drag && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > CLICK_SLOP) {
             originX = drag.originX - (e.clientX - drag.x) / scale;
             originY = drag.originY - (e.clientY - drag.y) / scale;
+            fitted = false;
             draw();
         }
         if (!source)
@@ -190,7 +196,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
             setScale(scale / ZOOM_STEP, cx, cy);
     });
 
-    new ResizeObserver(draw).observe(stage);
+    new ResizeObserver(() => (fitted ? fit() : draw())).observe(stage);
 
     return {
         /**

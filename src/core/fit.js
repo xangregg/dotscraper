@@ -27,7 +27,7 @@ const RESWEEP_FIRST_STEP = 2; // index into COMPASS_STEPS where later sweeps sta
 const NEIGHBOR_RADII = 2.2; // × r: a dot this close to one that moved is refined again
 const MAX_SWEEPS = 8; // refinement sweeps per round
 const CONVERGED_MOVE = 0.05; // px: a sweep moving no dot farther than this ends the round's refinement
-const MAX_ROUNDS = 6; // rounds of refine, birth, death, merge
+export const MAX_ROUNDS = 6; // rounds of refine, birth, death, merge
 const HOUGH_GRAD_MIN = 0.08; // levels per px: weaker gradients don't vote
 const HOUGH_SMOOTH = 1; // px, Gaussian smoothing of the accumulator before peak finding
 const HOUGH_PEAK_RADIUS = 2.5; // px: votes within this of a peak are its mass
@@ -993,7 +993,7 @@ export function createFit(input) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, births, splits, deaths, merges, fitFills, refitRadius, totalLoss, assess,
+        add, remove, refineAll, refineDot, births, splits, deaths, merges, fitFills, refitRadius, totalLoss, assess, bestZ,
         get birthFailures() {
             return birthFailures;
         },
@@ -1093,16 +1093,21 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
  * Re-refine the dots near (x, y) after a manual edit, leaving the rest where they are, and assess them all.
  * The dot set itself is kept as given: no births or deaths, since the user just decided what is there.
  *
+ * Outlined dots keep their drawing order (z); one marked `added` is placed where in its neighbors' order it fits
+ * best (bestZ), after the others are in.
+ *
  * @param {object} input  as createFit
- * @param {{x: number, y: number}[]} dots
+ * @param {{x: number, y: number, z?: number, added?: boolean}[]} dots  px
  * @param {number} x  px, the edit
  * @param {number} y  px
  * @returns {{dots: object[], sigma: number, lambda: number}}
  */
 export function refitNear(input, dots, x, y) {
     const fit = createFit(input);
-    for (const d of dots)
-        fit.add(d.x, d.y);
+    for (const d of dots.filter(d => !d.added))
+        fit.add(d.x, d.y, d.z);
+    for (const d of dots.filter(d => d.added))
+        fit.add(d.x, d.y, input.style.layered ? fit.bestZ(d.x, d.y) : undefined);
     fit.refineAll(fit.near(x, y, NEIGHBOR_RADII * input.style.radius));
     const { dots: assessed, sigma } = fit.assess();
     return { dots: assessed, sigma, lambda: fit.lambda };

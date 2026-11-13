@@ -1,9 +1,10 @@
-// App entry: image source controls, the view, and the details panel. The current image name is kept in the URL
-// hash (#image=<test image file>) so a reload or a shared local link reopens it.
+// App entry: image source and action toolbar, the view, and the details panel. The current image name is kept in
+// the URL hash (#image=<test image file>) so a reload or a shared local link reopens it.
 //
-// On each new image the app estimates the dot style (src/core/style.js) and builds the mask (src/core/layers.js);
-// the panel shows both and lets the user pick another family, seed one by clicking a dot, or override the
-// radius, alpha and blur.
+// On each new image the app estimates every dot family (src/core/families.js) and builds the selected family's
+// mask (src/core/layers.js). The panel lists the families: checked ones are fitted by Find dots, the selected one is
+// shown in detail (its style, overrides, overlays) and is the one Add and Remove edit. A color picked in the image
+// adds a family of its own.
 
 import { pixelAt, pixelHash } from '../core/image.js';
 import { restoreChroma } from '../core/jpeg.js';
@@ -11,7 +12,7 @@ import { estimateStyle } from '../core/style.js';
 import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
-import { refitNear } from '../core/fit.js';
+import { refitNear, MAX_ROUNDS } from '../core/fit.js';
 import { dotFamilies } from '../core/outline.js';
 import { detectAxes, plotBounds } from '../core/axes.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
@@ -32,7 +33,15 @@ const SCALE_CAPTION = {
     outline: 'image with the fill colors projected out (rings and their occlusion), model of the ring alone',
 };
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
-const EDIT_HIT_RADII = 0.6; // × r: a click this close to a dot's center removes it in edit mode
+const REMOVE_HIT_RADII = 1; // × r: Remove takes the nearest dot of the selected family within this of the click
+const UNDO_DEPTH = 100; // edits kept for Undo
+// Find dots progress: a family's share of its bar at each stage the fit reports (rounds share the middle; a fit
+// may converge before MAX_ROUNDS, so the bar can jump at the end)
+const PROGRESS_CANDIDATES = 0.05;
+const PROGRESS_ROUNDS_END = 0.85;
+const PROGRESS_RADIUS = 0.95;
+const OPEN_KEY = 'dotscraper:open:'; // localStorage prefix for each panel section's open state
+const STATUS_TICK = 250; // ms between updates of the elapsed time while a fit runs
 
 const JPEG_NAME = /\.jpe?g$/i;
 
@@ -43,23 +52,24 @@ const state = {
     image: null, // RgbaImage
     jpeg: false, // JPEG-compressed: noise-tolerant style thresholds (from the file type, or set by the user)
     work: null, // the image the analysis sees: for a JPEG, its chroma restored (src/core/jpeg.js); else the image
-    // every family's estimate (src/core/families.js), each with the image to fit it on; null for a picked color
-    familyEstimates: null,
     base: null, // state.work with any translucent layer over the dots divided out (src/core/background.js)
     hash: null,
-    estimate: null, // from estimateStyle
-    seed: null, // a user-picked family color, or null
-    family: 0, // candidate index when no seed
-    overrides: {}, // radius, alpha, blur set by the user
-    dilate: null, // user's mask dilation, px, or null for the default
-    layers: null, // from buildMask
+    // dot families: { estimate (families.js or a picked color's estimateStyle), picked (rgb or null), enabled (Find
+    // dots fits it), overrides ({ radius, alpha, blur } set by the user) }
+    families: [],
+    current: 0, // the selected family's index
+    estimate: null, // families[current].estimate
+    dilate: null, // user's mask dilation for the selected family, px, or null for the default
+    layers: null, // the selected family's buildMask result
     overlay: 'image',
-    picking: false,
-    fit: null, // { dots, radius, sigma, lambda, log, ms, edited } once a fit has run
+    mode: null, // null, 'pick', 'add' or 'remove': what a click in the view does
+    fit: null, // { families: [{ family, dots, radius, sigma }], dots (all, with family and r), ms, edited, partial }
+    undo: [], // earlier fits, for Undo
     worker: null,
     fitStart: 0,
-    editing: false,
+    tick: null, // the status timer while a fit runs
     showDots: true,
+    hoverDot: -1, // index into fit.dots of the dot Remove would take, highlighted
     axes: null, // from detectAxes
     axisEntries: { x: null, y: null }, // typed tick values and scale types
     showAxes: true,
@@ -69,49 +79,49 @@ const view = createView({
     stage: $('stage'),
     canvas: $('view'),
     onHover: showPixel,
-    onClick: pickAt,
+    onClick: clickAt,
     onZoom: scale => {
         $('zoom-level').textContent = `${scale >= 1 ? Math.round(scale * 100) : (scale * 100).toFixed(1)}%`;
     },
 });
 
 const fmt = (v, d) => (v === null || v === undefined || Number.isNaN(v) ? '–' : v.toFixed(d));
+const hex = c => '#' + c.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
 
-/** The style in effect: the estimate with the user's overrides. */
-function currentStyle() {
-    const s = state.estimate?.style;
-    if (!s)
-        return null;
-    return { ...s, ...state.overrides };
+/** A family's style in effect: its estimate with the user's overrides. */
+function styleOf(k) {
+    const f = state.families[k];
+    const s = f?.estimate.style;
+    return s ? { ...s, ...f.overrides } : null;
 }
 
-/** The family the panel shows: a candidate index, or −1 for a picked color. */
-function currentFamily() {
-    return state.seed ? -1 : state.family;
+function currentStyle() {
+    return styleOf(state.current);
 }
 
 /** One family's fit result, or null. */
-function familyFit(k = currentFamily()) {
+function familyFit(k = state.current) {
     return state.fit?.families.find(f => f.family === k) ?? null;
 }
 
 /** Set the fit from per-family results; every dot carries its family and radius. */
 function setFits(families, extra = {}) {
+    for (const f of families)
+        labelFills(f);
     const dots = families.flatMap(f => f.dots.map(d => ({ ...d, family: f.family, r: f.radius })));
-    labelFills(dots);
-    state.fit = { families, dots, ...extra };
+    state.fit = { ...extra, families, dots };
 }
 
 // Outlined dots of a few fill colors are fitted as one family of rings; each dot's fill color comes from its pixels
 // (outline.dotFamilies): fill is its index in the estimate's fillFamilies, fillSure false where its fill is mostly
 // hidden and the color may not be in the image at all.
-function labelFills(dots) {
-    const fams = state.estimate?.fillFamilies;
-    if (!fams || !dots.length)
+function labelFills(f) {
+    const est = state.families[f.family]?.estimate;
+    const fams = est?.fillFamilies;
+    if (!fams || !f.dots.length)
         return;
-    const r = dots[0].r;
-    const which = dotFamilies(state.work, dots, fams, r, r * (1 + state.estimate.style.ring.inner) / 2);
-    dots.forEach((d, i) => {
+    const which = dotFamilies(state.work, f.dots, fams, f.radius, f.radius * (1 + est.style.ring.inner) / 2);
+    f.dots.forEach((d, i) => {
         d.fill = which[i].family;
         d.fillSure = which[i].sure;
     });
@@ -119,8 +129,8 @@ function labelFills(dots) {
 
 // '2 #b8d7ff', with '?' where the fill is mostly hidden
 function fillLabel(d) {
-    const c = state.estimate.fillFamilies[d.fill];
-    return `${d.fill + 1}${d.fillSure ? '' : '?'} #${c.map(v => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+    const c = state.families[d.family].estimate.fillFamilies[d.fill];
+    return `${d.fill + 1}${d.fillSure ? '' : '?'} ${hex(c)}`;
 }
 
 /** The style the current family's fitted dots were drawn with: the style in effect, with the fit's radius. */
@@ -130,30 +140,93 @@ function fittedStyle() {
     return style && f ? { ...style, radius: f.radius } : style;
 }
 
-/** The image the current family is analyzed on: its own image from families.js, else the base image. */
+/** The image a family is analyzed on: its own image from families.js, else the base image. */
+function imageOf(k) {
+    return state.families[k]?.estimate.image ?? state.base ?? state.work;
+}
+
 function analysisImage() {
-    return state.estimate?.image ?? state.base ?? state.work;
+    return imageOf(state.current);
 }
 
-/** What the fit needs for one family: the current one as shown (overrides applied), others as estimated. */
+function maskOpts(k) {
+    return { bounds: plotBounds(state.axes), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+}
+
+/** What the fit needs for one family, with its overrides. */
 function fitInputFor(k) {
-    if (k === currentFamily()) {
-        return {
-            image: analysisImage(), style: currentStyle(), line: state.estimate.familyMeasure.line,
-            mask: state.layers.mask, D: state.estimate.D, imgT: state.estimate.fitT, base: state.estimate.base,
-        };
-    }
-    const est = state.familyEstimates?.[k] ?? estimateStyle(state.base ?? state.work, { family: k, candidates: state.estimate.candidates, jpeg: state.jpeg });
-    const image = est.image ?? state.base ?? state.work;
-    const layers = buildMask(image, est, { bounds: plotBounds(state.axes) });
-    return { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base };
+    const est = state.families[k].estimate;
+    const style = styleOf(k);
+    const image = imageOf(k);
+    const mask = k === state.current ? state.layers.mask : buildMask(image, { ...est, style }, maskOpts(k)).mask;
+    return { image, style, line: est.familyMeasure.line, mask, D: est.D, imgT: est.fitT, base: est.base };
 }
 
-function familyLabel(k) {
-    if (k < 0)
-        return 'picked color';
-    const c = state.estimate?.candidates[k]?.seed;
-    return c ? `family ${k + 1} (${c.map(Math.round).join(', ')})` : `family ${k + 1}`;
+/** The color that names a family: the picked color, or its seed; null for one whose dots vary in color. */
+function colorOf(k) {
+    const f = state.families[k];
+    if (!f)
+        return null;
+    if (f.picked)
+        return f.picked;
+    if (f.estimate.scale)
+        return null;
+    return f.estimate.familyMeasure?.seed ?? f.estimate.style?.color ?? null;
+}
+
+function familyName(k) {
+    const f = state.families[k];
+    if (!f)
+        return '';
+    return f.picked ? `Picked ${f.picked.join(', ')}` : `Family ${k + 1}`;
+}
+
+// a family's kind in a few words: 'translucent, α 0.50, r 6.7'
+function familyKind(k) {
+    const est = state.families[k].estimate;
+    const st = styleOf(k);
+    if (!st)
+        return 'not a dot family';
+    let kind;
+    if (est.scale === 'outline') {
+        const c = est.candidates[0];
+        kind = `outlined, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`;
+    }
+    else if (est.scale === 'opaque') {
+        kind = 'colored by a scale, opaque';
+    }
+    else if (est.scale) {
+        kind = `colored by a scale, α ${fmt(st.alpha, 2)}`;
+    }
+    else if (est.familyMeasure?.kind === 'opaque') {
+        kind = 'opaque';
+    }
+    else {
+        kind = `translucent, α ${fmt(st.alpha, 2)}`;
+    }
+    return `${kind}, r ${st.radius ? st.radius.toFixed(1) : '?'}`;
+}
+
+// The swatch for a family in the list: its color, its fill colors side by side, or a hatch when its dots vary
+function paintSwatch(el, k) {
+    const est = state.families[k].estimate;
+    el.className = 'swatch';
+    el.style.background = '';
+    if (est.fillFamilies) {
+        const n = est.fillFamilies.length;
+        el.style.background = `linear-gradient(90deg, ${est.fillFamilies.map((c, i) => `${cssColor(c)} ${100 * i / n}% ${100 * (i + 1) / n}%`).join(', ')})`;
+        el.title = `fill colors ${est.fillFamilies.map(hex).join(', ')}`;
+        return;
+    }
+    const c = colorOf(k);
+    if (c) {
+        el.style.background = cssColor(c);
+        el.title = `${c.map(Math.round).join(', ')}`;
+    }
+    else {
+        el.classList.add('varies');
+        el.title = 'colors vary by dot';
+    }
 }
 
 /** The scales in effect: { x, y }, each from axisScale or null. */
@@ -173,13 +246,13 @@ function dataAt(x, y) {
     };
 }
 
-// index of the nearest dot within `within` × its radius, among `dots`
-function nearestDot(dots, x, y, within = 1) {
+// index of the nearest dot within `within` × its radius, among `dots` that pass `keep`
+function nearestDot(dots, x, y, within = 1, keep = () => true) {
     let best = -1;
     let bestD = Infinity;
     dots.forEach((d, i) => {
         const dd = Math.hypot(d.x - x, d.y - y);
-        if (dd <= within * d.r && dd < bestD) {
+        if (keep(d) && dd <= within * d.r && dd < bestD) {
             bestD = dd;
             best = i;
         }
@@ -189,32 +262,39 @@ function nearestDot(dots, x, y, within = 1) {
 
 function showPixel(x, y) {
     if (x === null || !state.image) {
-        for (const id of ['pixel-pos', 'pixel-rgba', 'pixel-count', 'pixel-class', 'pixel-dot', 'pixel-data'])
-            $(id).textContent = '–';
-        $('pixel-swatch').style.background = 'transparent';
+        $('pixel-line').textContent = '–';
+        $('dot-line').textContent = '';
+        setHoverDot(-1);
         return;
     }
     const [r, g, b, a] = pixelAt(state.image, x, y);
-    $('pixel-pos').textContent = `${x}, ${y} px`;
-    $('pixel-rgba').textContent = `${r}, ${g}, ${b}, ${a}`;
-    $('pixel-swatch').style.background = `rgb(${r} ${g} ${b})`;
     const p = y * state.image.width + x;
+    const parts = [`${x}, ${y} px`, `RGBA ${r}, ${g}, ${b}, ${a}`];
     const D = state.estimate?.D;
-    $('pixel-count').textContent = !D ? '–' : (Number.isNaN(D[p]) ? 'not the dot color' : D[p].toFixed(2));
+    if (D)
+        parts.push(`count ${Number.isNaN(D[p]) ? 'not the dot color' : D[p].toFixed(2)}`);
     const L = state.layers;
     if (L) {
         const cls = L.thin[p] ? 'thin mark in dot color' : (L.classes[p] === CLASS_BACKGROUND ? 'background' : (L.classes[p] === CLASS_FAMILY ? 'dot color' : 'other'));
-        $('pixel-class').textContent = `${cls}${L.mask[p] ? ', masked' : ''}`;
+        parts.push(`${cls}${L.mask[p] ? ', masked' : ''}`);
     }
     const pd = dataAt(x + 0.5, y + 0.5);
-    $('pixel-data').textContent = pd.x === null && pd.y === null ? '–' : `${formatData(pd.x, pd.resX)}, ${formatData(pd.y, pd.resY)}`;
+    if (pd.x !== null || pd.y !== null)
+        parts.push(`data ${formatData(pd.x, pd.resX)}, ${formatData(pd.y, pd.resY)}`);
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = `rgb(${r} ${g} ${b})`;
+    $('pixel-line').replaceChildren(swatch, parts.join(' · '));
+
+    if (state.mode === 'remove' && state.fit)
+        setHoverDot(nearestDot(state.fit.dots, x + 0.5, y + 0.5, REMOVE_HIT_RADII, d => d.family === state.current));
     const i = state.fit ? nearestDot(state.fit.dots, x + 0.5, y + 0.5) : -1;
     if (i < 0) {
-        $('pixel-dot').textContent = '–';
+        $('dot-line').textContent = '';
         return;
     }
     const d = state.fit.dots[i];
-    const fam = state.fit.families.length > 1 ? `${familyLabel(d.family)}: ` : '';
+    const fam = state.fit.families.length > 1 ? `${familyName(d.family)}: ` : '';
     // the curvature standard errors reflect pixel noise only; systematic error (resampled rims, model mismatch) is
     // several times larger (PLAN.md phase 4: two renderings of dog-ages differ by 3–6× these), so say so
     const se = d.seX === undefined ? '' : ` ± ${d.seX.toFixed(2)}, ${d.seY.toFixed(2)} (noise only)`;
@@ -222,7 +302,14 @@ function showPixel(x, y) {
     const dd = dataAt(d.x, d.y);
     const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
     const fill = d.fill === undefined ? '' : `; fill ${fillLabel(d)}${d.fillSure ? '' : ' (mostly hidden: color unsure)'}`;
-    $('pixel-dot').textContent = `${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+}
+
+function setHoverDot(i) {
+    if (i === state.hoverDot)
+        return;
+    state.hoverDot = i;
+    refreshMarks();
 }
 
 function showMessage(text, isError = false) {
@@ -230,6 +317,13 @@ function showMessage(text, isError = false) {
     el.textContent = text;
     el.classList.toggle('error', isError);
     el.hidden = !text;
+}
+
+function setStatus(text, kind = '') {
+    const el = $('fit-status');
+    el.textContent = text;
+    el.title = text;
+    el.className = `status${kind ? ' ' + kind : ''}`;
 }
 
 /**
@@ -280,80 +374,166 @@ function refreshView(keepTransform) {
 
 function refreshMarks(dots = state.fit?.dots) {
     const style = currentStyle();
-    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius } : null);
+    const selected = dots === state.fit?.dots && state.hoverDot >= 0 ? state.hoverDot : undefined;
+    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected } : null);
 }
 
-/** Estimate the style (with the current seed or family) and rebuild the mask. */
+/** Estimate every family and select the first. Fitted dots are dropped: they were fitted to other estimates. */
 function analyze() {
+    stopFit(false);
     const t0 = performance.now();
-    if (state.seed) {
-        // a picked color is one family on its own, on the image with any overlay already divided out
-        state.familyEstimates = null;
-        state.estimate = estimateStyle(state.base ?? state.work, { seed: state.seed, jpeg: state.jpeg });
-    }
-    else {
-        const prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
-        state.base = prepared.image;
-        state.familyEstimates = prepared.estimates;
-        // merging a family seen over two backgrounds can leave fewer families than the index
-        state.family = Math.min(state.family, prepared.estimates.length - 1);
-        state.estimate = prepared.estimates[state.family];
-    }
+    const prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
+    state.base = prepared.image;
+    state.families = prepared.estimates.map(estimate => ({ estimate, picked: null, enabled: !!estimate.style, overrides: {} }));
     const t1 = performance.now();
-    rebuildMask();
-    const t2 = performance.now();
-    $('analysis-time').textContent = `style ${Math.round(t1 - t0)} ms, mask ${Math.round(t2 - t1)} ms`;
-    renderStylePanel();
+    state.fit = null;
+    state.undo = [];
+    state.dilate = null;
+    selectFamily(0);
+    $('analysis-time').textContent = `families ${Math.round(t1 - t0)} ms`;
+    setStatus('');
 }
 
-// Any change of style or mask invalidates fitted dots: they were fitted to a different model.
-function rebuildMask() {
-    stopFit();
-    state.fit = null;
+/** Show family k in the panel and the overlays; the fit is kept. */
+function selectFamily(k) {
+    state.current = k;
+    state.estimate = state.families[k]?.estimate ?? null;
+    state.hoverDot = -1;
+    buildLayers();
+    renderFamilies();
+    renderStylePanel();
+    renderFitControls();
+    renderDotsSection();
+    updateModeHint();
+    if (state.image)
+        refreshView(true);
+}
+
+// A changed style or mask makes this family's fitted dots stale; other families keep theirs.
+function dropFamilyFit(k) {
+    if (!familyFit(k))
+        return;
+    const families = state.fit.families.filter(f => f.family !== k);
+    if (families.length)
+        setFits(families, extraOf(state.fit));
+    else
+        state.fit = null;
+}
+
+function extraOf(fit) {
+    const { families, dots, ...extra } = fit;
+    return extra;
+}
+
+function buildLayers() {
     const style = currentStyle();
-    const opts = { bounds: plotBounds(state.axes), ...(state.dilate === null ? {} : { dilate: state.dilate }) };
-    state.layers = style ? buildMask(analysisImage(), { ...state.estimate, style }, opts) : null;
+    state.layers = style ? buildMask(analysisImage(), { ...state.estimate, style }, maskOpts(state.current)) : null;
     renderLayersPanel();
-    renderFitPanel();
+}
+
+function renderFamilies() {
+    const list = $('family-list');
+    list.replaceChildren();
+    if (!state.families.length || !state.families.some(f => f.estimate.style)) {
+        const li = document.createElement('li');
+        li.className = 'off';
+        li.textContent = state.image ? (state.estimate?.notes?.[0] ?? 'No dot family found.') + ' Add one by its color.' : 'No image.';
+        list.append(li);
+        return;
+    }
+    state.families.forEach((f, k) => {
+        const li = document.createElement('li');
+        li.classList.toggle('selected', k === state.current);
+        li.classList.toggle('off', !f.enabled);
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = f.enabled;
+        box.disabled = !styleOf(k)?.radius;
+        box.title = box.disabled ? 'The radius is unknown: set it to find this family' : 'Find dots fits this family';
+        box.setAttribute('aria-label', `Find ${familyName(k)}`);
+        box.addEventListener('change', () => {
+            f.enabled = box.checked;
+            li.classList.toggle('off', !f.enabled);
+            renderFitControls();
+        });
+        const sw = document.createElement('span');
+        paintSwatch(sw, k);
+        const name = document.createElement('span');
+        name.className = 'name';
+        name.textContent = `${familyName(k)}: ${familyKind(k)}`;
+        const count = document.createElement('span');
+        count.className = 'count';
+        const ff = familyFit(k);
+        if (ff) {
+            const flagged = ff.dots.filter(d => d.flags.length).length;
+            count.textContent = `${ff.dots.length} dots${flagged ? `, ${flagged} flagged` : ''}`;
+        }
+        li.append(box, sw, name, count);
+        if (f.picked) {
+            const rm = document.createElement('button');
+            rm.type = 'button';
+            rm.className = 'remove';
+            rm.textContent = '×';
+            rm.title = 'Remove this picked family';
+            rm.setAttribute('aria-label', `Remove ${familyName(k)}`);
+            rm.addEventListener('click', e => {
+                e.stopPropagation();
+                removeFamily(k);
+            });
+            li.append(rm);
+        }
+        li.addEventListener('click', e => {
+            if (e.target === box || k === state.current)
+                return;
+            selectFamily(k);
+        });
+        list.append(li);
+    });
+}
+
+function removeFamily(k) {
+    stopFit(false);
+    dropFamilyFit(k);
+    state.families.splice(k, 1);
+    if (state.fit) {
+        const families = state.fit.families.map(f => (f.family > k ? { ...f, family: f.family - 1 } : f));
+        setFits(families, extraOf(state.fit));
+    }
+    state.undo = [];
+    selectFamily(Math.min(state.current >= k ? Math.max(0, state.current - 1) : state.current, state.families.length - 1));
 }
 
 function renderStylePanel() {
     const est = state.estimate;
     const style = currentStyle();
-    const select = $('family');
-    select.replaceChildren();
-    est.candidates.forEach((c, i) => {
-        const label = c.kind === 'opaque'
-            ? `${i + 1}: opaque, r ${fmt(c.radius, 1)}`
-            : c.kind === 'outline'
-                ? `${i + 1}: outlined, r ${fmt(c.radius, 1)}, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`
-                : `${i + 1}: translucent, α ${fmt(c.fit.alpha, 2)}, ${c.levels.filter(L => !L.inferred).length} levels`;
-        select.add(new Option(label, String(i)));
-    });
-    if (state.seed)
-        select.add(new Option(`picked ${state.seed.join(', ')}`, 'seed'));
-    select.value = state.seed ? 'seed' : String(state.family);
-    select.disabled = !est.candidates.length && !state.seed;
-
+    $('family-detail').hidden = !est;
+    if (!est)
+        return;
+    $('family-title').textContent = `${familyName(state.current)}: ${familyKind(state.current)}`;
     const swatches = $('levels');
     swatches.replaceChildren();
     // a color scale is fitted as a virtual family whose color and levels no dot has: don't show them as the dots'
-    if (style && !est.scale) {
+    const showLevels = style && !est.scale;
+    $('levels').parentElement.hidden = !showLevels;
+    if (showLevels) {
         const K = style.measuredLevels;
         const inferred = style.inferredLevels ?? [];
         style.levels.slice(1, K + 1 + EXTRAPOLATED_SWATCHES).forEach((c, i) => {
+            const cell = document.createElement('span');
+            cell.className = 'level';
             const el = document.createElement('span');
             const guessed = i >= K || inferred.includes(i + 1);
             el.className = 'swatch' + (guessed ? ' extrapolated' : '');
             el.style.background = cssColor(c);
-            el.title = `${i + 1} overlapping: ${c.map(v => v.toFixed(1)).join(', ')}${i >= K ? ' (extrapolated)' : guessed ? ' (inferred: too few flat pixels show it)' : ' (measured)'}`;
-            swatches.append(el);
+            cell.title = `${i + 1} dot${i ? 's' : ''} stacked: ${c.map(v => v.toFixed(1)).join(', ')}${i >= K ? ' (extrapolated)' : guessed ? ' (inferred: too few flat pixels show it)' : ' (measured)'}`;
+            cell.append(el, String(i + 1));
+            swatches.append(cell);
         });
     }
-    $('family-swatch').style.background = style && !est.scale ? cssColor(style.color) : 'transparent';
     const c0 = est.candidates[0];
-    const scaleText = c0?.oneColor ? 'one fill color, projected out (rings fitted)'
-        : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale)';
+    const scaleText = est.scale !== 'outline' ? 'varies by dot (color scale)'
+        : c0?.oneColor ? 'one fill color, projected out (rings fitted)'
+        : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale; rings fitted)';
     $('style-c').textContent = !style ? '–' : est.scale ? scaleText : style.color.map(v => v.toFixed(1)).join(', ');
     $('style-c').title = style && est.scale ? `fitted as one virtual family of color ${style.color.map(v => v.toFixed(1)).join(', ')}` : '';
     const nInferred = style?.inferredLevels?.length ?? 0;
@@ -365,14 +545,21 @@ function renderStylePanel() {
         $('style-fit').textContent = 'one level: α not measured, 1 assumed';
     else
         $('style-fit').textContent = fam?.fit ? `rms ${fmt(fam.fit.rms, 2)}, max ${fmt(fam.fit.maxAbs, 2)}` : '–';
-    $('style-isolated').textContent = String(est.isolated.length);
+    $('style-isolated').textContent = String(est.isolated?.length ?? 0);
+    // overlap levels and one α describe single-color families; a color scale's virtual family and outlined dots'
+    // ring model have values of their own that no dot has
+    for (const el of document.querySelectorAll('[data-levels]'))
+        el.hidden = !!est.scale;
+    const overrides = state.families[state.current].overrides;
     for (const [key, digits] of [['radius', 2], ['alpha', 3], ['blur', 2]]) {
         const input = $(`style-${key}`);
-        input.value = style && style[key] !== null ? style[key].toFixed(digits) : '';
-        input.classList.toggle('overridden', key in state.overrides);
-        input.disabled = !style;
+        const notOwn = key === 'alpha' && est.scale === 'outline';
+        input.value = style && !notOwn && style[key] !== null && style[key] !== undefined ? style[key].toFixed(digits) : '';
+        input.classList.toggle('overridden', key in overrides);
+        input.disabled = !style || notOwn;
+        input.title = notOwn ? 'Outlined dots: the ring and fill opacities are measured separately (see the notes)' : '';
     }
-    $('style-reset').disabled = !Object.keys(state.overrides).length;
+    $('style-reset').disabled = !Object.keys(overrides).length;
     $('style-notes').replaceChildren(...est.notes.map(n => Object.assign(document.createElement('p'), { textContent: n })));
     renderSample();
 }
@@ -382,7 +569,7 @@ function renderSample() {
     const est = state.estimate;
     const style = currentStyle();
     const box = $('sample');
-    box.hidden = !(style?.radius && est.isolated.length);
+    box.hidden = !(style?.radius && est.isolated?.length);
     if (box.hidden)
         return;
     const dot = est.isolated[0];
@@ -436,77 +623,117 @@ function renderLayersPanel() {
     }
     const s = L.stats;
     const pct = v => `${(100 * v / n).toFixed(1)}%`;
-    $('layer-stats').textContent = `background ${pct(s.background)}, dot color ${pct(s.family)}, other ${pct(s.other)}, `
+    $('layer-stats').textContent = `${familyName(state.current)}: background ${pct(s.background)}, dot color ${pct(s.family)}, other ${pct(s.other)}, `
         + `thin marks ${s.thin} px. Masked ${pct(s.masked)}, including ${s.maskedFamily} dot-color px near other marks`
         + (s.outside ? ` and ${pct(s.outside)} beyond the axes (labels, titles).` : '.');
-    if (state.image)
-        refreshView(true);
 }
 
 function renderLegend() {
     const legend = $('overlay-legend');
     const item = (color, text) => `<span class="key" style="background:${typeof color === 'string' ? color : cssColor(color)}"></span>${text}`;
-    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')}`;
+    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${item(MARK_COLORS.selected, 'Remove would take it')}`;
+    const fam = state.estimate ? ` (${familyName(state.current)})` : '';
     if (state.overlay === 'residual') {
-        legend.innerHTML = `Image − model along the dot color line: ${item(RESIDUAL_DARKER, 'image darker (missing ink)')} `
+        legend.innerHTML = `Residual${fam}, image − model along the dot color line: ${item(RESIDUAL_DARKER, 'image darker (missing ink)')} `
             + `${item(RESIDUAL_LIGHTER, 'image lighter (too much)')} ${item(RESIDUAL_MASKED, 'masked')}; full color at ±${RESIDUAL_FULL} units.`;
-        return;
     }
-    if (state.overlay === 'model') {
-        legend.textContent = 'The fitted dots rendered with the style (radius from the fit).'
+    else if (state.overlay === 'model') {
+        legend.textContent = `Model${fam}: the fitted dots rendered with the style (radius from the fit).`
             + (currentStyle()?.outline ? ' Outlines are all drawn before the fills, so overlaps can differ from the chart’s drawing order.' : '');
-        return;
     }
-    if (state.overlay === 'count')
-        legend.innerHTML = `Overlap count: black 0 to white ${COUNT_MAX_SHOWN}+ (hover for the value); ${item(OFF_LINE_COLOR, 'not the dot color')}`;
-    else if (state.overlay === 'mask')
-        legend.innerHTML = `${item(MASK_TINT, 'masked')} pixels are ignored by the fit`;
-    else if (state.overlay === 'classes')
-        legend.innerHTML = [item(CLASS_COLORS.background, 'background'), item(CLASS_COLORS.family, 'dot color'), item(CLASS_COLORS.other, 'other'), item(CLASS_COLORS.thin, 'thin mark in dot color')].join(' ');
-    else
+    else if (state.overlay === 'count') {
+        legend.innerHTML = `Overlap count${fam}: black 0 to white ${COUNT_MAX_SHOWN}+ (hover for the value); ${item(OFF_LINE_COLOR, 'not the dot color')}`;
+    }
+    else if (state.overlay === 'mask') {
+        legend.innerHTML = `Mask${fam}: ${item(MASK_TINT, 'masked')} pixels are ignored by the fit`;
+    }
+    else if (state.overlay === 'classes') {
+        legend.innerHTML = `Classes${fam}: ` + [item(CLASS_COLORS.background, 'background'), item(CLASS_COLORS.family, 'dot color'), item(CLASS_COLORS.other, 'other'), item(CLASS_COLORS.thin, 'thin mark in dot color')].join(' ');
+    }
+    else {
         legend.textContent = '';
+    }
+    if (state.overlay !== 'image' && (state.overlay === 'model' || state.overlay === 'residual') && !familyFit())
+        legend.textContent = `No fitted dots for ${familyName(state.current)} yet: showing the image.`;
 }
 
-function pickAt(x, y) {
-    if (state.editing && state.fit) {
-        editAt(x + 0.5, y + 0.5);
+function clickAt(x, y) {
+    if (!state.image)
+        return;
+    if (state.mode === 'pick') {
+        addPickedFamily(pixelAt(state.work, x, y).slice(0, 3));
         return;
     }
-    if (!state.picking || !state.image)
+    if (state.mode === 'add' || state.mode === 'remove')
+        editAt(state.mode, x + 0.5, y + 0.5);
+}
+
+/** A family of a picked color, fitted on its own (on the image with any overlay divided out). */
+function addPickedFamily(rgb) {
+    setMode(null);
+    const estimate = estimateStyle(state.base ?? state.work, { seed: rgb, jpeg: state.jpeg });
+    if (!estimate.style) {
+        setStatus(`No dot family of color ${rgb.join(', ')}: ${estimate.notes.join(' ')}`, 'error');
         return;
-    const [r, g, b] = pixelAt(state.work, x, y);
-    state.seed = [r, g, b];
-    state.overrides = {};
-    setPicking(false);
-    analyze();
+    }
+    state.families.push({ estimate, picked: rgb, enabled: true, overrides: {} });
+    selectFamily(state.families.length - 1);
+    setStatus(`Added a family of color ${rgb.join(', ')}.`);
 }
 
-function setPicking(on) {
-    state.picking = on;
-    $('pick-color').setAttribute('aria-pressed', String(on));
-    $('stage').classList.toggle('picking', on);
+/** What a click in the view does: null (pan only), 'pick', 'add' or 'remove'. */
+function setMode(mode) {
+    state.mode = mode;
+    $('pick-color').setAttribute('aria-pressed', String(mode === 'pick'));
+    $('edit-add').setAttribute('aria-pressed', String(mode === 'add'));
+    $('edit-remove').setAttribute('aria-pressed', String(mode === 'remove'));
+    const stage = $('stage');
+    stage.classList.toggle('picking', mode === 'pick');
+    stage.classList.toggle('adding', mode === 'add');
+    stage.classList.toggle('removing', mode === 'remove');
+    if (mode !== 'remove')
+        setHoverDot(-1);
+    updateModeHint();
 }
 
-function renderFitPanel(progress) {
-    const fit = state.fit;
+function updateModeHint() {
+    const hint = $('mode-hint');
+    const name = familyName(state.current);
+    const text = state.mode === 'pick' ? 'Click a dot to add a family of its color · Esc to cancel'
+        : state.mode === 'add' ? `Adding to ${name}: click to add a dot · drag to pan · Esc to finish`
+        : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it · drag to pan · Esc to finish`
+        : '';
+    hint.textContent = text;
+    hint.hidden = !text;
+}
+
+function renderFitControls() {
     const running = state.worker !== null;
-    $('fit-run').disabled = running || !currentStyle()?.radius;
-    $('fit-run').title = currentStyle()?.radius
-        ? (state.seed ? 'Find the dots of the picked color' : 'Find the dots of every family')
-        : 'Set the dot radius first';
+    const runnable = state.families.some((f, k) => f.enabled && styleOf(k)?.radius > 0);
+    $('fit-run').disabled = running || !runnable;
+    $('fit-run').textContent = running ? 'Finding…' : 'Find dots';
+    $('fit-run').title = runnable ? 'Find the dots of every checked family' : 'Check a family whose radius is known';
     $('fit-stop').disabled = !running;
-    $('fit-edit').disabled = !familyFit() || running;
-    $('copy-csv').disabled = !fit || running;
-    $('save-truth').disabled = !fit || running;
-    if (running && progress) {
-        const secs = ((performance.now() - state.fitStart) / 1000).toFixed(1);
-        $('fit-status').textContent = `${familyLabel(progress.family)}: ${progress.stage}, round ${progress.round}: ${progress.dots.length} dots, ${secs} s`;
-    }
+    $('fit-progress').hidden = !running;
+    const editable = !running && !!currentStyle()?.radius;
+    $('edit-add').disabled = !editable;
+    $('edit-remove').disabled = !editable || !familyFit()?.dots.length;
+    $('edit-undo').disabled = running || !state.undo.length;
+    $('copy-csv').disabled = !state.fit?.dots.length || running;
+    $('save-truth').disabled = !state.fit?.dots.length || running;
+    $('pick-color').disabled = running || !state.image;
+    if (!editable && (state.mode === 'add' || state.mode === 'remove'))
+        setMode(null);
+    if (state.mode === 'remove' && $('edit-remove').disabled)
+        setMode(null);
+}
+
+function renderDotsSection() {
+    const fit = state.fit;
     if (!fit) {
         for (const id of ['fit-count', 'fit-flags', 'fit-radius', 'fit-sigma'])
             $(id).textContent = '–';
-        if (!running)
-            $('fit-status').textContent = '';
+        $('fit-note').textContent = '';
         return;
     }
     const counts = {};
@@ -520,40 +747,67 @@ function renderFitPanel(progress) {
     $('fit-flags').textContent = flagged ? `${flagged} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')})` : '0';
     $('fit-radius').textContent = `${fit.families.map(f => f.radius.toFixed(2)).join(', ')} px`;
     const cur = familyFit();
-    $('fit-sigma').textContent = cur ? fmt(cur.sigma, 2) + (many ? ' (current family)' : '') : '–';
-    if (!running) {
-        $('fit-status').textContent = `${fit.partial ? 'Stopped early: partial result, not assessed. ' : ''}`
-            + `${fit.edited ? 'Edited by hand. ' : ''}${fit.ms ? `Fit in ${(fit.ms / 1000).toFixed(1)} s. ` : ''}`
-            + 'Positions in image px (pixel i spans i to i + 1).';
-    }
+    $('fit-sigma').textContent = cur ? fmt(cur.sigma, 2) + (many ? ` (${familyName(state.current)})` : '') : '–';
+    $('fit-note').textContent = `${fit.partial ? 'Stopped early: partial result, not assessed. ' : ''}`
+        + `${fit.edited ? 'Edited by hand. ' : ''}Positions in image px (pixel i spans i to i + 1).`;
 }
 
-// Fit every dot family (or just the picked color), one after another in the worker.
+// a family's progress within its own share of the bar, from the stage the fit reports
+function stageProgress(p) {
+    if (p.stage === 'starting' || p.stage === 'candidates')
+        return p.stage === 'starting' ? 0 : PROGRESS_CANDIDATES;
+    if (p.stage === 'radius')
+        return PROGRESS_RADIUS;
+    return PROGRESS_CANDIDATES + (PROGRESS_ROUNDS_END - PROGRESS_CANDIDATES) * Math.min(1, p.round / MAX_ROUNDS);
+}
+
+// Fit every checked family, one after another in the worker.
 function runFit() {
-    stopFit();
+    stopFit(false);
+    setMode(null);
     state.fitStart = performance.now();
-    const ks = state.seed ? [-1] : state.estimate.candidates.map((_, k) => k);
     const inputs = [];
-    const skipped = [];
-    for (const k of ks) {
-        const input = fitInputFor(k);
-        if (input.style?.radius > 0)
-            inputs.push({ family: k, input });
-        else
-            skipped.push(k);
-    }
+    state.families.forEach((f, k) => {
+        if (f.enabled && styleOf(k)?.radius > 0)
+            inputs.push({ family: k, input: fitInputFor(k) });
+    });
+    if (!inputs.length)
+        return;
+    if (state.fit)
+        pushUndo();
     const done = [];
     let last = null;
     state.fit = null;
     state.worker = new Worker(new URL('../fit-worker.js', import.meta.url), { type: 'module' });
     const radiusOf = k => inputs.find(i => i.family === k).input.style.radius;
+    // the status names the latest stage and ticks the elapsed time between messages (a first stage can take
+    // seconds); the bar is indeterminate until the fit reports
+    let shown = { family: inputs[0].family, p: { stage: 'starting', round: 0, dots: [] } };
+    const showProgress = () => {
+        const { family, p } = shown;
+        const i = inputs.findIndex(q => q.family === family);
+        if (p.stage === 'starting')
+            $('fit-progress').removeAttribute('value');
+        else
+            $('fit-progress').value = (i + stageProgress(p)) / inputs.length;
+        const secs = ((performance.now() - state.fitStart) / 1000).toFixed(1);
+        const which = inputs.length > 1 ? `${familyName(family)} (${i + 1} of ${inputs.length}): ` : '';
+        const stage = p.stage === 'starting' ? 'finding candidates' : p.stage === 'candidates' ? `${p.dots.length} candidates`
+            : p.stage === 'radius' ? `radius refit, ${p.dots.length} dots` : `round ${p.round}, ${p.dots.length} dots`;
+        setStatus(`${which}${stage}, ${secs} s`, 'running');
+    };
+    const progress = (family, p) => {
+        shown = { family, p };
+        showProgress();
+    };
+    state.tick = setInterval(showProgress, STATUS_TICK);
     state.worker.onmessage = e => {
         const msg = e.data;
         if (msg.type === 'progress') {
             last = msg;
             const r = radiusOf(msg.family);
             refreshMarks([...done.flatMap(f => f.dots.map(d => ({ ...d, r: f.radius }))), ...msg.progress.dots.map(d => ({ ...d, r }))]);
-            renderFitPanel({ ...msg.progress, family: msg.family });
+            progress(msg.family, msg.progress);
             return;
         }
         if (msg.type === 'family') {
@@ -563,19 +817,24 @@ function runFit() {
         }
         state.worker.terminate();
         state.worker = null;
+        clearInterval(state.tick);
         if (msg.type === 'error') {
-            $('fit-status').textContent = `Fit failed: ${msg.message}`;
-            renderFitPanel();
+            setStatus(`Find dots failed: ${msg.message}`, 'error');
+            renderFitControls();
             return;
         }
-        setFits(done, { ms: performance.now() - state.fitStart, skipped });
-        renderFitPanel();
-        refreshView(true);
+        const ms = performance.now() - state.fitStart;
+        setFits(done, { ms });
+        const n = state.fit.dots.length;
+        const flagged = state.fit.dots.filter(d => d.flags.length).length;
+        setStatus(`Found ${n} dots${flagged ? `, ${flagged} flagged` : ''} in ${(ms / 1000).toFixed(1)} s`, 'done');
+        fitChanged();
     };
     state.worker.onerror = e => {
-        $('fit-status').textContent = `Fit failed: ${e.message}`;
+        clearInterval(state.tick);
+        setStatus(`Find dots failed: ${e.message}`, 'error');
         state.worker = null;
-        renderFitPanel();
+        renderFitControls();
     };
     // a stopped fit keeps the finished families and what the running one had reached
     state.stopFit = () => {
@@ -585,46 +844,81 @@ function runFit() {
         return partial;
     };
     state.worker.postMessage({ inputs, opts: {} });
-    renderFitPanel({ stage: 'starting', round: 0, dots: [], family: inputs[0]?.family ?? 0 });
+    renderFitControls();
+    showProgress();
 }
 
-function stopFit() {
+/** Stop a running fit, keeping what it has; `report` says so in the status. */
+function stopFit(report = true) {
     if (!state.worker)
         return;
     state.worker.terminate();
     state.worker = null;
+    clearInterval(state.tick);
     const partial = state.stopFit?.() ?? [];
     if (partial.length)
         setFits(partial, { partial: true });
-    renderFitPanel();
-    refreshView(true);
+    if (report)
+        setStatus(`Stopped: ${state.fit?.dots.length ?? 0} dots kept (not assessed).`);
+    fitChanged();
 }
 
-// add or remove a dot of the current family, then refit its neighbors
-function editAt(x, y) {
-    const f = familyFit();
-    if (!f)
+// everything that shows the fit
+function fitChanged() {
+    renderFitControls();
+    renderDotsSection();
+    renderFamilies();
+    renderLegend();
+    if (state.image)
+        refreshView(true);
+}
+
+function pushUndo() {
+    const fit = state.fit;
+    state.undo.push(fit ? { families: fit.families.map(f => ({ ...f, dots: f.dots.map(d => ({ ...d })) })), extra: extraOf(fit) } : null);
+    if (state.undo.length > UNDO_DEPTH)
+        state.undo.shift();
+}
+
+function undo() {
+    if (!state.undo.length || state.worker)
         return;
-    const own = f.dots.map(d => ({ ...d, r: f.radius }));
-    const i = nearestDot(own, x, y, EDIT_HIT_RADII);
-    const dots = f.dots.map(d => ({ x: d.x, y: d.y }));
-    if (i >= 0)
-        dots.splice(i, 1);
+    const snap = state.undo.pop();
+    if (snap)
+        setFits(snap.families, snap.extra);
     else
-        dots.push({ x, y });
-    const res = refitNear({ ...fitInputFor(currentFamily()), style: fittedStyle() }, dots, x, y);
-    const families = state.fit.families.map(g => (g === f ? { ...f, dots: res.dots, sigma: res.sigma } : g));
-    setFits(families, { ...state.fit, families: undefined, dots: undefined, edited: true });
-    renderFitPanel();
-    refreshView(true);
+        state.fit = null;
+    state.hoverDot = -1;
+    setStatus('Undone.');
+    fitChanged();
 }
 
-function setEditing(on) {
-    state.editing = on;
-    $('fit-edit').setAttribute('aria-pressed', String(on));
-    $('stage').classList.toggle('editing', on);
-    if (on)
-        setPicking(false);
+// add a dot to the selected family, or remove its nearest one, then refit the dots nearby
+function editAt(kind, x, y) {
+    const k = state.current;
+    const f = familyFit(k) ?? { family: k, dots: [], radius: currentStyle().radius, sigma: NaN };
+    const dots = f.dots.map(d => ({ x: d.x, y: d.y, z: d.z }));
+    if (kind === 'remove') {
+        const i = nearestDot(f.dots.map(d => ({ ...d, r: f.radius })), x, y, REMOVE_HIT_RADII);
+        if (i < 0) {
+            setStatus(`No dot of ${familyName(k)} here to remove.`);
+            return;
+        }
+        x = dots[i].x;
+        y = dots[i].y;
+        dots.splice(i, 1);
+    }
+    else {
+        dots.push({ x, y, added: true });
+    }
+    pushUndo();
+    const res = refitNear({ ...fitInputFor(k), style: { ...currentStyle(), radius: f.radius } }, dots, x, y);
+    const updated = { ...f, dots: res.dots, sigma: res.sigma };
+    const others = state.fit?.families.filter(g => g.family !== k) ?? [];
+    setFits([...others, updated].sort((a, b) => a.family - b.family), { ...(state.fit ? extraOf(state.fit) : {}), edited: true });
+    state.hoverDot = -1;
+    setStatus(`${kind === 'add' ? 'Added a dot to' : 'Removed a dot from'} ${familyName(k)}: ${updated.dots.length} dots.`);
+    fitChanged();
 }
 
 function dotsCsv() {
@@ -640,8 +934,8 @@ function dotsCsv() {
         head.push('fill');
     const rows = [head.join('\t')];
     for (const d of state.fit.dots) {
-        const color = d.family >= 0 ? state.estimate.candidates[d.family]?.seed : state.seed;
-        const fam = `${d.family + 1}${color ? ' #' + color.map(v => Math.round(v).toString(16).padStart(2, '0')).join('') : ''}`;
+        const color = colorOf(d.family);
+        const fam = `${d.family + 1}${color ? ' ' + hex(color) : ''}`;
         const row = [fam, d.x.toFixed(3), d.y.toFixed(3), d.seX?.toFixed(3) ?? '', d.seY?.toFixed(3) ?? ''];
         if (hasData) {
             const dd = dataAt(d.x, d.y);
@@ -668,12 +962,19 @@ function renderAxesPanel() {
     const s = scales();
     const note = [];
     if (s.x?.kind === 'numeric' && s.y?.kind === 'numeric')
-        note.push('Data coordinates appear in the Pixel readout, the dot hover and the CSV. Dot standard errors count pixel noise only; '
+        note.push('Data coordinates appear in the readout under the image, the dot hover and the CSV. Dot standard errors count pixel noise only; '
             + 'with resampled or antialiased edges the real position error is several times larger (a few tenths of a px), '
             + 'and tick placement adds the scale residual shown above.');
     else
         note.push('Type tick values to get data coordinates.');
     $('axes-note').textContent = note.join(' ');
+    const summary = ['x', 'y'].map(k => {
+        if (!state.axes?.[k])
+            return `${k} not found`;
+        const sk = s[k]?.kind;
+        return sk === 'numeric' ? `${k} ${state.axisEntries[k].type}` : sk === 'category' ? `${k} categories` : `${k}: ${state.axes[k].ticks.length} ticks, no values`;
+    });
+    $('axes-summary').textContent = state.image ? summary.join(' · ') : '';
     refreshAxisMarks();
 }
 
@@ -699,7 +1000,7 @@ function saveTruth() {
     const truth = {
         image: state.name, hash: state.hash,
         note: 'Dot centers in image px. Review every dot before using this as ground truth.',
-        families: state.fit.families.map(f => ({ family: f.family, color: f.family >= 0 ? state.estimate.candidates[f.family].seed : state.seed, radius: f.radius })),
+        families: state.fit.families.map(f => ({ family: f.family, color: colorOf(f.family), radius: f.radius })),
         dots: state.fit.dots.map(d => ({ x: +d.x.toFixed(2), y: +d.y.toFixed(2), family: d.family, ...(d.fill === undefined ? {} : { fill: d.fill, fillSure: d.fillSure }) })),
     };
     const a = document.createElement('a');
@@ -707,6 +1008,7 @@ function saveTruth() {
     a.download = state.name.replace(/\.[a-z]+$/i, '') + '.json';
     a.click();
     URL.revokeObjectURL(a.href);
+    setStatus(`Saved ${state.fit.dots.length} dots as ${a.download}.`);
 }
 
 function setJpeg(jpeg) {
@@ -714,6 +1016,7 @@ function setJpeg(jpeg) {
     state.work = jpeg ? restoreChroma(state.image) : state.image;
     state.base = null;
     $('jpeg').checked = jpeg;
+    $('image-summary').textContent = state.image ? `${state.image.width} × ${state.image.height}${jpeg ? ', JPEG' : ''}` : '';
 }
 
 function setImage(name, image, jpeg) {
@@ -721,14 +1024,11 @@ function setImage(name, image, jpeg) {
     state.image = image;
     setJpeg(jpeg);
     state.hash = pixelHash(image);
-    state.seed = null;
-    state.family = 0;
-    state.overrides = {};
-    state.dilate = null;
     $('info-name').textContent = name;
     $('info-size').textContent = `${image.width} × ${image.height} px`;
     $('info-hash').textContent = state.hash;
     showMessage('');
+    setMode(null);
     view.setImage(image);
     state.axes = detectAxes(image);
     state.axisEntries = loadEntries(state.hash, state.axes);
@@ -763,38 +1063,52 @@ async function openFile(file) {
     }
 }
 
+// a family's style changed: its dots are stale, its mask is rebuilt
+function styleChanged() {
+    dropFamilyFit(state.current);
+    buildLayers();
+    renderStylePanel();
+    renderFamilies();
+    fitChanged();
+}
+
+// the open state of each panel section is a per-viewer convenience, remembered when storage allows
+function wireSections() {
+    for (const el of document.querySelectorAll('aside details[id]')) {
+        try {
+            const v = localStorage.getItem(OPEN_KEY + el.id);
+            if (v !== null)
+                el.open = v === '1';
+        }
+        catch {
+            // storage unavailable: the defaults in the markup stand
+        }
+        el.addEventListener('toggle', () => {
+            try {
+                localStorage.setItem(OPEN_KEY + el.id, el.open ? '1' : '0');
+            }
+            catch {
+                // not remembered
+            }
+        });
+    }
+}
+
+const typing = e => e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement;
+
 function wireControls() {
     $('jpeg').addEventListener('change', e => {
         if (!state.image)
             return;
         setJpeg(e.target.checked);
-        // the candidates change with the thresholds, so the family index may name another family
-        state.family = 0;
         analyze();
     });
-    $('family').addEventListener('change', e => {
-        if (e.target.value === 'seed')
-            return;
-        state.family = Number(e.target.value);
-        state.overrides = {};
-        // every family was prepared together; only a switch back from a picked color needs the analysis again
-        if (state.seed || !state.familyEstimates) {
-            state.seed = null;
-            analyze();
-            return;
-        }
-        state.estimate = state.familyEstimates[state.family];
-        rebuildMask();
-        renderStylePanel();
-    });
-    $('pick-color').addEventListener('click', () => {
-        setPicking(!state.picking);
-        if (state.picking)
-            setEditing(false);
-    });
+    $('pick-color').addEventListener('click', () => setMode(state.mode === 'pick' ? null : 'pick'));
     $('fit-run').addEventListener('click', runFit);
-    $('fit-stop').addEventListener('click', stopFit);
-    $('fit-edit').addEventListener('click', () => setEditing(!state.editing));
+    $('fit-stop').addEventListener('click', () => stopFit());
+    $('edit-add').addEventListener('click', () => setMode(state.mode === 'add' ? null : 'add'));
+    $('edit-remove').addEventListener('click', () => setMode(state.mode === 'remove' ? null : 'remove'));
+    $('edit-undo').addEventListener('click', undo);
     $('show-axes').addEventListener('change', e => {
         state.showAxes = e.target.checked;
         refreshAxisMarks();
@@ -804,30 +1118,34 @@ function wireControls() {
         refreshMarks();
     });
     $('copy-csv').addEventListener('click', async () => {
-        await navigator.clipboard.writeText(dotsCsv());
-        $('fit-status').textContent = `Copied ${state.fit.dots.length} dots as CSV.`;
+        try {
+            await navigator.clipboard.writeText(dotsCsv());
+            setStatus(`Copied ${state.fit.dots.length} dots as CSV.`);
+        }
+        catch (err) {
+            setStatus(`Could not copy: ${err.message}`, 'error');
+        }
     });
     $('save-truth').addEventListener('click', saveTruth);
     for (const key of ['radius', 'alpha', 'blur']) {
         $(`style-${key}`).addEventListener('change', e => {
             const v = Number(e.target.value);
+            const overrides = state.families[state.current].overrides;
             if (e.target.value === '' || !Number.isFinite(v))
-                delete state.overrides[key];
+                delete overrides[key];
             else
-                state.overrides[key] = v;
-            rebuildMask();
-            renderStylePanel();
+                overrides[key] = v;
+            styleChanged();
         });
     }
     $('style-reset').addEventListener('click', () => {
-        state.overrides = {};
-        rebuildMask();
-        renderStylePanel();
+        state.families[state.current].overrides = {};
+        styleChanged();
     });
     $('layer-dilate').addEventListener('change', e => {
         const v = Number(e.target.value);
         state.dilate = e.target.value === '' || !Number.isFinite(v) ? null : Math.max(0, v);
-        rebuildMask();
+        styleChanged();
     });
     for (const input of document.querySelectorAll('input[name="overlay"]')) {
         input.addEventListener('change', () => {
@@ -839,8 +1157,20 @@ function wireControls() {
     }
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') {
-            setPicking(false);
-            setEditing(false);
+            setMode(null);
+            return;
+        }
+        if (typing(e))
+            return;
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            undo();
+        }
+        else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'a' && !$('edit-add').disabled) {
+            setMode(state.mode === 'add' ? null : 'add');
+        }
+        else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'r' && !$('edit-remove').disabled) {
+            setMode(state.mode === 'remove' ? null : 'remove');
         }
     });
 }
@@ -859,8 +1189,12 @@ async function init() {
 
     $('open-file').addEventListener('click', () => $('file-input').click());
     wireImageInput({ dropTarget: $('stage'), fileInput: $('file-input'), onFile: openFile });
+    wireSections();
     wireControls();
     renderLegend();
+    renderFamilies();
+    renderStylePanel();
+    renderFitControls();
 
     $('zoom-fit').addEventListener('click', () => view.fit());
     $('zoom-1').addEventListener('click', () => view.zoomTo(1));

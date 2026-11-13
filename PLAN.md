@@ -1207,6 +1207,34 @@ No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
 - [ ] Ground truth and benchmark rows for each test image. (bench1–3 have exact truth for their 59 renderings.)
 
 ### Phase 6 — Polish and deploy
+- [x] Layout and editing review (2026-11-12, below).
 - [ ] About panel, CSV/JSON export, copy to clipboard, URL state, dark theme.
 - [ ] Optional OCR of tick labels (open question 2).
 - [ ] GitHub Pages workflow and live-site check.
+
+**Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
+
+- Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to
+  `setFits`, which spread them over the new values), and every click after it only panned. Edits are now two
+  modes, **+ Add dot** and **− Remove dot** (A, R; Esc ends), so a click near a dot is never ambiguous. Remove
+  highlights the dot it would take. **Undo** (⌘Z) keeps 100 steps, a Find dots included.
+- Edits re-added every outlined dot without its drawing order, and an added one went on top: `refitNear` now keeps
+  each dot's z and places an added one with `bestZ` (regression test in outline.test.js).
+- The header holds the actions: source, Find dots and Stop with a progress bar and a status line of fixed width
+  (the stage, dot count and elapsed time, ticking between the fit's messages; the bar is indeterminate until the
+  first stage), the edit modes, and Copy CSV and Save truth. Above the image: the layer choice, Dots and Axes
+  toggles, zoom. Under it: a readout of the pixel and dot under the pointer and the layer's legend.
+- The panel is 360 px wide, in collapsible sections that remember their state: Dot families and Dots open; Axes
+  (with a summary line), Mask and Image closed.
+- Dot families are a list with a checkbox each (Find dots fits the checked ones), a swatch (the fill colors side
+  by side, or a hatch when the dots vary in color), and their dot counts once fitted. Selecting one shows its
+  style and overlays and no longer throws the fit away (it did). **+ Add family by color** adds a picked color as a
+  family of its own instead of replacing the list. The level swatches are labeled "Overlap levels" 1, 2, 3, … with
+  a tooltip; outlined and color-scale families hide the levels rows and the α box, whose values are internal.
+- A resize refits the view until the user zooms or pans: the image was sometimes drawn at 3% in a corner, fitted
+  before the stage had its size.
+
+Not done: an automated test of the page's edit flow (checked by hand in the Browser pane with clicks: remove,
+add, add on top of another dot, ⌘Z, an outlined family's add); fit speed in the app, which a hidden Browser
+pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
+
