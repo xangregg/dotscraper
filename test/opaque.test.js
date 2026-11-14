@@ -243,11 +243,12 @@ test('stroked fills: a light fill inside a dark stroke is a family, and each fam
 
 const ENGAGEMENT = new URL('../bench-nature/engagement1-10.1038-s41586-026-10967-w', import.meta.url).pathname;
 
-test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !existsSync(ENGAGEMENT + '.png') && 'bench-nature absent' }, async () => {
+// the user's hand-checked dots, as the app's Save CSV writes them (px)
+test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(ENGAGEMENT + '.png') && existsSync(ENGAGEMENT + '.csv')) && 'bench-nature engagement1 absent' }, async () => {
     // before: one family (50, 55, 99) with 33 dots; no lavender dot found; the user's export has 46 dots, 10 lavender
     const { readFileSync } = await import('node:fs');
-    const truth = readFileSync(ENGAGEMENT + '-dots.csv', 'utf8').trim().split(/\r?\n/).slice(1).map(l => l.split(','))
-        .map(c => ({ x: Number(c[1]), y: Number(c[2]), lavender: c[0].endsWith('#b6b9ff') }));
+    const truth = readFileSync(ENGAGEMENT + '.csv', 'utf8').trim().split(/\r?\n/).slice(1).map(l => l.split(','))
+        .map(c => ({ x: Number(c[1]), y: Number(c[2]), lavender: parseInt(c[0].split('#')[1].slice(0, 2), 16) > 150 })); // the light fill, whatever the export named it
     const results = extractAll(readImage(ENGAGEMENT + '.png'), false);
     const lav = results.find(r => r.est.familyMeasure.stroke && r.est.style.color[0] > 150);
     assert.ok(lav, 'a stroked lavender family');

@@ -78,6 +78,7 @@ const state = {
     worker: null,
     fitStart: 0,
     tick: null, // the status timer while a fit runs
+    blockedShown: false, // the status shows why Find dots can't run (findBlocked)
     showDots: true,
     hoverDot: -1, // index into fit.dots of the dot Remove would take or Move has chosen, highlighted
     axes: null, // from detectAxes
@@ -340,11 +341,33 @@ function nextPaint() {
     return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
-function setStatus(text, kind = '') {
+function setStatus(text, kind = '', title = text) {
     const el = $('fit-status');
     el.textContent = text;
-    el.title = text;
+    el.title = title;
     el.className = `status${kind ? ' ' + kind : ''}`;
+    state.blockedShown = false;
+}
+
+// Why Find dots can't run, or null when it can: a short line for the status beside it and the whole reason for
+// its tooltip (kite2: one family, no isolated dot to measure its radius from, and only a tooltip said so).
+function findBlocked() {
+    if (!state.image)
+        return null;
+    const families = state.families.map((f, k) => ({ f, k })).filter(({ k }) => styleOf(k));
+    if (!families.length)
+        return { short: 'No dot family found: add one by color', full: 'No dot family was found in the image. Add one by color (+ Add family by color) and click a dot.' };
+    const checked = families.filter(({ f }) => f.enabled);
+    if (!checked.length)
+        return { short: 'Check a dot family to find its dots', full: 'Find dots fits the checked families; none is checked.' };
+    const missing = checked.filter(({ k }) => !(styleOf(k).radius > 0));
+    if (missing.length < checked.length)
+        return null;
+    const names = missing.map(({ k }) => familyName(k)).join(', ');
+    return {
+        short: `${names}: set the radius`,
+        full: `${names}: no isolated whole dot to measure the radius from. Type it in the family's Radius box (px) to find the dots; Find dots refits it.`,
+    };
 }
 
 /**
@@ -423,6 +446,8 @@ function analyze({ auto = false } = {}) {
     selectFamily(0);
     $('analysis-time').textContent = `families ${Math.round(t1 - t0)} ms`;
     setStatus(auto && state.jpegAuto ? 'No dot family with exact colors: noisy color matching turned on (JPEG-like noise).' : '');
+    // what Find dots needs, if anything, outranks the note (the family notes keep it)
+    renderFitControls();
 }
 
 /** Show family k in the panel and the overlays; the fit is kept. */
@@ -588,7 +613,12 @@ function renderStylePanel() {
         input.value = style && !notOwn && style[key] !== null && style[key] !== undefined ? style[key].toFixed(digits) : '';
         input.classList.toggle('overridden', key in overrides);
         input.disabled = !style || notOwn;
-        input.title = notOwn ? 'Outlined dots: the ring and fill opacities are measured separately (see the notes)' : '';
+        // a radius Find dots needs and no isolated dot gave
+        const needed = key === 'radius' && style && !(style.radius > 0);
+        input.classList.toggle('needed', !!needed);
+        input.placeholder = needed ? 'needed' : '';
+        input.title = notOwn ? 'Outlined dots: the ring and fill opacities are measured separately (see the notes)'
+            : needed ? 'No isolated whole dot to measure the radius from: type it (px) to find the dots; Find dots refits it.' : '';
     }
     const fam0 = state.families[state.current];
     $('style-reset').disabled = !Object.keys(overrides).length && fam0.outlineEdit === undefined;
@@ -838,7 +868,16 @@ function renderFitControls() {
     const runnable = state.families.some((f, k) => f.enabled && styleOf(k)?.radius > 0);
     $('fit-run').disabled = running || !runnable;
     $('fit-run').textContent = running ? 'Finding…' : 'Find dots';
-    $('fit-run').title = runnable ? 'Find the dots of every checked family' : 'Check a family whose radius is known';
+    // the reason replaces the status while it holds, and goes when it no longer does
+    const blocked = running ? null : findBlocked();
+    $('fit-run').title = blocked?.full ?? 'Find the dots of every checked family (families without a radius are skipped)';
+    if (blocked) {
+        setStatus(blocked.short, 'needed', blocked.full);
+        state.blockedShown = true;
+    }
+    else if (state.blockedShown) {
+        setStatus('');
+    }
     $('fit-stop').disabled = !running;
     $('fit-progress').hidden = !running;
     const editable = !running && !!currentStyle()?.radius;

@@ -93,7 +93,7 @@ h1 {
     color: var(--ink);
 }
 
-.status.error {
+.status.error, .status.needed {
     color: var(--warning);
 }
 
@@ -334,6 +334,16 @@ input[type="number"] {
 input.overridden {
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* a value Find dots needs and the estimate couldn't give */
+input.needed {
+    border-color: var(--warning);
+    box-shadow: 0 0 0 1px var(--warning);
+}
+
+input.needed::placeholder {
+    color: var(--warning);
 }
 
 .notes p {
