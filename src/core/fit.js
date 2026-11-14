@@ -96,7 +96,7 @@ const FLAG_VISIBLE = 0.5; // flag a dot less than this fraction visible
 // flag a dot this close to another of its family (× r): in the view the two marks are one, and for opaque dots one
 // dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
 // of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
-const FLAG_CLOSE_RADII = MERGE_RADII;
+export const FLAG_CLOSE_RADII = MERGE_RADII;
 const PROGRESS_INTERVAL = 150; // ms between progress reports
 
 function huber(r) {

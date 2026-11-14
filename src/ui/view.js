@@ -2,6 +2,8 @@
 // screen = (image − origin) · scale. Enlarged, pixels are drawn as crisp squares so individual values can be
 // inspected; reduced, the browser smooths them.
 
+import { FLAG_CLOSE_RADII } from '../core/fit.js';
+
 const ZOOM_STEP = 2 ** 0.5; // factor per zoom button press or key press
 const WHEEL_ZOOM_RATE = 1 / 300; // log2 of the zoom factor per unit of wheel deltaY
 const MIN_SCALE = 1 / 32; // CSS px per image px
@@ -10,14 +12,16 @@ const FIT_MARGIN = 12; // CSS px left around the image when fitting
 const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and still count as a click
 const MARK_LINE = 1.5; // CSS px, dot outline width
 // Zoomed in, a 1.5 CSS px mark is lost on a dot of a similar color: from these zooms (CSS px per image px) a mark's
-// stroke grows with the zoom, staying MARK_LINE at the threshold. Possible duplicates first, since they matter most
-// and their two rings must stay apart; the other marks only for the selected family, so the rest stay quiet.
+// stroke grows as (zoom / threshold)^MARK_GROWTH, MARK_LINE at the threshold. Sublinear, so it still thins against
+// the image as you zoom in (at 8×: 3 CSS px for a duplicate, not 6). Possible duplicates first, since they matter
+// most and their two rings must stay apart; the other marks only for the selected family, so the rest stay quiet.
 const CLOSE_THICKEN_SCALE = 2;
 const FAMILY_THICKEN_SCALE = 2.5;
+const MARK_GROWTH = 0.5; // exponent: 1 would keep the stroke a fixed width in image px
 const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
 export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b', selected: '#f0a000', axis: '#e07800' };
-// a dot with another of its family almost on it: their marks coincide, so it gets a second ring this far outside,
-// or farther with a thick stroke
+// dots of a family almost on one another: their marks coincide, so the group gets one more ring this far outside
+// all of them, or farther with a thick stroke
 const CLOSE_RING_GAP = 4; // CSS px
 const CLOSE_RING_GAP_LINES = 2.5; // × the stroke width
 const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axis
@@ -43,6 +47,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     // or resized, after the image arrives); any zoom or pan by the user ends that
     let fitted = false;
     let marks = null; // { dots: [{ x, y, flags, family }], radius, selected, family }
+    let closeGroups = []; // indices into marks.dots of each group of 'close' dots, one shared ring each
     let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos] }]
 
     function draw() {
@@ -102,9 +107,9 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     // a mark's stroke width in CSS px at the current zoom
     function markLine(d) {
         if (d.flags?.includes('close') && scale >= CLOSE_THICKEN_SCALE)
-            return MARK_LINE * scale / CLOSE_THICKEN_SCALE;
+            return MARK_LINE * (scale / CLOSE_THICKEN_SCALE) ** MARK_GROWTH;
         if (d.family === marks.family && scale >= FAMILY_THICKEN_SCALE)
-            return MARK_LINE * scale / FAMILY_THICKEN_SCALE;
+            return MARK_LINE * (scale / FAMILY_THICKEN_SCALE) ** MARK_GROWTH;
         return MARK_LINE;
     }
 
@@ -119,17 +124,49 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
             ctx.beginPath();
             const r = d.r ?? marks.radius;
             ctx.arc(d.x, d.y, r, 0, 2 * Math.PI);
-            if (close) {
-                const gap = Math.max(CLOSE_RING_GAP, CLOSE_RING_GAP_LINES * line) / scale;
-                ctx.moveTo(d.x + r + gap, d.y);
-                ctx.arc(d.x, d.y, r + gap, 0, 2 * Math.PI);
-            }
             ctx.moveTo(d.x - c, d.y);
             ctx.lineTo(d.x + c, d.y);
             ctx.moveTo(d.x, d.y - c);
             ctx.lineTo(d.x, d.y + c);
             ctx.stroke();
         });
+        // one ring around each group of near-duplicates, centered on the group, outside every dot of it
+        ctx.strokeStyle = MARK_COLORS.close;
+        for (const group of closeGroups) {
+            const dots = group.map(i => marks.dots[i]);
+            const line = markLine(dots[0]);
+            ctx.lineWidth = line / scale;
+            const cx = dots.reduce((t, d) => t + d.x, 0) / dots.length;
+            const cy = dots.reduce((t, d) => t + d.y, 0) / dots.length;
+            const reach = Math.max(...dots.map(d => Math.hypot(d.x - cx, d.y - cy) + (d.r ?? marks.radius)));
+            ctx.beginPath();
+            ctx.arc(cx, cy, reach + Math.max(CLOSE_RING_GAP, CLOSE_RING_GAP_LINES * line) / scale, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+    }
+
+    // Groups of 'close' dots: those of one family within FLAG_CLOSE_RADII · r of each other, chained. O(k²) in the
+    // k flagged dots, which are few.
+    function groupClose(m) {
+        const ids = m.dots.flatMap((d, i) => (d.flags?.includes('close') ? [i] : []));
+        const parent = new Map(ids.map(i => [i, i]));
+        const root = i => (parent.get(i) === i ? i : root(parent.get(i)));
+        for (let a = 0; a < ids.length; a++) {
+            for (let b = a + 1; b < ids.length; b++) {
+                const p = m.dots[ids[a]];
+                const q = m.dots[ids[b]];
+                if (p.family === q.family && Math.hypot(p.x - q.x, p.y - q.y) < FLAG_CLOSE_RADII * (p.r ?? m.radius))
+                    parent.set(root(ids[a]), root(ids[b]));
+            }
+        }
+        const groups = new Map();
+        for (const i of ids) {
+            const g = root(i);
+            if (!groups.has(g))
+                groups.set(g, []);
+            groups.get(g).push(i);
+        }
+        return [...groups.values()];
     }
 
     function setScale(newScale, anchorX, anchorY) {
@@ -252,6 +289,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         /** Dots to outline over the image, or null. */
         setMarks(m) {
             marks = m;
+            closeGroups = m ? groupClose(m) : [];
             draw();
         },
         zoomBy(factor) {
