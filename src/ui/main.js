@@ -419,7 +419,7 @@ function refreshView(keepTransform) {
 function refreshMarks(dots = state.fit?.dots) {
     const style = currentStyle();
     const selected = dots === state.fit?.dots && state.hoverDot >= 0 ? state.hoverDot : undefined;
-    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected } : null);
+    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected, family: state.current } : null);
 }
 
 /** Estimate every family and select the first. Fitted dots are dropped: they were fitted to other estimates. */

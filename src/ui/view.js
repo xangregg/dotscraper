@@ -9,10 +9,17 @@ const MAX_SCALE = 64; // CSS px per image px
 const FIT_MARGIN = 12; // CSS px left around the image when fitting
 const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and still count as a click
 const MARK_LINE = 1.5; // CSS px, dot outline width
+// Zoomed in, a 1.5 CSS px mark is lost on a dot of a similar color: from these zooms (CSS px per image px) a mark's
+// stroke grows with the zoom, staying MARK_LINE at the threshold. Possible duplicates first, since they matter most
+// and their two rings must stay apart; the other marks only for the selected family, so the rest stay quiet.
+const CLOSE_THICKEN_SCALE = 2;
+const FAMILY_THICKEN_SCALE = 2.5;
 const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
 export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b', selected: '#f0a000', axis: '#e07800' };
-// a dot with another of its family almost on it: their marks coincide, so it gets a second ring this far outside
+// a dot with another of its family almost on it: their marks coincide, so it gets a second ring this far outside,
+// or farther with a thick stroke
 const CLOSE_RING_GAP = 4; // CSS px
+const CLOSE_RING_GAP_LINES = 2.5; // × the stroke width
 const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axis
 
 /**
@@ -35,7 +42,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     // the view shows the whole image as last fitted, so a resize should fit it again (the stage can be laid out,
     // or resized, after the image arrives); any zoom or pan by the user ends that
     let fitted = false;
-    let marks = null; // { dots: [{ x, y, flags }], radius, selected }
+    let marks = null; // { dots: [{ x, y, flags, family }], radius, selected, family }
     let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos] }]
 
     function draw() {
@@ -92,19 +99,30 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     }
 
     // dot outlines and centers in image coordinates, line widths constant in CSS px
+    // a mark's stroke width in CSS px at the current zoom
+    function markLine(d) {
+        if (d.flags?.includes('close') && scale >= CLOSE_THICKEN_SCALE)
+            return MARK_LINE * scale / CLOSE_THICKEN_SCALE;
+        if (d.family === marks.family && scale >= FAMILY_THICKEN_SCALE)
+            return MARK_LINE * scale / FAMILY_THICKEN_SCALE;
+        return MARK_LINE;
+    }
+
     function drawMarks() {
-        ctx.lineWidth = MARK_LINE / scale;
-        const c = MARK_CROSS / scale;
         marks.dots.forEach((d, i) => {
             const close = d.flags?.includes('close');
+            const line = markLine(d);
+            ctx.lineWidth = line / scale;
+            const c = Math.max(MARK_CROSS, 2 * line) / scale;
             ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected
                 : close ? MARK_COLORS.close : (d.flags?.length ? MARK_COLORS.flagged : MARK_COLORS.ok);
             ctx.beginPath();
             const r = d.r ?? marks.radius;
             ctx.arc(d.x, d.y, r, 0, 2 * Math.PI);
             if (close) {
-                ctx.moveTo(d.x + r + CLOSE_RING_GAP / scale, d.y);
-                ctx.arc(d.x, d.y, r + CLOSE_RING_GAP / scale, 0, 2 * Math.PI);
+                const gap = Math.max(CLOSE_RING_GAP, CLOSE_RING_GAP_LINES * line) / scale;
+                ctx.moveTo(d.x + r + gap, d.y);
+                ctx.arc(d.x, d.y, r + gap, 0, 2 * Math.PI);
             }
             ctx.moveTo(d.x - c, d.y);
             ctx.lineTo(d.x + c, d.y);
