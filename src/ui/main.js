@@ -208,7 +208,7 @@ function familyKind(k) {
         kind = `colored by a scale, α ${fmt(st.alpha, 2)}`;
     }
     else if (est.familyMeasure?.kind === 'opaque') {
-        kind = 'opaque';
+        kind = est.familyMeasure.stroke || est.familyMeasure.outline ? 'opaque, outlined' : 'opaque';
     }
     else {
         kind = `translucent, α ${fmt(st.alpha, 2)}`;

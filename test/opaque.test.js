@@ -196,3 +196,63 @@ test('regression: no outlined family made of a translucent family’s levels (ec
     const { estimates } = estimateFamilies(readPng(new URL('../testgraphs/economist-canada-unfriendly-chart.png', import.meta.url).pathname));
     assert.deepEqual(estimates.map(e => e.familyMeasure.kind), ['translucent', 'translucent']);
 });
+
+// Fills inside one thin dark stroke (bench-nature engagement1's style): each dot drawn as a stroke disc, then its
+// fill inside, in data order. The 0.8 px stroke never shows its own color at exact pixel coverage.
+const STROKED = { width: 260, height: 200, radius: 7, stroke: 0.8, strokeColor: [20, 20, 60], fills: [[188, 186, 234], [4, 3, 87]] };
+
+function strokedImage(seed) {
+    const rng = createRng(seed);
+    const { width, height, radius } = STROKED;
+    const dots = [];
+    while (dots.length < 30) {
+        const d = { x: 20 + rng.uniform() * (width - 40), y: 20 + rng.uniform() * (height - 40), family: dots.length % 2 };
+        // the first 16 apart, so each family has isolated dots; the rest anywhere
+        if (dots.length < 16 && dots.some(e => Math.hypot(e.x - d.x, e.y - d.y) < 2 * radius + 6))
+            continue;
+        dots.push(d);
+    }
+    let img = solidImage(width, height, [255, 255, 255]);
+    for (const d of dots) {
+        for (const [color, r] of [[STROKED.strokeColor, radius], [STROKED.fills[d.family], radius - STROKED.stroke]]) {
+            const m = createDotModel(img, { color, alpha: 1, radius: r, blur: 0 });
+            m.add(d.x, d.y);
+            img = m.image;
+        }
+    }
+    return { image: toRgba(img), dots };
+}
+
+test('stroked fills: a light fill inside a dark stroke is a family, and each family keeps its own dots', () => {
+    // before: one family, the dark one; the light dots' edges mix three colors (white, stroke, fill), which the
+    // opaque test read as unknown, so none of them was found
+    const { image, dots } = strokedImage(7);
+    const results = extractAll(image, false);
+    assert.equal(results.length, 2);
+    const light = results.find(r => r.est.style.color[0] > 150);
+    const dark = results.find(r => r.est.style.color[0] < 50);
+    assert.ok(light?.est.familyMeasure.stroke, 'the light family is read with its stroke');
+    for (const [res, k] of [[light, 0], [dark, 1]]) {
+        const mine = matchDots(dots.filter(d => d.family === k), res.fit.dots, 2);
+        const theirs = matchDots(dots.filter(d => d.family !== k), res.fit.dots, 2);
+        assert.ok(mine.pairs.length >= 14, `family ${k}: ${mine.pairs.length} of 15`);
+        assert.ok(theirs.pairs.length === 0, `family ${k} took ${theirs.pairs.length} of the other's dots`);
+        near(res.fit.radius, STROKED.radius, 0.3, `family ${k} radius`);
+    }
+});
+
+const ENGAGEMENT = new URL('../bench-nature/engagement1-10.1038-s41586-026-10967-w', import.meta.url).pathname;
+
+test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !existsSync(ENGAGEMENT + '.png') && 'bench-nature absent' }, async () => {
+    // before: one family (50, 55, 99) with 33 dots; no lavender dot found; the user's export has 46 dots, 10 lavender
+    const { readFileSync } = await import('node:fs');
+    const truth = readFileSync(ENGAGEMENT + '-dots.csv', 'utf8').trim().split(/\r?\n/).slice(1).map(l => l.split(','))
+        .map(c => ({ x: Number(c[1]), y: Number(c[2]), lavender: c[0].endsWith('#b6b9ff') }));
+    const results = extractAll(readImage(ENGAGEMENT + '.png'), false);
+    const lav = results.find(r => r.est.familyMeasure.stroke && r.est.style.color[0] > 150);
+    assert.ok(lav, 'a stroked lavender family');
+    const m = matchDots(truth.filter(t => t.lavender), lav.fit.dots, 3);
+    assert.ok(m.pairs.length === 10 && m.extra.length <= 1, `lavender: ${m.pairs.length} of 10, ${m.extra.length} extra`);
+    for (const r of results.filter(r => r !== lav))
+        assert.equal(matchDots(truth.filter(t => t.lavender), r.fit.dots, 3).pairs.length, 0, 'another family took lavender dots');
+});

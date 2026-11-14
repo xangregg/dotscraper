@@ -255,6 +255,43 @@ as poorly determined rather than silently placed or dropped.
    mix them (hair2–3: black outlines around pink and gray fills, a gray fill putting black in the fill plane, and
    outlines as dark as text, which the ink mask removes). Rethink: each family gets its fill and its ring (color,
    width, opacity), measured from its own isolated dots, so outlined and plain families can share an image.
+   engagement1 (2026-11-13) shows how the global view fails. Five blue fills (navy 4, 3, 87 to lavender
+   188, 186, 234) share one dark stroke, under a pixel wide and blurred, so it never shows its own color (on
+   lavender its darkest pixel is about 80, 80, 105). (a) Lavender and cyan never become families: their edge
+   pixels mix three colors (white, stroke, fill), the opaque test accepts two, so the edge is unknown and no dot
+   shape is left (lavender: radius 5.5, the fill alone, 0 dots). (b) The stroke is close to the navy fill, so
+   every dot's ring reads as navy coverage: the one family found (50, 55, 99) takes all 20 navy dots, 7 of 10
+   mid-blue and 1 of 6 cyan, and no lavender. Prototype: coverage as the weight off white inside the triangle
+   white–fill–stroke, the stroke taken as the most extreme ring pixel. With lavender's stroke read from its own
+   rings, 8 Hough centers (10 in truth, 6 with ¾ of the arc) where there were 0; but rings alone don't say whose
+   dot it is, and the dark families' triangles claim 9–13 of the other families' dots each. A dot's family has to
+   come from its fill: the interior inside the ring.
+
+   **Stages 1–2 done** (2026-11-13, style.js). (1) A color that fails as a plain or outlined family is tried with a
+   stroke: `strokeColor` reads it from the rings of isolated fills (pixels up to 4 px past the fill's color, the
+   fill isolated when 90% of the band 5–7 px out is background; engagement1's stroke is dark 3–4 px out and
+   background from 5), as the mean of the ring pixels in the top 20% by distance off the background–fill line, and
+   needs at least 30 units off it. Coverage is then the weight off the background inside the triangle
+   background–fill–stroke, and a center is the family's only if its inner disc is the fill's weight (a darker
+   family's fill can lie in the triangle). In the final pass, when any family is stroked, every family's coverage
+   gives a ring pixel within 4 px of another fill, and nearer it by 0.5 px, to that dot (it reads 0). Both masks are
+   the fills' thick parts: the stroke is within 40 units of navy, so navy's color mask took the lavender rings, and
+   lavender's coverage handed its own rings to navy (17 dots for 10, at r 6.84) until only thick parts counted.
+   Tried and reverted: accepting pixels darker than the stroke estimate (it averages the darkest mixes seen, so
+   some go beyond it); black text went with them and lavender was lost. (2) The fit needs nothing new: it works in
+   coverage, where an outlined dot is one disc of the outer radius. For display, a stroked family carries
+   `style.outline` (the stroke estimate and the fill's radius), so the Model view draws a ring under each fill, and
+   the list calls it "opaque, outlined".
+
+   Results. engagement1 (against the user's 46-dot export): 33 dots in one family, P 0.848 R 0.609 → 44 in two,
+   P 0.841 R 0.804; lavender 10 of 10, no extra, r 7.58, and the navy family takes none of them (it took 7 of the
+   mid-blue before and 6 now). hair3 is now found without the JPEG fallback, its pink fill inside a black stroke:
+   recall 0.735 → 0.824 (28 of 34; the 6 gray dots are no family). Every other bench row is unchanged (synthetic,
+   bench1–3, testgraphs, bench-nature; diffed without times). Tests: synthetic light and dark fills in a 0.8 px
+   stroke (light 14+ of 15, dark 15, none across, radius within 0.3 px; before, the light dots were never found)
+   and engagement1 (skipped without bench-nature). Still open: engagement1's mid-blue and cyan (mid-blue has 3
+   isolated fills and no strong arc; cyan's six dots never make a color cluster), hair2 and tumour1 (white fills:
+   the fill is the background), and folding the global ring readers (outline.js) into this (stage 3).
 8. ~~License.~~ **Decided: 0BSD**, like lafspline.
 
 ## 6. What to borrow from the sibling projects

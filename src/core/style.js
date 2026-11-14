@@ -117,6 +117,23 @@ const MAX_MIX = 1.3;
 const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–outline segment still lies on it
 const OUTLINE_OPENING = 1.5; // px, radius of the disc that must remove an outline's color …
 const OUTLINE_MAX_THICK = 0.25; // … all but this share of it
+// Stroked fills (PLAN.md open question 10): a fill inside a stroke so thin and blurred that it never shows its own
+// color (bench-nature engagement1: on lavender 188, 186, 234 its darkest pixel is about 80, 80, 105). Its edge
+// pixels mix three colors, background, stroke and fill, where the opaque test accepts two, so the edge read as
+// unknown and no dot was found. The stroke is read from the rings of isolated fills, as the mean of the ring pixels
+// farthest off the background–fill line: not its true color, which no pixel shows, but the far corner of the
+// colors seen, so every ring pixel lies inside the triangle background–fill–stroke.
+const STROKE_RING = 4; // px outside a fill read as its ring (engagement1: dark out to 3–4 px past the fill's color, background from 5)
+const STROKE_CLEAR = 7; // px: beyond the ring, out to this, a fill must have background around it to count as isolated …
+const STROKE_CLEAR_SHARE = 0.9; // … for this share of those pixels
+const STROKE_COMPONENT = [12, 5000]; // px, sizes of the fill components whose rings are read
+const STROKE_MIN_RINGS = 3; // isolated fills needed
+const STROKE_TOP = 0.8; // quantile of the ring pixels' distance off the line: those beyond are the stroke
+const STROKE_MIN_OFF = 30; // 0–255 units: the stroke must lie this far off the background–fill line
+const STROKE_SLACK = 0.15; // barycentric weights may go this far below 0
+// A ring belongs to the fill it surrounds: in each family's coverage, a ring pixel nearer another family's fill (by
+// more than STROKE_TIE) is that dot's, and reads 0, so a disc of this family can't be placed to explain it.
+const STROKE_TIE = 0.5; // px
 
 /**
  * Tolerances that assume exact renders, and their JPEG replacements (for an image whose chroma jpeg.js has
@@ -1071,6 +1088,112 @@ function localBackground(image, near, colors, others) {
     return bg;
 }
 
+// 1 where a pixel is another family's ring: within `reach` of that family's fill and nearer it (by STROKE_TIE) than to
+// this family's fill (`own`, its thick parts); null without rings. O(families · pixels).
+function ringOwners(image, own, rings) {
+    if (!rings?.length)
+        return null;
+    const { width, height } = image;
+    const n = width * height;
+    const dist = idx => {
+        const out = new Float32Array(n);
+        for (let p = 0; p < n; p++) {
+            const q = idx[p];
+            out[p] = q < 0 ? Infinity : Math.hypot(p % width - q % width, Math.floor(p / width) - Math.floor(q / width));
+        }
+        return out;
+    };
+    const dOwn = dist(nearestTransform(own, width, height));
+    const out = new Uint8Array(n);
+    for (const { fill, reach } of rings) {
+        const theirs = thickMembers(image, [fill]);
+        for (let p = 0; p < n; p++)
+            theirs[p] = own[p] ? 0 : theirs[p];
+        const d = dist(nearestTransform(theirs, width, height));
+        for (let p = 0; p < n; p++) {
+            if (!own[p] && !theirs[p] && d[p] <= reach && d[p] < dOwn[p] - STROKE_TIE)
+                out[p] = 1;
+        }
+    }
+    return out;
+}
+
+// 1 on the thick parts (an opening) of the pixels within CLUSTER_TOL of any of `colors`
+function thickMembers(image, colors) {
+    const { width, height, data } = image;
+    const m = new Uint8Array(width * height);
+    for (let p = 0; p < m.length; p++)
+        m[p] = colors.some(c => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL) ? 1 : 0;
+    return opening(m, width, height, THICK_OPENING);
+}
+
+/**
+ * The stroke around a fill color, read from the rings of its isolated components, or null when they show none.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} color  the fill, 0–255
+ * @param {number[]} B  the page background, 0–255
+ * @returns {{color: number[], off: number, rings: number}|null}  color 0–255; off: its distance from the
+ *   background–fill line, 0–255 units; rings: isolated fills read
+ */
+export function strokeColor(image, color, B) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const own = new Float32Array(n);
+    for (let p = 0; p < n; p++)
+        own[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= CLUSTER_TOL ? 1 : 0;
+    const comps = components(own, width, height);
+    const label = new Int32Array(n).fill(-1);
+    comps.forEach((c, k) => {
+        for (const p of c)
+            label[p] = k;
+    });
+    const nearest = nearestTransform(Uint8Array.from(own), width, height);
+    const clear = new Float64Array(comps.length);
+    const clearBg = new Float64Array(comps.length);
+    const ring = comps.map(() => []);
+    for (let p = 0; p < n; p++) {
+        const q = nearest[p];
+        if (own[p] || q < 0)
+            continue;
+        const d = Math.hypot(p % width - q % width, Math.floor(p / width) - Math.floor(q / width));
+        const k = label[q];
+        if (d <= STROKE_RING) {
+            ring[k].push(p);
+        }
+        else if (d <= STROKE_CLEAR) {
+            clear[k]++;
+            if (Math.hypot(data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]) <= INK_TOL)
+                clearBg[k]++;
+        }
+    }
+    const u = color.map((v, ch) => v - B[ch]);
+    const uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+    const pixels = [];
+    let rings = 0;
+    comps.forEach((c, k) => {
+        if (c.length < STROKE_COMPONENT[0] || c.length > STROKE_COMPONENT[1] || !clear[k] || clearBg[k] < STROKE_CLEAR_SHARE * clear[k])
+            return;
+        rings++;
+        for (const p of ring[k]) {
+            const v = [0, 1, 2].map(ch => data[4 * p + ch] - B[ch]);
+            if (Math.hypot(...v) <= INK_TOL)
+                continue;
+            const m = (v[0] * u[0] + v[1] * u[1] + v[2] * u[2]) / uu;
+            pixels.push({ p, off: Math.hypot(v[0] - m * u[0], v[1] - m * u[1], v[2] - m * u[2]) });
+        }
+    });
+    if (rings < STROKE_MIN_RINGS || !pixels.length)
+        return null;
+    pixels.sort((a, b) => a.off - b.off);
+    const top = pixels.slice(Math.floor(STROKE_TOP * (pixels.length - 1)));
+    const S = [0, 1, 2].map(ch => top.reduce((t, q) => t + data[4 * q.p + ch], 0) / top.length);
+    const v = S.map((x, ch) => x - B[ch]);
+    const m = (v[0] * u[0] + v[1] * u[1] + v[2] * u[2]) / uu;
+    const off = Math.hypot(v[0] - m * u[0], v[1] - m * u[1], v[2] - m * u[2]);
+    return off >= STROKE_MIN_OFF ? { color: S, off, rings } : null;
+}
+
 /**
  * An opaque family from a color: the coverage image D (0 its local background … 1 the color; NaN where a pixel is
  * neither, or contrast is too low to tell), its typical background (the most common color around it), the radius
@@ -1079,8 +1202,20 @@ function localBackground(image, near, colors, others) {
  * With an outline color, a dot is its fill inside an opaque ring of the outline (JMP's outlined markers: an outline
  * disc 1.7 px larger in radius under the fill): every pixel between the two colors is covered, and the outer rim is
  * read as the outline's coverage of the background. The boundary between fill and outline isn't used.
+ *
+ * With a stroke (strokeColor), a pixel inside the triangle background–fill–stroke is dot by the weight it takes off
+ * the background, so the ring counts as dot; the fill's own weight decides whether a center is this family's (its
+ * inner disc must be the fill: a darker family's fill can lie inside the triangle, near the stroke). With `rings`,
+ * the other families' fills, a ring pixel nearer one of them than to this family's fill reads 0.
+ *
+ * @param {object} [opts]
+ * @param {number[]|null} [opts.stroke]  0–255
+ * @param {number} [opts.fillRadius]  px, the fill inside the stroke
+ * @param {{fill: number[], reach: number}[]|null} [opts.rings]  other families' fills, and how far (px) their rings
+ *   reach beyond them
  */
-export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES, outline = null) {
+export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES, outline = null, opts = {}) {
+    const stroke = opts.stroke ?? null;
     const { width, height, data } = image;
     const n = width * height;
     const member = (p, c) => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL;
@@ -1092,8 +1227,10 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     }
     const thick = opening(mask, width, height, THICK_OPENING);
     const thickOwn = outline ? opening(own, width, height, THICK_OPENING) : thick;
-    const B = ringBackground(image, thick.some(v => v) ? thick : mask) ?? backgrounds[0];
-    const near = dilate(mask, width, height, NEAR_FAMILY);
+    // a stroked fill's surroundings are its ring: its background lies beyond
+    const body = thick.some(v => v) ? thick : mask;
+    const B = ringBackground(image, stroke ? dilate(body, width, height, STROKE_RING) : body) ?? backgrounds[0];
+    const near = dilate(mask, width, height, NEAR_FAMILY + (stroke ? STROKE_RING : 0));
     // the outer rim mixes the background with the outline, if there is one
     const edge = outline ?? color;
     // the family's color noise: RMS distance from its color over interior pixels (all 8 neighbors in the family)
@@ -1110,19 +1247,61 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     }
     const offAbs = Math.max(OFF_MIX_ABS, OFF_MIX_NOISE * (noiseN ? Math.sqrt(noiseSum / noiseN) : 0));
     const pageColorsForBg = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL
-        && (!outline || Math.hypot(...P.map((v, ch) => v - outline[ch])) > CLUSTER_TOL));
+        && (!outline || Math.hypot(...P.map((v, ch) => v - outline[ch])) > CLUSTER_TOL)
+        && (!stroke || Math.hypot(...P.map((v, ch) => v - stroke[ch])) > CLUSTER_TOL));
     const bg = localBackground(image, near, pageColorsForBg, others);
     // background colors, but not this family's own (a dot color can be common enough to count as a background)
     const pageColors = pageColorsForBg;
     const fo = outline ? color.map((v, ch) => v - outline[ch]) : null;
     const foo = fo ? fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2] : 0;
+    // from the family's thick parts: a stroke near its color (engagement1's navy) is thin, and joins its color mask
+    const theirs = ringOwners(image, thick.some(v => v) ? thick : own, opts.rings ?? null);
+    // other families' fills, thick parts only: a stroke near another family's color is still this dot's ring
+    const otherFill = stroke ? thickMembers(image, others) : null;
     const D = new Float32Array(n);
+    const fillW = stroke ? new Float32Array(n) : null;
     for (let p = 0; p < n; p++) {
         const r = data[4 * p];
         const g = data[4 * p + 1];
         const b = data[4 * p + 2];
         if (!near[p] && pageColors.some(P => Math.hypot(r - P[0], g - P[1], b - P[2]) <= INK_TOL)) {
             D[p] = 0; // away from the family on a background color: no dot here
+            continue;
+        }
+        if (theirs && theirs[p]) {
+            D[p] = 0; // another family's dot's ring
+            continue;
+        }
+        if (stroke) {
+            // another family's fill is that dot, never this one's partial coverage
+            if (!own[p] && otherFill[p]) {
+                D[p] = NaN;
+                continue;
+            }
+            const w = near[p] ? [bg[3 * p], bg[3 * p + 1], bg[3 * p + 2]] : B;
+            const a1 = color.map((v, ch) => v - w[ch]);
+            const a2 = stroke.map((v, ch) => v - w[ch]);
+            const v = [r - w[0], g - w[1], b - w[2]];
+            const m11 = a1[0] * a1[0] + a1[1] * a1[1] + a1[2] * a1[2];
+            const m12 = a1[0] * a2[0] + a1[1] * a2[1] + a1[2] * a2[2];
+            const m22 = a2[0] * a2[0] + a2[1] * a2[1] + a2[2] * a2[2];
+            const det = m11 * m22 - m12 * m12;
+            if (m11 < MIN_CONTRAST * MIN_CONTRAST || det <= 0) {
+                D[p] = NaN;
+                continue;
+            }
+            const r1 = v[0] * a1[0] + v[1] * a1[1] + v[2] * a1[2];
+            const r2 = v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2];
+            const wf = (m22 * r1 - m12 * r2) / det;
+            const ws = (m11 * r2 - m12 * r1) / det;
+            const off = Math.hypot(v[0] - wf * a1[0] - ws * a2[0], v[1] - wf * a1[1] - ws * a2[1], v[2] - wf * a1[2] - ws * a2[2]);
+            const reach = Math.hypot(wf * a1[0] + ws * a2[0], wf * a1[1] + ws * a2[1], wf * a1[2] + ws * a2[2]);
+            if (off > Math.max(offAbs, OFF_MIX_REL * reach) || wf < -STROKE_SLACK || ws < -STROKE_SLACK || wf + ws > MAX_MIX) {
+                D[p] = NaN;
+                continue;
+            }
+            D[p] = Math.min(1, Math.max(0, wf + ws));
+            fillW[p] = Math.max(0, wf);
             continue;
         }
         if (fo) {
@@ -1175,21 +1354,23 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         const weight = new Uint8Array(n);
         for (let p = 0; p < n; p++)
             weight[p] = Number.isNaN(D[p]) ? 0 : 1;
-        // a center counts if most of its edge is seen and its disc is filled (text: round glyphs are hollow)
-        const rf = DOT_FILL_RADII * radius;
+        // a center counts if most of its edge is seen and its disc is filled (text: round glyphs are hollow); a
+        // stroked family's inner disc must be its fill
+        const rf = DOT_FILL_RADII * (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : radius);
+        const inside = stroke ? fillW : D;
         const filled = c => {
-            let inside = 0;
+            let count = 0;
             let on = 0;
             for (let y = Math.max(0, Math.floor(c.y - rf)); y < Math.min(height, Math.ceil(c.y + rf)); y++) {
                 for (let x = Math.max(0, Math.floor(c.x - rf)); x < Math.min(width, Math.ceil(c.x + rf)); x++) {
                     if ((x + 0.5 - c.x) ** 2 + (y + 0.5 - c.y) ** 2 > rf * rf)
                         continue;
-                    inside++;
-                    if (D[y * width + x] > 0.5)
+                    count++;
+                    if (inside[y * width + x] > 0.5)
                         on++;
                 }
             }
-            return inside > 0 && on >= DOT_MIN_FILL * inside;
+            return count > 0 && on >= DOT_MIN_FILL * count;
         };
         const centers = houghCenters(D, weight, width, height, radius).filter(c => c.arc >= DOT_MIN_ARC && filled(c));
         dots = centers.length;
@@ -1216,7 +1397,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     }
     const pixels = mask.reduce((t, v) => t + v, 0);
     return {
-        kind: 'opaque', seed: color, outline, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
+        kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
         levels: [{ t: Math.hypot(...B.map((v, ch) => v - color[ch])), color, count: pixels }],
         beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
     };
@@ -1312,6 +1493,9 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             if (isDotFamily(outlined))
                 fam = { ...outlined, fillRadius: fam.radius };
         }
+        // a fill inside a stroke too thin to show its own color
+        if (!isDotFamily(fam))
+            fam = strokedFamily(image, cl.color, backgrounds, tol, fam) ?? fam;
         fam.interior = interior / count;
         if (isDotFamily(fam))
             out.push(fam);
@@ -1320,11 +1504,26 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     // first measurement decides what is a family: a small one surrounded by others (nicest language's red and dark
     // blue, about 10 dots each) can fail the test once its neighbors' colors are excluded.
     const colors = out.map(f => f.seed);
+    // with stroked families, every family's coverage gives the other fills' rings to their dots (strokes are usually
+    // drawn on every dot, also those whose fill passed as plain: engagement1's navy took the others' rings)
+    // (the reach is from the fill's color mask, as strokeColor reads the ring)
+    const stroked = out.some(f => f.stroke);
     const final = out.map(f => {
-        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed), tol, f.outline);
+        const rings = stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null;
+        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed), tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
+}
+
+// The family of a fill color inside a stroke (strokeColor), or null when no stroke shows or it isn't a dot family.
+// `plain` is the color measured without one: its radius is the fill's.
+function strokedFamily(image, color, backgrounds, tol, plain) {
+    const stroke = strokeColor(image, color, backgrounds[0]);
+    if (!stroke)
+        return null;
+    const fam = measureOpaque(image, color, backgrounds, [], tol, null, { stroke: stroke.color, fillRadius: plain.radius });
+    return isDotFamily(fam) ? { ...fam, fillRadius: plain.radius, strokeOff: stroke.off } : null;
 }
 
 function median(a) {
@@ -1359,8 +1558,10 @@ export function estimateStyle(image, opts = {}) {
     if (opts.seed) {
         fam = measureFamily(image, B, opts.seed, flat, tol);
         fam.kind = 'translucent';
-        if (!fam.translucent)
-            fam = measureOpaque(image, opts.seed, backgrounds, [], tol);
+        if (!fam.translucent) {
+            const plain = measureOpaque(image, opts.seed, backgrounds, [], tol);
+            fam = isDotFamily(plain) ? plain : strokedFamily(image, opts.seed, backgrounds, tol, plain) ?? plain;
+        }
         familyIndex = -1;
     }
     else {
@@ -1421,6 +1622,9 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
 function opaqueEstimate(image, fam, candidates, familyIndex, flat, pageBackground) {
     const { width, height } = image;
     const notes = ['Opaque dots: overlapping dots hide each other, so a dot entirely behind others can’t be found.'];
+    if (fam.stroke && fam.fillRadius)
+        notes.push(`Outlined: a fill of radius ${fam.fillRadius.toFixed(1)} px inside a stroke too thin to show its own color; `
+            + `its darkest mixes average ${fam.stroke.map(Math.round).join(', ')}. The ring counts as part of the dot, and a ring nearer another family's fill is that dot's.`);
     let edge;
     if (fam.isolated.length) {
         edge = edgeBlur(fam.D, width, fam.isolated);
@@ -1443,8 +1647,9 @@ function opaqueEstimate(image, fam, candidates, familyIndex, flat, pageBackgroun
         familyMeasure: fam,
         style: {
             color: [...fam.seed], alpha: 1, levels: fam.table, measuredLevels: 1, radius: fam.radius, blur,
-            // for display only: the fit sees an outlined dot as one disc (measureOpaque)
-            ...(fam.outline && fam.fillRadius ? { outline: { color: [...fam.outline], inner: fam.fillRadius / fam.radius } } : {}),
+            // for display only: the fit sees an outlined dot as one disc (measureOpaque); a stroke is drawn in the
+            // darkest mix seen, not its true color, which no pixel shows
+            ...((fam.outline ?? fam.stroke) && fam.fillRadius ? { outline: { color: [...(fam.outline ?? fam.stroke)], inner: fam.fillRadius / fam.radius } } : {}),
         },
         D: fam.D, fitT, isolated: fam.isolated, edge, notes,
     };
