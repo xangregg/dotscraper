@@ -1,6 +1,7 @@
 node_modules/
 .DS_Store
 .idea/
+.claude/
 # notes for this machine only
 CLAUDE.local.md
 # test images (third-party figures, not cleared for redistribution) and anything derived from them: everything in
