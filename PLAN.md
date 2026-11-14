@@ -1427,3 +1427,50 @@ wave1 931 for 43, hair3 722 for 34, primates2 97 for 15, hair2 170 for 18 (overc
 another small family over text or lines); autocor1 R 0.833; cells1 (no x ticks found for its two lanes), delta1,
 kite2 and phase1 (no family), kite1, molar1 and protrusion1–2 (no radius).
 
+**fanc2 and wave1 overcounts** (2026-11-14). comment1 was re-truthed (92 dots, no near-duplicates): its 10 extra
+dots are now exactly the 10 `close` pairs. wave1's legend has three dots, counted in its truth.
+
+- **wave1** (931 for 43): a black family at r 3.23, the legend's and ticks' decimal points (27 isolated, coverage
+  0.19), beside the three dot families at r 14.9, fitted over all the text in 132 s. The small-family rule now also
+  drops a family under SPECK_RADIUS_RATIO (0.4) of the largest's radius whose discs explain less than
+  DOT_MIN_COVERAGE of its color. wave1: 44 for 43, P 0.955 R 0.977 (the miss is a yellow dot half under the x axis),
+  15 s.
+- **fanc2** (1143 for 52): its PDF draws every overlap of the gray dots (86) in one flat black (19), as dark for three
+  dots as for two, the text's black. Two failures. (a) The antialiased rim gray inside the overlaps (59) became a
+  family: on the white–black line, black is 1.2 of the way to 59 (MAX_MIX allows 1.3), so black glyphs and lenses
+  read as full coverage and Hough found "dots" there. A center now counts only if its inner disc is the family's own
+  color, not just covered. (b) The lenses were unknown to the gray family, hiding the stacked dots at y = 0 (38 of
+  52): `fillSaturatedOverlaps` marks covered any region of unknown pixels beyond the family's color on its line, up
+  to OVERLAP_MAX_MIX (2), within OFF_MIX_ABS of the line, not another family's color, at least OVERLAP_BORDER_SHARE
+  (0.9) enclosed by the family, with a 5 × 5 square inside it. Each guard came from a failing test: at border 0.6,
+  the synthetic swarm's black median line over its light gray dots was filled (a line also has no square inside); with
+  the noise allowance and no cap, economist's pink and blue dots were filled for a phantom light gray family. With the
+  fill, fanc2 finds 50 rather than 39. A synthetic gray-and-black image didn't reproduce this (it reads as a
+  translucent family of two levels; fanc2 doesn't, because its light confidence band at 251 is the first level on
+  the gray line from white), so the regression tests use fanc2 and wave1 themselves.
+
+bench-nature: fanc2 1143 → 50 for 52 (P 1.000 R 0.962, 136 s → 4 s); wave1 931 → 44 for 43; primates2 97 → 15 for 15
+(the same small-family rule); every other row unchanged. Synthetic presets, bench1–3 and testgraphs: every row
+identical to the last commit's, flags included. Still overcounting: hair2 (170 for 18) and hair3 (722 for 34) at r
+4.5–4.8.
+
+**hair2 and hair3** (2026-11-14). Both had one family: black decimal points (and a colon's dots), r 4.9–5.0,
+coverage 0.02, 4–5 isolated. The real dots are pink fills in a black stroke (r 28–30), plus gray (hair3) and
+white (hair2) fills in the same stroke. Four fixes, each a place where the stroke's black, which is also all the
+text, counted for the pink family or against it:
+
+- An isolated dot must have its fill at its middle (ISOLATED_FILL_RADII 0.5 × r, DOT_MIN_FILL of own color, or fill
+  weight for a stroked family): in the stroke model the black specks read as covered and outvoted the one whole pink
+  dot (median r 4.9 against 30.3).
+- A stroked family's coverage counts its fill, not D, which covers all black ink (hair3: 0.26 → 0.67).
+- The small-family rule runs inside opaqueFamilies, before the families are measured again with the others' colors
+  excluded: the black speck family's color is the pink dots' stroke, and excluding it cut their radius to 18.
+- A family needs coverage ≥ DOT_MIN_COVERAGE_ANY (0.1) even with isolated dots: a color 98% text is no family, even
+  alone (real families sharing text's color measured 0.18).
+
+hair3: 722 → 29 for 34, P 0.966 R 0.824, one outlined pink family at r 28.25 (its 5 gray dots in black strokes are
+not found: phase1's case). hair2: 170 → "No dot family found": its 9 pink dots sit in two heavy clusters (one
+strong arc) and its 9 white fills are the page's color. comment1: 102 → 103 (one more extra, flagged weak, by its
+thick x axis: the speck family's black, excluded from the orange family's final measure until now, kept the axis
+out). Everything else, synthetic, bench1–3, testgraphs and the other bench-nature rows, unchanged.
+

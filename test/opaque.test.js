@@ -262,6 +262,50 @@ test('regression: engagement1, lavender dots in a dark stroke are found, and the
         assert.equal(matchDots(truth.filter(t => t.lavender), r.fit.dots, 3).pairs.length, 0, 'another family took lavender dots');
 });
 
+const FANC2 = 'fanc2-10.1038-s41586-026-11035-z.png';
+
+test('regression: fanc2, one gray family with black overlaps, and no family from its rims or decimal points', { skip: !existsSync(NATURE + FANC2) && 'bench-nature fanc2 absent' }, () => {
+    // before: a rim-gray family at r 3.15 found 1105 "dots" on the lenses and text (136 s), and the gray family 38
+    // of the 52 (every overlap is drawn in the text's black)
+    const results = extractAll(readImage(NATURE + FANC2));
+    assert.equal(results.length, 1, results.map(r => `${r.est.style.color.map(Math.round)} r ${r.est.style.radius}`).join('; '));
+    near(results[0].fit.radius, 15.1, 0.3, 'radius');
+    // the overlaps (one flat black) read as covered: 39 dots without that, 50 with it, of n = 52
+    const n = results[0].fit.dots.length;
+    assert.ok(n >= 48 && n <= 54, `${n} dots`);
+});
+
+const WAVE1 = 'wave1-10.1038-s41586-026-11145-8.png';
+
+test('regression: wave1, decimal points beside regular dots are no family', { skip: !existsSync(NATURE + WAVE1) && 'bench-nature wave1 absent' }, () => {
+    // before: a black family at r 3.23 (27 isolated decimal points, coverage 0.19) beside dots at r 14.9 found 887
+    const { estimates } = estimateFamilies(readImage(NATURE + WAVE1));
+    assert.equal(estimates.length, 3, estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
+    for (const e of estimates)
+        near(e.style.radius, 14.9, 0.3, 'radius');
+});
+
+const HAIR2 = 'hair2-10.1038-s41586-026-11098-y.png';
+const HAIR3 = 'hair3-10.1038-s41586-026-11098-y.png';
+
+test('regression: hair3, pink fills in a black stroke are one family at their full radius; its decimal points are none', { skip: !existsSync(NATURE + HAIR3) && 'bench-nature hair3 absent' }, () => {
+    // before: black decimal points (r 4.97, coverage 0.02) were the only family, 722 "dots"; the pink family's
+    // isolated dots were outvoted by those specks (black is its stroke), its coverage diluted by all black ink, and
+    // once found, its radius cut to 18 by the speck family's color excluded from its stroke
+    const { estimates } = estimateFamilies(readImage(NATURE + HAIR3));
+    assert.equal(estimates.length, 1, estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
+    assert.ok(Math.hypot(...estimates[0].style.color.map((v, ch) => v - [255, 175, 179][ch])) < 8);
+    near(estimates[0].style.radius, 28.3, 0.5, 'radius');
+    assert.ok(estimates[0].style.outline, 'outlined');
+});
+
+test('regression: hair2, decimal points alone are no family', { skip: !existsSync(NATURE + HAIR2) && 'bench-nature hair2 absent' }, () => {
+    // before: black specks (r 4.86, coverage 0.02, 4 isolated) made the only family, 170 "dots". Its pink dots are
+    // nine in two heavy clusters (one strong arc), and its white-filled dots are the page's color: no family yet.
+    const { estimates } = estimateFamilies(readImage(NATURE + HAIR2));
+    assert.ok(estimates.every(e => !e.style || Math.hypot(...e.style.color) > 100), estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
+});
+
 const COMMENT1 = 'comment1-2026-10-22.png';
 
 test('regression: comment1, small round specks beside regular dots are no family', { skip: !existsSync(NATURE + COMMENT1) && 'bench-nature comment1 absent' }, () => {

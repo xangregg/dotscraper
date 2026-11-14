@@ -80,10 +80,14 @@ const DOT_MIN_RADIUS = 3; // px
 // measure r 2.5–2.74 but never have an isolated round component)
 const SMALL_DOT_MIN_RADIUS = 2; // px
 const SMALL_DOT_MIN_ISOLATED = 5;
+const SPECK_RADIUS_RATIO = 0.4; // × the largest family's radius: below it, a mostly-text color's dots are specks
 const DOT_MIN_ARC = 0.5; // fraction of the circumference for a Hough center to count
 const DOT_STRONG_ARC = 0.75;
 const DOT_MIN_STRONG = 3;
 const DOT_MIN_COVERAGE = 0.35;
+// … and with isolated dots instead, at least this much: a color 98% text with a few round specks (hair2–3: decimal
+// points and a colon's dots, coverage 0.02) is no family, even alone; real ones sharing text's color measured 0.18
+const DOT_MIN_COVERAGE_ANY = 0.1;
 const DOT_MIN_ISOLATED = 3;
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
@@ -114,6 +118,19 @@ const OFF_MIX_REL = 0.12;
 // … and so is one well past the dot's color along the mix (black text against light gray dots: on the same gray
 // axis, it read as coverage 4, clipped to 1, and text strokes became the family's radius)
 const MAX_MIX = 1.3;
+// Some renderers draw every overlap of opaque dots in one dark color, as dark for three as for two (fanc2's PDF:
+// gray 86 dots, overlaps 19, the text's black). A region beyond the family's color on its line, enclosed by the
+// family and not another family's color, is such an overlap: covered, not unknown. Text and lines border mostly on
+// the page; a darker family's dot packed among this family's in a swarm also borders gaps and other dots (at 0.6
+// the synthetic swarm's maroon filled in).
+const ISOLATED_FILL_RADII = 0.5; // × r: the middle of an isolated dot that must be the family's fill
+const OVERLAP_BORDER_SHARE = 0.9; // of a region's border pixels that must be the family's
+// … and a lens has a middle: a line drawn over a swarm in the same dark ink is enclosed by dots too (the synthetic
+// swarm's black median line over its light gray dots, 2 px wide), but has no square this deep inside it
+const OVERLAP_MIN_DEPTH = 2; // px, half the side of a square that must fit inside the region
+// An overlap is darker than one dot by at most a second dot's contrast (fanc2: 19 at 1.4 of the way from the page to
+// 86). Unbounded, a pale family's line reached black text (economist: a light gray "family" at 226 filled its text).
+const OVERLAP_MAX_MIX = 2; // × the family's contrast with its background
 const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–outline segment still lies on it
 const OUTLINE_OPENING = 1.5; // px, radius of the disc that must remove an outline's color …
 const OUTLINE_MAX_THICK = 0.25; // … all but this share of it
@@ -1343,9 +1360,15 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         const tol = Math.max(offAbs, OFF_MIX_REL * Math.abs(m) * Math.sqrt(ww));
         D[p] = off > tol || m > MAX_MIX ? NaN : Math.min(1, Math.max(0, m));
     }
+    if (!stroke)
+        fillSaturatedOverlaps(image, D, B, color, others);
     const line = colorLine(B, color);
     const table = [B, color];
-    const isolated = isolatedDots(D, width, height, tol);
+    // an isolated dot of this family has its fill at its middle: specks of another ink that D reads as covered
+    // (hair2: the stroke's black, so the decimal points and a colon's dots, r 4.9, outvoted the one whole dot, r 30.3)
+    // are not its dots
+    const fill = stroke ? fillW : own;
+    const isolated = isolatedDots(D, width, height, tol).filter(d => discShare(fill, width, height, d.cx, d.cy, ISOLATED_FILL_RADII * d.r) >= DOT_MIN_FILL);
     const radius = isolated.length ? median(isolated.map(d => d.r)) : radiusFromDistance(D, width, height);
     let dots = 0;
     let strongDots = 0;
@@ -1354,10 +1377,11 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         const weight = new Uint8Array(n);
         for (let p = 0; p < n; p++)
             weight[p] = Number.isNaN(D[p]) ? 0 : 1;
-        // a center counts if most of its edge is seen and its disc is filled (text: round glyphs are hollow); a
-        // stroked family's inner disc must be its fill
+        // a center counts if most of its edge is seen and its disc is filled with the family's own color (text:
+        // round glyphs are hollow; fanc2: a rim gray between dot and overlap read black text as beyond its color,
+        // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
         const rf = DOT_FILL_RADII * (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : radius);
-        const inside = stroke ? fillW : D;
+        const inside = stroke ? fillW : own;
         const filled = c => {
             let count = 0;
             let on = 0;
@@ -1385,10 +1409,13 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
                 }
             }
         }
+        // a stroked family's coverage is its fill's: D also covers the stroke's color, which is text and axes too
+        // (hair3: the black ink diluted it to 0.26)
+        const ofFamily = stroke ? fillW : D;
         let fam = 0;
         let covered = 0;
         for (let p = 0; p < n; p++) {
-            if (D[p] > 0.5) {
+            if (ofFamily[p] > 0.5) {
                 fam++;
                 covered += inDisc[p];
             }
@@ -1401,6 +1428,106 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         levels: [{ t: Math.hypot(...B.map((v, ch) => v - color[ch])), color, count: pixels }],
         beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
     };
+}
+
+/**
+ * Mark saturated overlaps covered (D = 1), in place: 8-connected regions of unknown pixels whose colors lie beyond
+ * the family's color on its line from B (up to OVERLAP_MAX_MIX, and within OFF_MIX_ABS of it, not the family's
+ * noise allowance: an overlap is one flat color, and on the noisy economist the allowance reached its pink and blue
+ * dots) and aren't another family's, with at least OVERLAP_BORDER_SHARE of their border covered (D > 0.5) and a
+ * (2·OVERLAP_MIN_DEPTH + 1)² square inside. O(pixels · OVERLAP_MIN_DEPTH²).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {Float32Array} D  coverage, NaN unknown
+ * @param {number[]} B  0–255, the family's background
+ * @param {number[]} color  0–255
+ * @param {number[][]} others  0–255, the other families' colors
+ */
+function fillSaturatedOverlaps(image, D, B, color, others) {
+    const { width, height, data } = image;
+    const w = color.map((v, ch) => v - B[ch]);
+    const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+    if (ww < MIN_CONTRAST * MIN_CONTRAST)
+        return;
+    const beyond = p => {
+        if (!Number.isNaN(D[p]))
+            return false;
+        if (others.some(O => Math.hypot(data[4 * p] - O[0], data[4 * p + 1] - O[1], data[4 * p + 2] - O[2]) <= CLUSTER_TOL))
+            return false;
+        const v = [data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]];
+        const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
+        return m > 1 && m <= OVERLAP_MAX_MIX && Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) <= Math.max(OFF_MIX_ABS, OFF_MIX_REL * m * Math.sqrt(ww));
+    };
+    const seen = new Uint8Array(width * height);
+    for (let start = 0; start < seen.length; start++) {
+        if (seen[start] || !beyond(start))
+            continue;
+        const comp = [start];
+        seen[start] = 1;
+        let border = 0;
+        let covered = 0;
+        for (let k = 0; k < comp.length; k++) {
+            const p = comp[k];
+            const x = p % width;
+            const y = (p - x) / width;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if ((dx || dy) && x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height) {
+                        const q = p + dy * width + dx;
+                        if (seen[q])
+                            continue;
+                        if (beyond(q)) {
+                            seen[q] = 1;
+                            comp.push(q);
+                        }
+                        else {
+                            border++;
+                            if (D[q] > 0.5)
+                                covered++;
+                        }
+                    }
+                }
+            }
+        }
+        if (border && covered >= OVERLAP_BORDER_SHARE * border && hasSquare(comp, width, height, OVERLAP_MIN_DEPTH)) {
+            for (const p of comp)
+                D[p] = 1;
+        }
+    }
+}
+
+// share of the pixels whose centers lie within r of (cx, cy) where v > 0.5
+function discShare(v, width, height, cx, cy, r) {
+    let count = 0;
+    let on = 0;
+    for (let y = Math.max(0, Math.floor(cy - r)); y < Math.min(height, Math.ceil(cy + r)); y++) {
+        for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(width, Math.ceil(cx + r)); x++) {
+            if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 > r * r)
+                continue;
+            count++;
+            if (v[y * width + x] > 0.5)
+                on++;
+        }
+    }
+    return count ? on / count : 0;
+}
+
+// whether a (2·depth + 1)² square of pixels fits inside a region (pixel indices)
+function hasSquare(comp, width, height, depth) {
+    const inside = new Set(comp);
+    return comp.some(p => {
+        const x = p % width;
+        const y = (p - x) / width;
+        if (x < depth || y < depth || x + depth >= width || y + depth >= height)
+            return false;
+        for (let dy = -depth; dy <= depth; dy++) {
+            for (let dx = -depth; dx <= depth; dx++) {
+                if (!inside.has(p + dy * width + dx))
+                    return false;
+            }
+        }
+        return true;
+    });
 }
 
 // An outline is a thin ring: an opening by a disc wider than it leaves little of its color. Areas around a fill are
@@ -1425,7 +1552,7 @@ function radiusPlausible(radius, isolatedCount) {
 }
 
 function isDotFamily(f) {
-    return radiusPlausible(f.radius, f.isolated.length) && f.strongDots >= DOT_MIN_STRONG
+    return radiusPlausible(f.radius, f.isolated.length) && f.strongDots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE_ANY
         && (f.coverage >= DOT_MIN_COVERAGE || f.isolated.length >= DOT_MIN_ISOLATED);
 }
 
@@ -1441,7 +1568,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         return Math.hypot(e[0] - t * u[0], e[1] - t * u[1], e[2] - t * u[2]) <= CLUSTER_ON_LINE_TOL;
     });
     const { width, height, data } = image;
-    const out = [];
+    let out = [];
     // a cluster between a family found already and that family's background, its outline or a page color is an
     // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family")
     const isOutline = c => out.some(f => f.outline && Math.hypot(...f.outline.map((v, ch) => v - c[ch])) <= CLUSTER_TOL);
@@ -1500,6 +1627,9 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         if (isDotFamily(fam))
             out.push(fam);
     }
+    // Specks go before the others are measured again: a speck family's color can be a real family's stroke (hair3:
+    // the black of the decimal points is the pink dots' outline, which excluded left their radius 18 for 28)
+    out = withoutSpecks(out, translucent.length > 0);
     // Measure again with the other families' colors excluded from each, now that they are known, for the fit. The
     // first measurement decides what is a family: a small one surrounded by others (nicest language's red and dark
     // blue, about 10 dots each) can fail the test once its neighbors' colors are excluded.
@@ -1641,12 +1771,19 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent);
     for (const c of translucent)
         c.kind = 'translucent';
-    const all = [...translucent, ...opaqueFamilies(image, backgrounds, translucent, tol)];
-    // Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline
-    // or the dots of i's (comment1: 9 isolated black specks at r 2.5 beside orange dots at r 9.2). A translucent
-    // family's radius isn't measured yet, but its levels already show real dots.
-    const small = c => c.kind !== 'translucent' && c.radius < DOT_MIN_RADIUS;
-    return all.some(c => !small(c)) ? all.filter(c => !small(c)) : all;
+    return [...translucent, ...opaqueFamilies(image, backgrounds, translucent, tol)];
+}
+
+// Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline, the
+// dots of i's or decimal points (comment1: 9 black specks at r 2.5 beside orange dots at r 9.2; wave1: 27 decimal
+// points at r 3.23, coverage 0.19, beside dots at r 14.9). Small is under DOT_MIN_RADIUS, or under SPECK_RADIUS_RATIO
+// of the largest family's radius with most of the color not dot-shaped (text). A translucent family's radius isn't
+// measured yet, but its levels already show real dots.
+function withoutSpecks(opaque, anyTranslucent) {
+    const largest = Math.max(...opaque.map(c => c.radius ?? 0), 0);
+    const small = c => c.radius < DOT_MIN_RADIUS || (c.radius < SPECK_RADIUS_RATIO * largest && c.coverage < DOT_MIN_COVERAGE);
+    const kept = opaque.filter(c => !small(c));
+    return anyTranslucent || kept.length ? kept : opaque;
 }
 
 // the estimate for an opaque family: its own background, radius from isolated dots or the distance transform, blur
