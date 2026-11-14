@@ -13,11 +13,12 @@ const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and
 const MARK_LINE = 1.5; // CSS px, dot outline width
 // Zoomed in, a 1.5 CSS px mark is lost on a dot of a similar color: from these zooms (CSS px per image px) a mark's
 // stroke grows as (zoom / threshold)^MARK_GROWTH, MARK_LINE at the threshold. Sublinear, so it still thins against
-// the image as you zoom in (at 8×: 3 CSS px for a duplicate, not 6). Possible duplicates first, since they matter
-// most and their two rings must stay apart; the other marks only for the selected family, so the rest stay quiet.
-const CLOSE_THICKEN_SCALE = 2;
-const FAMILY_THICKEN_SCALE = 2.5;
-const MARK_GROWTH = 0.5; // exponent: 1 would keep the stroke a fixed width in image px
+// the image as you zoom in (at 8×: 4.8 CSS px for a duplicate, not 8; square-root growth, 3, was too subtle).
+// Possible duplicates first, since they matter most; the other marks only for the selected family, so the rest stay
+// quiet.
+const CLOSE_THICKEN_SCALE = 1.5;
+const FAMILY_THICKEN_SCALE = 2;
+const MARK_GROWTH = 0.7; // exponent: 1 would keep the stroke a fixed width in image px
 const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
 export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b', selected: '#f0a000', axis: '#e07800' };
 // dots of a family almost on one another: their marks coincide, so the group gets one more ring this far outside
