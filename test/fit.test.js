@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../src/core/rng.js';
-import { houghCenters, fitDots, refitNear } from '../src/core/fit.js';
+import { houghCenters, fitDots, refitNear, flagClose } from '../src/core/fit.js';
 import { estimateStyle } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { synthGraph, scatterPoints } from '../src/core/synth.js';
@@ -100,10 +100,13 @@ test('refitNear: an added dot near another settles where the image has one; a re
     const points = [{ x: 60, y: 90 }, { x: 140, y: 100 }, ...SEPARATE];
     const { input } = prepare(spec(points));
     // the user clicks 4 px from the true center of a dot the fit "missed"
-    const res = refitNear(input, [...points.filter(p => p.x !== 140), { x: 143, y: 97 }], 143, 97);
+    const res = refitNear(input, [...points.filter(p => p.x !== 140), { x: 143, y: 97, added: true }], 143, 97);
     const moved = res.dots.find(d => Math.hypot(d.x - 140, d.y - 100) < 1);
     assert.ok(moved, `refined to ${JSON.stringify(res.dots)}`);
     assert.equal(res.dots.length, points.length);
+    // the dots come back sorted by x, not in the order given: `added` says which is the new one (Add mode nudges it)
+    assert.deepEqual(res.added.map(i => res.dots[i]), [moved]);
+    assert.notEqual(res.added[0], res.dots.length - 1);
 });
 
 test('regression: a missing dot whose neighbors drifted into its place is born (births re-settle neighbors)', () => {
@@ -121,4 +124,19 @@ test('regression: a missing dot whose neighbors drifted into its place is born (
     const m = matchDots(truth, res.dots, 3);
     assert.equal(res.dots.length, truth.length);
     assert.equal(m.recall, 1);
+});
+
+test('flagClose marks both dots of a pair closer than 0.35 r, and clears the flag once they part', () => {
+    const r = 10; // px
+    const dots = [
+        { x: 50, y: 50, flags: ['weak'] },
+        { x: 50.2, y: 51, flags: [] }, // 1.02 px from the first
+        { x: 53.6, y: 50, flags: [] }, // 3.6 px from the first: not close
+        { x: 120, y: 50, flags: ['close'] }, // stale flag, alone
+    ];
+    flagClose(dots, r);
+    assert.deepEqual(dots.map(d => d.flags), [['weak', 'close'], ['close'], [], []]);
+    dots[1].y = 60;
+    flagClose(dots, r);
+    assert.deepEqual(dots.map(d => d.flags), [['weak'], [], [], []]);
 });

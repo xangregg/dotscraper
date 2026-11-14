@@ -317,18 +317,21 @@ dd {
     color: var(--muted);
 }
 
-.params input {
-    color: var(--ink);
-}
-
+/* ink, not inherited: these sit inside muted labels, and a muted value reads as a disabled field */
 input[type="number"] {
     width: 68px;
     font: inherit;
-    color: inherit;
+    color: var(--ink);
     background: var(--page);
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 1px 4px;
+}
+
+input[type="number"]:disabled {
+    color: var(--muted);
+    background: transparent;
+    border-style: dashed;
 }
 
 input.overridden {

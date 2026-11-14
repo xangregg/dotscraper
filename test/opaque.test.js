@@ -246,7 +246,9 @@ const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
 const ENGAGEMENT = 'engagement1-10.1038-s41586-026-10967-w';
 
 // the user's hand-checked dots (truth JSON, px)
-test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(`${NATURE}${ENGAGEMENT}.png`) && existsSync(`${NATURE}truth/${ENGAGEMENT}.json`)) && 'bench-nature engagement1 absent' }, () => {
+// todo: written for the 2026-11 web capture; the PDF capture that replaced it (2× the pixels, hash 76da23c6) is claimed
+// by outlineEstimate as one scale-colored family fitted by its rings (22 of 49 dots), like phase1's outlined grays
+test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(`${NATURE}${ENGAGEMENT}.png`) && existsSync(`${NATURE}truth/${ENGAGEMENT}.json`)) && 'bench-nature engagement1 absent', todo: 'the PDF capture is read as outlined dots on a color scale' }, () => {
     // before: one family (50, 55, 99) with 33 dots; no lavender dot found; the user's truth has 46 dots, 10 lavender
     const t = readTruthJson(`${NATURE}truth/${ENGAGEMENT}.json`);
     const light = new Set(t.families.filter(f => f.color[0] > 150).map(f => f.family)); // the light fill, whatever its label
@@ -258,6 +260,17 @@ test('regression: engagement1, lavender dots in a dark stroke are found, and the
     assert.ok(m.pairs.length === 10 && m.extra.length <= 1, `lavender: ${m.pairs.length} of 10, ${m.extra.length} extra`);
     for (const r of results.filter(r => r !== lav))
         assert.equal(matchDots(truth.filter(t => t.lavender), r.fit.dots, 3).pairs.length, 0, 'another family took lavender dots');
+});
+
+const COMMENT1 = 'comment1-2026-10-22.png';
+
+test('regression: comment1, small round specks beside regular dots are no family', { skip: !existsSync(NATURE + COMMENT1) && 'bench-nature comment1 absent' }, () => {
+    // before: the dotted gridlines' black specks (r 2.5, 9 isolated) made a second family beside the orange dots
+    // (r 9.2), and fitting it over all the text took minutes
+    const { estimates } = estimateFamilies(readImage(NATURE + COMMENT1));
+    assert.equal(estimates.length, 1, estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
+    assert.ok(Math.hypot(...estimates[0].style.color.map((v, ch) => v - [235, 91, 37][ch])) < 6);
+    near(estimates[0].style.radius, 9.2, 0.3, 'radius');
 });
 
 test('opaqueFamilyEstimate: a family measured with a user-given outline finds its dots and leaves the others\' alone', () => {

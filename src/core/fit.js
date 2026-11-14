@@ -93,6 +93,10 @@ const RADIUS_TOL = 0.01; // px
 const UNCERTAINTY_STEP = 0.25; // px, finite-difference step for the curvature
 const FLAG_MARGIN = 3; // flag a dot whose removal costs less than this × λ
 const FLAG_VISIBLE = 0.5; // flag a dot less than this fraction visible
+// flag a dot this close to another of its family (× r): in the view the two marks are one, and for opaque dots one
+// dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
+// of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
+const FLAG_CLOSE_RADII = MERGE_RADII;
 const PROGRESS_INTERVAL = 150; // ms between progress reports
 
 function huber(r) {
@@ -944,6 +948,7 @@ export function createFit(input) {
     /**
      * Per-dot uncertainty and flags: position standard errors from the loss curvature (σ / √H per axis), the
      * removal margin in units of λ, the visible fraction of the disc, and the model's overlap count at the center.
+     * Sorted by x; ids[i] is the fit's id of dots[i].
      */
     function assess() {
         const sigma = noiseSigma();
@@ -977,6 +982,7 @@ export function createFit(input) {
             if (depth > style.measuredLevels + 0.5)
                 flags.push('deep');
             out.push({
+                id,
                 x: p.x, y: p.y,
                 seX: curv[0] > 0 ? sigma / Math.sqrt(curv[0]) : Infinity,
                 seY: curv[1] > 0 ? sigma / Math.sqrt(curv[1]) : Infinity,
@@ -985,7 +991,10 @@ export function createFit(input) {
             });
         }
         out.sort((a, b) => a.x - b.x || a.y - b.y);
-        return { dots: out, sigma };
+        const ids = out.map(d => d.id);
+        for (const d of out)
+            delete d.id;
+        return { dots: flagClose(out, style.radius), sigma, ids };
     }
 
     return {
@@ -1090,6 +1099,37 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
 }
 
 /**
+ * Set or clear each dot's 'close' flag: another dot of the same family within FLAG_CLOSE_RADII · r. O(n log n) and
+ * in place.
+ *
+ * @param {{x: number, y: number, flags: string[]}[]} dots  one family's, px
+ * @param {number} radius  px
+ * @returns {object[]}  the same array
+ */
+export function flagClose(dots, radius) {
+    const close = FLAG_CLOSE_RADII * radius;
+    const order = dots.map((_, i) => i).sort((a, b) => dots[a].x - dots[b].x);
+    const near = new Set();
+    // in x order, a dot's close neighbors follow it within `close` in x
+    for (let a = 0; a < order.length; a++) {
+        const p = dots[order[a]];
+        for (let b = a + 1; b < order.length && dots[order[b]].x - p.x < close; b++) {
+            const q = dots[order[b]];
+            if (Math.hypot(q.x - p.x, q.y - p.y) < close) {
+                near.add(order[a]);
+                near.add(order[b]);
+            }
+        }
+    }
+    dots.forEach((d, i) => {
+        d.flags = d.flags.filter(f => f !== 'close');
+        if (near.has(i))
+            d.flags.push('close');
+    });
+    return dots;
+}
+
+/**
  * Re-refine the dots near (x, y) after a manual edit, leaving the rest where they are, and assess them all.
  * The dot set itself is kept as given: no births or deaths, since the user just decided what is there.
  *
@@ -1100,15 +1140,15 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
  * @param {{x: number, y: number, z?: number, added?: boolean}[]} dots  px
  * @param {number} x  px, the edit
  * @param {number} y  px
- * @returns {{dots: object[], sigma: number, lambda: number}}
+ * @returns {{dots: object[], sigma: number, lambda: number, added: number[]}}  dots sorted by x; added: their indices
+ *   of the dots marked `added`
  */
 export function refitNear(input, dots, x, y) {
     const fit = createFit(input);
     for (const d of dots.filter(d => !d.added))
         fit.add(d.x, d.y, d.z);
-    for (const d of dots.filter(d => d.added))
-        fit.add(d.x, d.y, input.style.layered ? fit.bestZ(d.x, d.y) : undefined);
+    const added = new Set(dots.filter(d => d.added).map(d => fit.add(d.x, d.y, input.style.layered ? fit.bestZ(d.x, d.y) : undefined)));
     fit.refineAll(fit.near(x, y, NEIGHBOR_RADII * input.style.radius));
-    const { dots: assessed, sigma } = fit.assess();
-    return { dots: assessed, sigma, lambda: fit.lambda };
+    const { dots: assessed, sigma, ids } = fit.assess();
+    return { dots: assessed, sigma, lambda: fit.lambda, added: ids.flatMap((id, i) => (added.has(id) ? [i] : [])) };
 }

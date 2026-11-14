@@ -38,6 +38,9 @@ const WORD_GAP_HEIGHTS = 0.6; // glyphs closer than this × their height (along 
 const WORD_MIN_OVERLAP = 0.5; // × the shorter glyph's height
 const WORD_MAX_HEIGHT_RATIO = 2.5; // glyphs of one word differ in height by less than this (a tall rule doesn't join)
 const LABEL_ON_TICK_SPACINGS = 0.3; // a word belongs to a tick only if centered within this × spacing of it
+// Labels on the side away from the ticks must label at least this many (beeswarm-boxplot: the "***" above a gray
+// significance bracket labeled 2 of its 3 down-pointing ends and made it an x axis)
+const OTHER_SIDE_MIN_LABELS = 3;
 const BACKGROUND_MIN_FRACTION = 0.05; // any flat color covering this share of the image is a background (panels)
 const GRID_BASELINE_TOL = 0.03; // × spacing: a dark baseline this close to the gridlines' progression is a tick
 const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of the line's length of either end
@@ -366,9 +369,12 @@ function union(a, b) {
 }
 
 /**
- * Label boxes for the ticks of an axis: ink beyond the ticks (on their side) merged into words; a word belongs to
- * the tick it is centered on (within LABEL_ON_TICK_SPACINGS of the spacing). Words between ticks (labels of
- * intervals, as on the economist chart) belong to none.
+ * Label boxes for the ticks of an axis: ink beyond the ticks merged into words; a word belongs to the tick it is
+ * centered on (within LABEL_ON_TICK_SPACINGS of the spacing). Words between ticks (labels of intervals, as on the
+ * economist chart) belong to none. Labels are usually on the ticks' side, but ticks drawn into the plot (Nature's
+ * frames) have them on the other side, and their own side holds data (crystal1: dots "labeled" 2 of 5 y ticks and
+ * masked the plot as beyond the axes). Both sides are searched and the one labeling more ticks wins; on a tie, the
+ * ticks' side. The other side must label at least OTHER_SIDE_MIN_LABELS ticks.
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[][]} backgrounds
@@ -378,14 +384,25 @@ function union(a, b) {
 export function findLabels(image, backgrounds, axis, ticks) {
     if (!ticks.length)
         return;
+    const tickSide = ticks.filter(t => t.side === 'after').length >= ticks.filter(t => t.side === 'before').length ? 'after' : 'before';
+    const tickLen = Math.max(...ticks.map(t => t.length));
+    const own = labelsOnSide(image, backgrounds, axis, ticks, tickSide, tickLen);
+    const other = labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0);
+    for (const [t, b] of other.size > own.size && other.size >= OTHER_SIDE_MIN_LABELS ? other : own)
+        t.label = b;
+}
+
+// tick → label box for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without them)
+function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom) {
     const { width, height } = image;
     const h = axis.dir === 'h';
-    const side = ticks.filter(t => t.side === 'after').length >= ticks.filter(t => t.side === 'before').length ? 'after' : 'before';
-    const tickLen = Math.max(...ticks.map(t => t.length));
+    const labels = new Map();
     const reach = LABEL_SEARCH_FRACTION[axis.dir] * (h ? height : width);
-    const edge = side === 'after' ? axis.pos + axis.thickness / 2 + tickLen + 1 : axis.pos - axis.thickness / 2 - tickLen - 1;
+    const edge = side === 'after' ? axis.pos + axis.thickness / 2 + reachFrom + 1 : axis.pos - axis.thickness / 2 - reachFrom - 1;
     const c0 = Math.max(0, Math.floor(side === 'after' ? edge : edge - reach));
     const c1 = Math.min(h ? height : width, Math.ceil(side === 'after' ? edge + reach : edge));
+    if (c1 <= c0)
+        return labels;
     const spacing = ticks.length > 1 ? (ticks[ticks.length - 1].pos - ticks[0].pos) / (ticks.length - 1) : reach;
     const a0 = Math.max(0, Math.floor(ticks[0].pos - spacing / 2));
     const a1 = Math.min(h ? width : height, Math.ceil(ticks[ticks.length - 1].pos + spacing / 2));
@@ -405,14 +422,15 @@ export function findLabels(image, backgrounds, axis, ticks) {
             assigned.push({ b, tick: best, gap: gapOf(b) });
     }
     if (!assigned.length)
-        return;
+        return labels;
     const minGap = Math.min(...assigned.map(a => a.gap));
     const heights = assigned.map(a => a.b[3] - a.b[1]).sort((p, q) => p - q);
     const tol = Math.max(LABEL_COLUMN_MIN_TOL, 0.5 * heights[Math.floor(heights.length / 2)]);
     for (const a of assigned) {
         if (a.gap <= minGap + tol)
-            a.tick.label = union(a.tick.label, a.b);
+            labels.set(a.tick, union(labels.get(a.tick), a.b));
     }
+    return labels;
 }
 
 /**

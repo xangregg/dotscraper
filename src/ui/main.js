@@ -12,7 +12,7 @@ import { estimateStyle, opaqueFamilyEstimate } from '../core/style.js';
 import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
-import { refitNear, MAX_ROUNDS } from '../core/fit.js';
+import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { dotFamilies } from '../core/outline.js';
 import { detectAxes, plotBounds } from '../core/axes.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
@@ -705,7 +705,7 @@ function renderLayersPanel() {
 function renderLegend() {
     const legend = $('overlay-legend');
     const item = (color, text) => `<span class="key" style="background:${typeof color === 'string' ? color : cssColor(color)}"></span>${text}`;
-    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${item(MARK_COLORS.selected, 'Remove would take it, or Move has chosen it')}`;
+    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${item(MARK_COLORS.close, 'double ring: two dots of one family almost in one place (if opaque, maybe one dot counted twice)')} ${item(MARK_COLORS.selected, 'Remove would take it, or Move has chosen it')}`;
     const fam = state.estimate ? ` (${familyName(state.current)})` : '';
     if (state.overlay === 'residual') {
         legend.innerHTML = `Residual${fam}, image − model along the dot color line: ${item(RESIDUAL_DARKER, 'image darker (missing ink)')} `
@@ -854,6 +854,7 @@ function updateModeHint() {
     const name = familyName(state.current);
     const text = state.mode === 'pick' ? 'Click a dot to add a family of its color · Esc to cancel'
         : state.mode === 'pick-outline' ? `Click the darkest part of an outline of ${name} · Esc to cancel`
+        : state.mode === 'add' && state.moving ? `Adding to ${name}: click to add a dot · arrow keys move the last one ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · Esc to finish`
         : state.mode === 'add' ? `Adding to ${name}: click to add a dot · drag to pan · Esc to finish`
         : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it · drag to pan · Esc to finish`
         : state.mode === 'move' && !state.moving ? `Moving in ${name}: click a dot to choose it · drag to pan · Esc to finish`
@@ -1090,8 +1091,13 @@ function editAt(kind, x, y) {
     const updated = { ...f, dots: res.dots, sigma: res.sigma };
     const others = state.fit?.families.filter(g => g.family !== k) ?? [];
     setFits([...others, updated].sort((a, b) => a.family - b.family), { ...(state.fit ? extraOf(state.fit) : {}), edited: true });
-    state.hoverDot = -1;
+    // the added dot becomes the one the arrow keys nudge
+    const i = kind === 'add' ? res.added[0] : -1;
+    state.moving = i >= 0 ? { family: k, i } : null;
+    state.nudged = false;
+    state.hoverDot = i >= 0 ? globalIndex(k, i) : -1;
     setStatus(`${kind === 'add' ? 'Added a dot to' : 'Removed a dot from'} ${familyName(k)}: ${updated.dots.length} dots.`);
+    updateModeHint();
     fitChanged();
 }
 
@@ -1136,7 +1142,7 @@ function nudge(dx, dy) {
             const { seX, seY, visible, depth, margin, ...rest } = d;
             return { ...rest, x: d.x + dx, y: d.y + dy, flags: [], moved: true };
         });
-        return { ...f, dots };
+        return { ...f, dots: flagClose(dots.map(d => ({ ...d, flags: [...d.flags] })), f.radius) };
     });
     setFits(families, { ...extraOf(state.fit), edited: true });
     const d = familyFit(family).dots[i];
@@ -1490,7 +1496,7 @@ function wireControls() {
         if (typing(e))
             return;
         const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
-        if (arrow && state.mode === 'move' && state.moving && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (arrow && (state.mode === 'move' || state.mode === 'add') && state.moving && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             const step = e.shiftKey ? NUDGE_FINE : NUDGE_STEP;
             nudge(arrow[0] * step, arrow[1] * step);

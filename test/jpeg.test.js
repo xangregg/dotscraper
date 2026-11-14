@@ -106,7 +106,13 @@ test('jpegNoise: the bench renders have none and their JPEGs have it', { skip: !
 const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
 const PRIMATES1 = 'primates1-10.1038-s41586-026-11005-5.png';
 
-test('regression: a PNG made from a JPEG is analyzed as a JPEG when no family shows with exact colors', { skip: !existsSync(NATURE + PRIMATES1) && 'bench-nature absent' }, () => {
+// Written for the web capture of primates1, a PNG of a JPEG. The PDF capture that replaced it (2026-11-14) is clean
+// and needs no fallback, and a JPEG made here doesn't reproduce the failure (jpeg-js keeps full chroma), so the test
+// waits for a JPEG-derived image under that name.
+const primates1Skip = !existsSync(NATURE + PRIMATES1) ? 'bench-nature absent'
+    : !jpegNoise(readImage(NATURE + PRIMATES1)).likely && 'primates1 is no longer a PNG of a JPEG';
+
+test('regression: a PNG made from a JPEG is analyzed as a JPEG when no family shows with exact colors', { skip: primates1Skip }, () => {
     // before: "No dot family found" (the blue dots' edges leave the white–blue line, so no isolated dot passed)
     const results = extractAll(readImage(NATURE + PRIMATES1), false);
     assert.equal(results.length, 1);

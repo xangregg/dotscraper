@@ -255,6 +255,9 @@ as poorly determined rather than silently placed or dropped.
    mix them (hair2–3: black outlines around pink and gray fills, a gray fill putting black in the fill plane, and
    outlines as dark as text, which the ink mask removes). Rethink: each family gets its fill and its ring (color,
    width, opacity), measured from its own isolated dots, so outlined and plain families can share an image.
+   phase1 and engagement1's PDF capture (2026-11-14, below) add two cases: black outlines around gray fills, where
+   white, fill and stroke are collinear and the outline shares its color with text and a black family; and five
+   discrete fills read as one scale. Outline pixels should count only next to a fill of the family.
    engagement1 (2026-11-13) shows how the global view fails. Five blue fills (navy 4, 3, 87 to lavender
    188, 186, 234) share one dark stroke, under a pixel wide and blurred, so it never shows its own color (on
    lavender its darkest pixel is about 80, 80, 105). (a) Lavender and cyan never become families: their edge
@@ -1382,4 +1385,45 @@ JPEGs, and skips a PNG whose pixel hash isn't the truth's. The old rows understa
 | nicest language | P 0.971 R 0.414 | 149 for 162, P 0.987 R 0.907 |
 | dog-ages (one family) | P 1.000 R 1.000 | the same |
 | bench-nature engagement1 | – | 44 for 46, P 0.841 R 0.804 |
+
+**PDF captures of bench-nature** (2026-11-14). The user re-captured the Nature figures from the PDFs (2–3× the
+pixels of the web captures, clean: no JPEG noise but fanc2's 16%), replaced primates2 and added cells1 (data in
+CSV), comment1, crystal1, delta1 and phase1 (truth JSON). cells1's header had "(implicit from categorical labels)"
+after its ticks, which made them names; it is now `1, 2` with the names in a note. From the user's notes:
+
+- **Small families beside regular ones** (comment1). The dotted gridlines' black specks passed as a small-dot family
+  (r 2.53, 9 isolated) beside the orange dots (r 9.2), and fitting it over all the text took over 5 minutes (2923
+  dots). `findCandidates` now keeps families under DOT_MIN_RADIUS only when no regular family exists (translucent
+  ones count as regular: their levels already show dots). comment1: 102 dots for 94, P 0.922 R 1.000, 3 s.
+- **Near-duplicate dots** (comment1). Its dots have a thin white outline that cuts into the dot below; the opaque
+  model has none, so the fit puts a second dot 0.1–2 px from the first to absorb the edge, and it is worth more than
+  λ. All 8 extras are such pairs (10 pairs; the truth has 2, one 0.13 px apart, probably kept from a fit). `assess`
+  now flags a dot within MERGE_RADII (0.35 r) of another of its family `close` (`flagClose`, also rerun after a
+  nudge), and the view draws it in magenta with a second ring 4 CSS px outside. Real ties get it too (bench1: one
+  pair; bench2 large-dots: 60 of 204), so its wording is neutral: translucent pairs show in their levels, opaque ones
+  can't. Modeling the white outline (open question 10) would remove the cause.
+- **No dots on crystal1.** Nature frames draw ticks into the plot, and labels were sought on the ticks' side only:
+  pink dots "labeled" 2 of 5 y ticks, the plot was bounded on the wrong side (right = 213, the frame's left edge) and
+  86% of the image was masked. `findLabels` now searches both sides and keeps the one labeling more ticks; the far
+  side needs at least 3 (OTHER_SIDE_MIN_LABELS: beeswarm-boxplot's "***" labeled 2 of a significance bracket's 3 ends
+  and made it an x axis). crystal1: 0 → 397 dots for 391, P 0.980 R 0.995 (rmse 0.79 px: hand-clicked truth).
+- **phase1: no family.** Gray fills (82, 136, 187, 228) and a black one, all in black outlines about 2.5 px wide, with
+  fitted curves of the same grays drawn through them. The curves (13 px wide) outvote the dots in the distance
+  transform (radius 6.33), no fill is isolated (beyond the black ring, white is off the black–gray line), the stroke
+  model needs the stroke off the white–fill line (here all are gray) and the outline model is gated by isThin(black),
+  which fails because the black family, text and a colorbar share the color. Forcing the outline model makes every
+  black glyph a dot. Left for open question 10.
+- **engagement1's capture** is now claimed by outlineEstimate (outlines a darker shade of each fill, on a color
+  scale): one virtual family by rings, 22 of 49. Its regression test is marked todo; primates1's JPEG-fallback test
+  skips while primates1 is clean (a JPEG made with jpeg-js, full chroma, doesn't reproduce the failure).
+- UI: Add mode makes the added dot the chosen one, so arrow keys nudge it (refitNear returns its index; the dots come
+  back sorted by x). Number fields were muted gray, as if disabled: `input[type="number"] { color: inherit }` beat
+  `.params input` at equal specificity; they are ink now, and disabled ones muted and dashed.
+
+bench-nature (old code → now, the new captures): comment1 2923 → 102 for 94; crystal1 0 → 397 for 391; every other
+row the same but its flag count. bench1–3, the presets and testgraphs: counts, precision, recall and rmse identical to
+HEAD; only flags rise (the `close` pairs). Still wrong on the new captures, not yet looked at: fanc2 1143 for 52,
+wave1 931 for 43, hair3 722 for 34, primates2 97 for 15, hair2 170 for 18 (overcounts at r 4.5–12, probably
+another small family over text or lines); autocor1 R 0.833; cells1 (no x ticks found for its two lanes), delta1,
+kite2 and phase1 (no family), kite1, molar1 and protrusion1–2 (no radius).
 

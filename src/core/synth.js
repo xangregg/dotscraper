@@ -40,9 +40,10 @@ import { createDotModel, solidImage, toRgba, gaussianKernel, blurRect } from './
  * @property {AxisSpec} [y]
  * @property {number} [width]       px, line and tick stroke width (default 2)
  * @property {number} [tickLength]  px, outward (below an x axis, left of a y axis; default 8)
+ * @property {boolean} [inward]     ticks drawn into the plot instead, labels still outside (Nature's frames)
  * @property {number[]} [color]     default [0, 0, 0]
  * @property {number[]} [label]     [w, h] px of a solid block standing in for each tick's label (default [14, 10]);
- *                                  centered on the tick, LABEL_GAP px beyond its end
+ *                                  centered on the tick, LABEL_GAP px beyond its end (beyond the line if inward)
  */
 
 /**
@@ -212,17 +213,18 @@ function axisLines(axes) {
     const len = axes.tickLength ?? 8;
     const color = axes.color ?? [0, 0, 0];
     const out = [];
+    const dir = axes.inward ? -1 : 1; // +1: away from the plot (down for x, left for y)
     if (axes.x) {
         const { pos, from, to, ticks } = axes.x;
         out.push({ points: [[from, pos], [to, pos]], width, color });
         for (const t of ticks)
-            out.push({ points: [[t, pos], [t, pos + width / 2 + len]], width, color });
+            out.push({ points: [[t, pos], [t, pos + dir * (width / 2 + len)]], width, color });
     }
     if (axes.y) {
         const { pos, from, to, ticks } = axes.y;
         out.push({ points: [[pos, from], [pos, to]], width, color });
         for (const t of ticks)
-            out.push({ points: [[pos, t], [pos - width / 2 - len, t]], width, color });
+            out.push({ points: [[pos, t], [pos - dir * (width / 2 + len), t]], width, color });
     }
     return out;
 }
@@ -236,7 +238,7 @@ export function labelBlocks(axes) {
     if (!axes)
         return [];
     const width = axes.width ?? 2;
-    const len = axes.tickLength ?? 8;
+    const len = axes.inward ? 0 : axes.tickLength ?? 8;
     const [w, h] = axes.label ?? [14, 10];
     const out = [];
     if (axes.x) {

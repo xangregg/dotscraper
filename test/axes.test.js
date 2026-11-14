@@ -156,3 +156,25 @@ test('plotBounds: an axis bounds the plot on the side away from its labels; grid
     assert.deepEqual(plotBounds({ x: mixed, y: grid }), none);
     assert.deepEqual(plotBounds({ x: oneLabel, y: null }), none);
 });
+
+test('regression: ticks drawn into the plot have their labels outside it, and dots by the ticks aren\'t labels', () => {
+    // before (crystal1, Nature's frames): labels were sought on the ticks' side only, so dots near two y ticks
+    // became their "labels", the plot was bounded on the wrong side and every dot was masked
+    const spec = plot({ blur: 0 });
+    spec.axes = { ...spec.axes, inward: true };
+    const dot = (x, y) => ({ x, y });
+    spec.families = [{ color: [104, 93, 184], alpha: 1, radius: 9, points: [dot(84, 270), dot(82, 170), dot(86, 70), dot(140, 266), dot(260, 268), dot(380, 265)] }];
+    const ax = detectAxes(synthGraph(spec).image);
+    assert.equal(ax.x.ticks.length, 6);
+    assert.equal(ax.y.ticks.length, 5);
+    const blocks = labelBlocks(spec.axes);
+    for (const t of [...ax.x.ticks, ...ax.y.ticks]) {
+        assert.ok(t.label, `tick at ${t.pos} has a label`);
+        assert.ok(blocks.some(k => k[0] - 2 <= t.label[0] && t.label[2] <= k[2] + 2 && k[1] - 2 <= t.label[1] && t.label[3] <= k[3] + 2), `label ${t.label} is a label block`);
+    }
+    const bounds = plotBounds(ax);
+    near(bounds.left, 60.5, 0.2, 'left bound');
+    near(bounds.bottom, 290.5, 0.2, 'bottom bound');
+    assert.equal(bounds.right, null);
+    assert.equal(bounds.top, null);
+});

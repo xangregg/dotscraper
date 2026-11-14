@@ -1641,7 +1641,12 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent);
     for (const c of translucent)
         c.kind = 'translucent';
-    return [...translucent, ...opaqueFamilies(image, backgrounds, translucent, tol)];
+    const all = [...translucent, ...opaqueFamilies(image, backgrounds, translucent, tol)];
+    // Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline
+    // or the dots of i's (comment1: 9 isolated black specks at r 2.5 beside orange dots at r 9.2). A translucent
+    // family's radius isn't measured yet, but its levels already show real dots.
+    const small = c => c.kind !== 'translucent' && c.radius < DOT_MIN_RADIUS;
+    return all.some(c => !small(c)) ? all.filter(c => !small(c)) : all;
 }
 
 // the estimate for an opaque family: its own background, radius from isolated dots or the distance transform, blur

@@ -10,7 +10,9 @@ const FIT_MARGIN = 12; // CSS px left around the image when fitting
 const CLICK_SLOP = 3; // CSS px a pointer may move between press and release and still count as a click
 const MARK_LINE = 1.5; // CSS px, dot outline width
 const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
-export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', selected: '#f0a000', axis: '#e07800' };
+export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b', selected: '#f0a000', axis: '#e07800' };
+// a dot with another of its family almost on it: their marks coincide, so it gets a second ring this far outside
+const CLOSE_RING_GAP = 4; // CSS px
 const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axis
 
 /**
@@ -94,9 +96,16 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         ctx.lineWidth = MARK_LINE / scale;
         const c = MARK_CROSS / scale;
         marks.dots.forEach((d, i) => {
-            ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected : (d.flags?.length ? MARK_COLORS.flagged : MARK_COLORS.ok);
+            const close = d.flags?.includes('close');
+            ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected
+                : close ? MARK_COLORS.close : (d.flags?.length ? MARK_COLORS.flagged : MARK_COLORS.ok);
             ctx.beginPath();
-            ctx.arc(d.x, d.y, d.r ?? marks.radius, 0, 2 * Math.PI);
+            const r = d.r ?? marks.radius;
+            ctx.arc(d.x, d.y, r, 0, 2 * Math.PI);
+            if (close) {
+                ctx.moveTo(d.x + r + CLOSE_RING_GAP / scale, d.y);
+                ctx.arc(d.x, d.y, r + CLOSE_RING_GAP / scale, 0, 2 * Math.PI);
+            }
             ctx.moveTo(d.x - c, d.y);
             ctx.lineTo(d.x + c, d.y);
             ctx.moveTo(d.x, d.y - c);
