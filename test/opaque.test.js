@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { estimateStyle } from '../src/core/style.js';
+import { estimateStyle, opaqueFamilyEstimate } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots } from '../src/core/fit.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
@@ -255,4 +255,24 @@ test('regression: engagement1, lavender dots in a dark stroke are found, and the
     assert.ok(m.pairs.length === 10 && m.extra.length <= 1, `lavender: ${m.pairs.length} of 10, ${m.extra.length} extra`);
     for (const r of results.filter(r => r !== lav))
         assert.equal(matchDots(truth.filter(t => t.lavender), r.fit.dots, 3).pairs.length, 0, 'another family took lavender dots');
+});
+
+test('opaqueFamilyEstimate: a family measured with a user-given outline finds its dots and leaves the others\' alone', () => {
+    const { image, dots } = strokedImage(7);
+    const [light, dark] = STROKED.fills;
+    const fit = est => {
+        const style = { ...est.style, radius: STROKED.radius };
+        const layers = buildMask(image, { ...est, style });
+        return fitDots({ image, style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT });
+    };
+    // the user's outline: the stroke's own color, though no pixel shows it, and its width
+    const est = opaqueFamilyEstimate(image, light, { stroke: { color: STROKED.strokeColor, fillRadius: STROKED.radius - STROKED.stroke }, others: [dark], ringsToOthers: true });
+    assert.deepEqual(est.style.outline, { color: STROKED.strokeColor, inner: (STROKED.radius - STROKED.stroke) / est.style.radius });
+    const res = fit(est);
+    const mine = matchDots(dots.filter(d => d.family === 0), res.dots, 2);
+    const theirs = matchDots(dots.filter(d => d.family === 1), res.dots, 2);
+    assert.ok(mine.pairs.length >= 14 && theirs.pairs.length === 0, `light ${mine.pairs.length} of 15, ${theirs.pairs.length} of the dark`);
+    // and the dark family, told of the light fill, gives the light dots' rings to them
+    const darkRes = fit(opaqueFamilyEstimate(image, dark, { others: [light], ringsToOthers: true }));
+    assert.equal(matchDots(dots.filter(d => d.family === 0), darkRes.dots, 2).pairs.length, 0);
 });

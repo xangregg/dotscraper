@@ -1526,6 +1526,33 @@ function strokedFamily(image, color, backgrounds, tol, plain) {
     return isDotFamily(fam) ? { ...fam, fillRadius: plain.radius, strokeOff: stroke.off } : null;
 }
 
+/**
+ * An opaque family measured as the user describes it (the app's outline edits): its fill color, its outline or
+ * none, and the other families' fills. With rings to others, a ring pixel nearer another fill is that dot's, as in
+ * opaqueFamilies' final pass, so every family can be measured again when one's outline changes.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} seed  the fill, 0–255
+ * @param {object} [opts]
+ * @param {{color: number[], fillRadius: number}|null} [opts.stroke]  0–255, px
+ * @param {number[]|null} [opts.outline]  a JMP-style outline color (measureOpaque), kept from the estimate
+ * @param {number[][]} [opts.others]  the other families' fills, 0–255
+ * @param {boolean} [opts.ringsToOthers]
+ * @param {boolean} [opts.jpeg]
+ * @returns {object}  an estimate, as estimateStyle's; style.radius is null when no dot shape shows
+ */
+export function opaqueFamilyEstimate(image, seed, opts = {}) {
+    const tol = opts.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
+    const backgrounds = backgroundColors(image);
+    const others = opts.others ?? [];
+    const stroke = opts.stroke ?? null;
+    const rings = opts.ringsToOthers && others.length ? others.map(fill => ({ fill, reach: STROKE_RING })) : null;
+    const fam = measureOpaque(image, seed, backgrounds, others, tol, stroke ? null : opts.outline ?? null,
+        { stroke: stroke?.color ?? null, fillRadius: stroke?.fillRadius, rings });
+    const measured = { ...fam, fillRadius: stroke?.fillRadius ?? fam.fillRadius };
+    return opaqueEstimate(image, measured, [measured], 0, flatMask(image, tol), backgroundColor(image));
+}
+
 function median(a) {
     const s = [...a].sort((x, y) => x - y);
     return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;

@@ -292,6 +292,17 @@ as poorly determined rather than silently placed or dropped.
    and engagement1 (skipped without bench-nature). Still open: engagement1's mid-blue and cyan (mid-blue has 3
    isolated fills and no strong arc; cyan's six dots never make a color cluster), hair2 and tumour1 (white fills:
    the fill is the background), and folding the global ring readers (outline.js) into this (stage 3).
+
+   **Editable outlines** (2026-11-13). Every opaque family of its own color, estimated or picked, has an Outline row
+   under Radius, Alpha and Blur: on or off, a color (typed, or Pick: click the darkest part of a ring) and a width.
+   A change measures every opaque family again (`opaqueFamilyEstimate`): the edited one with its outline (the fill
+   radius is the outer radius less the width), all with the others' fills known and, when any is outlined, each
+   ring given to the fill it surrounds; the edited family's dots are dropped (Undo restores them), the others keep
+   theirs. Adding a picked family does the same when any family is outlined. Reset restores the estimate. On
+   engagement1 in the app: cyan picked (55, 169, 218, radius 5.5, the fill alone), outlined with lavender's
+   94, 94, 116 at 2 px and radius 7.5: 60 dots, against the user's export recall 0.804 → 0.913 and precision
+   0.841 → 0.700 (cyan took 3 of its 6 and 4 mid-blue; mid-blue picked as well would claim those). Without the
+   radius set, a crowded family's outer radius isn't measured (cyan: 4.97, from the distance transform).
 8. ~~License.~~ **Decided: 0BSD**, like lafspline.
 
 ## 6. What to borrow from the sibling projects

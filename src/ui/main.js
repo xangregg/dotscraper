@@ -8,7 +8,7 @@
 
 import { pixelAt, pixelHash } from '../core/image.js';
 import { restoreChroma, jpegNoise } from '../core/jpeg.js';
-import { estimateStyle } from '../core/style.js';
+import { estimateStyle, opaqueFamilyEstimate } from '../core/style.js';
 import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage } from '../core/render.js';
@@ -37,6 +37,7 @@ const REMOVE_HIT_RADII = 1; // × r: Remove takes the nearest dot of the selecte
 const UNDO_DEPTH = 100; // edits kept for Undo
 const NUDGE_STEP = 1; // px, an arrow key in Move mode
 const NUDGE_FINE = 0.1; // px, Shift + an arrow key
+const OUTLINE_DEFAULT = { color: [60, 60, 80], width: 1.5 }; // 0–255, px: an outline turned on for a family without one
 // Find dots progress: a family's share of its bar at each stage the fit reports (rounds share the middle; a fit
 // may converge before MAX_ROUNDS, so the bar can jump at the end)
 const PROGRESS_CANDIDATES = 0.05;
@@ -69,7 +70,7 @@ const state = {
     dilate: null, // user's mask dilation for the selected family, px, or null for the default
     layers: null, // the selected family's buildMask result
     overlay: 'image',
-    mode: null, // null, 'pick', 'add', 'remove' or 'move': what a click in the view does
+    mode: null, // null, 'pick', 'pick-outline', 'add', 'remove' or 'move': what a click in the view does
     moving: null, // Move mode's chosen dot, { family, i } with i its index in that family's dots
     nudged: false, // the chosen dot has been nudged since it was chosen: its first nudge saved an undo step
     fit: null, // { families: [{ family, dots, radius, sigma }], dots (all, with family and r), ms, edited, partial }
@@ -589,7 +590,20 @@ function renderStylePanel() {
         input.disabled = !style || notOwn;
         input.title = notOwn ? 'Outlined dots: the ring and fill opacities are measured separately (see the notes)' : '';
     }
-    $('style-reset').disabled = !Object.keys(overrides).length;
+    const fam0 = state.families[state.current];
+    $('style-reset').disabled = !Object.keys(overrides).length && fam0.outlineEdit === undefined;
+    const editable = outlineEditable(state.current);
+    $('outline-params').hidden = !editable;
+    if (editable) {
+        const o = outlineOf(state.current);
+        $('outline-on').checked = !!o;
+        $('outline-color').value = hex(o?.color ?? OUTLINE_DEFAULT.color);
+        $('outline-width').value = (o?.width ?? OUTLINE_DEFAULT.width).toFixed(2);
+        $('outline-color').disabled = !o || state.worker !== null;
+        $('outline-width').disabled = !o || state.worker !== null;
+        for (const id of ['outline-color', 'outline-width'])
+            $(id).classList.toggle('overridden', fam0.outlineEdit !== undefined);
+    }
     $('style-notes').replaceChildren(...est.notes.map(n => Object.assign(document.createElement('p'), { textContent: n })));
     renderSample();
 }
@@ -694,6 +708,13 @@ function clickAt(x, y) {
         addPickedFamily(pixelAt(state.work, x, y).slice(0, 3));
         return;
     }
+    if (state.mode === 'pick-outline') {
+        const k = state.current;
+        state.families[k].outlineEdit = { color: pixelAt(state.work, x, y).slice(0, 3), width: outlineOf(k)?.width ?? OUTLINE_DEFAULT.width };
+        setMode(null);
+        outlineChanged(k);
+        return;
+    }
     if (state.mode === 'add' || state.mode === 'remove')
         editAt(state.mode, x + 0.5, y + 0.5);
     if (state.mode === 'move')
@@ -701,7 +722,7 @@ function clickAt(x, y) {
 }
 
 /** A family of a picked color, fitted on its own (on the image with any overlay divided out). */
-function addPickedFamily(rgb) {
+async function addPickedFamily(rgb) {
     setMode(null);
     const estimate = estimateStyle(state.base ?? state.work, { seed: rgb, jpeg: state.jpeg });
     if (!estimate.style) {
@@ -709,21 +730,89 @@ function addPickedFamily(rgb) {
         return;
     }
     state.families.push({ estimate, picked: rgb, enabled: true, overrides: {} });
-    selectFamily(state.families.length - 1);
+    const k = state.families.length - 1;
+    // with outlined families about, every opaque family needs the new fill to give its rings to it
+    if (state.families.some((f, j) => outlineEditable(j) && outlineOf(j)))
+        await remeasureOpaque();
+    selectFamily(k);
     setStatus(`Added a family of color ${rgb.join(', ')}.`);
 }
 
-/** What a click in the view does: null (pan only), 'pick', 'add', 'remove' or 'move'. */
+// An opaque family of its own color (not a color scale or the ring path): its outline can be edited
+function outlineEditable(k) {
+    const est = state.families[k]?.estimate;
+    return !!est?.style && !est.scale && est.familyMeasure?.kind === 'opaque';
+}
+
+// a family's outline in effect, { color, width } (0–255, px), or null
+function outlineOf(k) {
+    const f = state.families[k];
+    if (f.outlineEdit !== undefined)
+        return f.outlineEdit;
+    const fm = f.estimate.familyMeasure;
+    const color = fm.stroke ?? fm.outline;
+    const radius = f.estimate.style.radius;
+    return color && fm.fillRadius && radius ? { color, width: radius - fm.fillRadius } : null;
+}
+
+// Every opaque family measured again (style.opaqueFamilyEstimate): each with its outline in effect, the others'
+// fills known and, when any is outlined, each ring given to the fill it surrounds. With nothing edited and no picked
+// family, the estimates go back to what the analysis found.
+async function remeasureOpaque() {
+    showMessage('Measuring the dot families again…', { busy: true });
+    await nextPaint();
+    const opaque = state.families.map((_, j) => j).filter(outlineEditable);
+    const seedOf = j => state.families[j].picked ?? state.families[j].estimate.familyMeasure.seed;
+    const custom = opaque.some(j => state.families[j].outlineEdit !== undefined || state.families[j].picked);
+    const outlines = opaque.map(outlineOf);
+    const anyOutline = outlines.some(Boolean);
+    const image = state.base ?? state.work;
+    opaque.forEach((j, i) => {
+        const f = state.families[j];
+        f.auto ??= f.estimate;
+        if (!custom) {
+            f.estimate = f.auto;
+            return;
+        }
+        const o = outlines[i];
+        const fm = f.estimate.familyMeasure;
+        // the fill inside the outline: the outer radius (the user's, the outlined estimate's, or the plain fill's
+        // radius plus the width) less the width
+        const outer = f.overrides.radius ?? (fm.stroke || fm.outline ? f.estimate.style.radius : (f.estimate.style.radius ?? 0) + (o?.width ?? 0));
+        const stroke = o && (f.outlineEdit !== undefined || fm.stroke) ? { color: o.color, fillRadius: Math.max(1, outer - o.width) } : null;
+        f.estimate = opaqueFamilyEstimate(image, seedOf(j), {
+            stroke, outline: !stroke && f.outlineEdit === undefined ? fm.outline : null,
+            others: opaque.filter(q => q !== j).map(seedOf), ringsToOthers: anyOutline, jpeg: state.jpeg,
+        });
+    });
+    state.estimate = state.families[state.current]?.estimate ?? null;
+    showMessage('');
+}
+
+// family k's outline changed: measure the families again; k's dots are stale (Undo brings them back), the others'
+// keep their places
+async function outlineChanged(k) {
+    if (familyFit(k))
+        pushUndo();
+    dropFamilyFit(k);
+    await remeasureOpaque();
+    const o = outlineOf(k);
+    setStatus(o ? `${familyName(k)}: outline ${o.color.map(Math.round).join(', ')}, ${o.width.toFixed(2)} px; families measured again.` : `${familyName(k)}: no outline; families measured again.`);
+    styleChanged();
+}
+
+/** What a click in the view does: null (pan only), 'pick', 'pick-outline', 'add', 'remove' or 'move'. */
 function setMode(mode) {
     state.mode = mode;
     state.moving = null;
     state.nudged = false;
     $('pick-color').setAttribute('aria-pressed', String(mode === 'pick'));
+    $('outline-pick').setAttribute('aria-pressed', String(mode === 'pick-outline'));
     $('edit-add').setAttribute('aria-pressed', String(mode === 'add'));
     $('edit-remove').setAttribute('aria-pressed', String(mode === 'remove'));
     $('edit-move').setAttribute('aria-pressed', String(mode === 'move'));
     const stage = $('stage');
-    stage.classList.toggle('picking', mode === 'pick');
+    stage.classList.toggle('picking', mode === 'pick' || mode === 'pick-outline');
     stage.classList.toggle('adding', mode === 'add');
     stage.classList.toggle('removing', mode === 'remove' || mode === 'move');
     setHoverDot(-1);
@@ -734,6 +823,7 @@ function updateModeHint() {
     const hint = $('mode-hint');
     const name = familyName(state.current);
     const text = state.mode === 'pick' ? 'Click a dot to add a family of its color · Esc to cancel'
+        : state.mode === 'pick-outline' ? `Click the darkest part of an outline of ${name} · Esc to cancel`
         : state.mode === 'add' ? `Adding to ${name}: click to add a dot · drag to pan · Esc to finish`
         : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it · drag to pan · Esc to finish`
         : state.mode === 'move' && !state.moving ? `Moving in ${name}: click a dot to choose it · drag to pan · Esc to finish`
@@ -761,6 +851,9 @@ function renderFitControls() {
     $('save-csv').disabled = !state.fit?.dots.length || running;
     $('save-truth').disabled = !state.fit?.dots.length || running;
     $('pick-color').disabled = running || !state.image;
+    // a fit in progress was set up with the families as they are
+    for (const id of ['outline-on', 'outline-pick'])
+        $(id).disabled = running;
     if (!editable && (state.mode === 'add' || state.mode === 'remove'))
         setMode(null);
     if ((state.mode === 'remove' && $('edit-remove').disabled) || (state.mode === 'move' && $('edit-move').disabled))
@@ -1312,9 +1405,31 @@ function wireControls() {
         });
     }
     $('style-reset').addEventListener('click', () => {
-        state.families[state.current].overrides = {};
-        styleChanged();
+        const f = state.families[state.current];
+        f.overrides = {};
+        if (f.outlineEdit === undefined) {
+            styleChanged();
+            return;
+        }
+        delete f.outlineEdit;
+        f.estimate = f.auto ?? f.estimate;
+        outlineChanged(state.current);
     });
+    // the outline as the controls show it, or null when it's off
+    const outlineInput = () => {
+        if (!$('outline-on').checked)
+            return null;
+        const h = $('outline-color').value;
+        const width = Number($('outline-width').value);
+        return { color: [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)), width: width > 0 ? width : OUTLINE_DEFAULT.width };
+    };
+    for (const id of ['outline-on', 'outline-color', 'outline-width']) {
+        $(id).addEventListener('change', () => {
+            state.families[state.current].outlineEdit = outlineInput();
+            outlineChanged(state.current);
+        });
+    }
+    $('outline-pick').addEventListener('click', () => setMode(state.mode === 'pick-outline' ? null : 'pick-outline'));
     $('layer-dilate').addEventListener('change', e => {
         const v = Number(e.target.value);
         state.dilate = e.target.value === '' || !Number.isFinite(v) ? null : Math.max(0, v);
