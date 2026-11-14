@@ -1,5 +1,6 @@
-// Benchmark the extraction (PLAN.md §2.6): synthetic presets over several seeds, every local test image with
-// ground truth in testgraphs/truth/<name>.json ({ "dots": [{ "x", "y" }, …] } in px), and every PNG and JPEG of a
+// Benchmark the extraction (PLAN.md §2.6): synthetic presets over several seeds, every image with truth placed by hand
+// in testgraphs/truth/ or bench-nature/truth/ (<name>.json, the app's Save truth in px, tools/truth-json.mjs; every
+// family fitted, scored by truth family and fill), and every PNG and JPEG of a
 // truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/), and every test image with a
 // CSV of its own (testgraphs/<name>.csv and bench-nature/<name>.csv, mapped through the detected ticks; lane data
 // scored by lane, "(J)" after a name when JPEG noise turned JPEG mode on). Prints precision, recall,
@@ -10,7 +11,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readPng, readImage } from './png.mjs';
+import { readImage } from './png.mjs';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { estimateStyle } from '../src/core/style.js';
 import { estimateFamilies } from '../src/core/families.js';
@@ -21,9 +22,10 @@ import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { dotFamilies } from '../src/core/outline.js';
 import { detectAxes, plotBounds } from '../src/core/axes.js';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
+import { readTruthJson, isDotsExport } from './truth-json.mjs';
+import { pixelHash } from '../src/core/image.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const TRUTH_DIR = join(ROOT, 'testgraphs', 'truth');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 // directories of images with a CSV each (data units, ticks in the header), mapped through the detected ticks
 const CSV_SETS = ['testgraphs', 'bench-nature'];
@@ -327,6 +329,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const img = ['.png', '.jpg', '.jpeg'].map(e => join(testDir, name + e)).find(existsSync);
             if (!img || (opts.only && !`${set}/${name}`.includes(opts.only)))
                 continue;
+            // the app's dot export isn't data-unit truth: hand truth belongs in truth/<name>.json (tools/truth-json.mjs)
+            if (isDotsExport(readFileSync(join(testDir, file), 'utf8'))) {
+                console.log(`${set}/${name}: a dots export, not truth in data units; skipped (truth/${name}.json is scored)`);
+                continue;
+            }
             const jpeg = /\.jpe?g$/i.test(img);
             const image = readImage(img);
             const t0 = Date.now();
@@ -350,14 +357,40 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms));
         }
     }
-    if (existsSync(TRUTH_DIR) && !opts.preset && !opts.set) {
-        for (const file of readdirSync(TRUTH_DIR).filter(f => f.endsWith('.json'))) {
-            const truth = JSON.parse(readFileSync(join(TRUTH_DIR, file), 'utf8'));
-            const img = join(ROOT, 'testgraphs', truth.image ?? basename(file, '.json') + '.png');
+    // truth placed by hand (Save truth JSON, px): every family fitted, scored by group (each truth family, and fill)
+    for (const set of CSV_SETS) {
+        const truthDir = join(ROOT, set, 'truth');
+        if (!existsSync(truthDir) || opts.preset || (opts.set && opts.set !== set))
+            continue;
+        for (const file of readdirSync(truthDir).filter(f => f.endsWith('.json')).sort()) {
+            const name = basename(file, '.json');
+            if (opts.only && !`${set}/${name}`.includes(opts.only))
+                continue;
+            const truth = readTruthJson(join(truthDir, file));
+            const img = join(ROOT, set, truth.image ?? name + '.png');
+            if (!existsSync(img)) {
+                console.log(`${set}/${name}: image ${truth.image} absent`);
+                continue;
+            }
+            const jpeg = /\.jpe?g$/i.test(img);
+            const image = readImage(img);
+            // JPEG decoders differ, so only a PNG's hash can be checked
+            if (!jpeg && truth.hash && pixelHash(image) !== truth.hash) {
+                console.log(`${set}/${name}: the image's pixel hash ${pixelHash(image)} isn't the truth's ${truth.hash}; skipped`);
+                continue;
+            }
             const t0 = Date.now();
-            const image = readPng(img);
-            const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
-            rows.push(row(basename(file, '.json'), truth.dots, res, Date.now() - t0));
+            let results;
+            try {
+                results = extractAll(image, jpeg);
+            }
+            catch (e) {
+                console.log(`${set}/${name}: ${e.message}`);
+                continue;
+            }
+            const mark = results[0]?.jpegAuto ? ' (J)' : '';
+            const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
+            rows.push(groupRow(label, truth.dots, results, Date.now() - t0));
         }
     }
     print(rows);

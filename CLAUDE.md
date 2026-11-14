@@ -55,6 +55,8 @@ tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
 tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
 tools/measure-dots.mjs  phase 0 measurement of a translucent dot family (levels, alpha, radius, blur)
 tools/truth-csv.mjs     truth sets in data units (benchN/data.csv) and their pixel positions through the plot area
+tools/truth-json.mjs    truth placed by hand (Save truth JSON, px, in testgraphs/truth/ and bench-nature/truth/); run
+                        directly, it converts an old Save CSV export to one
 tools/                  bench and index scripts
 test/*.test.js          node:test + node:assert/strict
 ```

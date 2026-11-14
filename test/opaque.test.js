@@ -11,6 +11,7 @@ import { readPng, readImage } from '../tools/png.mjs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
+import { readTruthJson, truthFromExport, isDotsExport } from '../tools/truth-json.mjs';
 import { extractAll } from '../tools/bench.mjs';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
@@ -241,15 +242,16 @@ test('stroked fills: a light fill inside a dark stroke is a family, and each fam
     }
 });
 
-const ENGAGEMENT = new URL('../bench-nature/engagement1-10.1038-s41586-026-10967-w', import.meta.url).pathname;
+const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
+const ENGAGEMENT = 'engagement1-10.1038-s41586-026-10967-w';
 
-// the user's hand-checked dots, as the app's Save CSV writes them (px)
-test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(ENGAGEMENT + '.png') && existsSync(ENGAGEMENT + '.csv')) && 'bench-nature engagement1 absent' }, async () => {
-    // before: one family (50, 55, 99) with 33 dots; no lavender dot found; the user's export has 46 dots, 10 lavender
-    const { readFileSync } = await import('node:fs');
-    const truth = readFileSync(ENGAGEMENT + '.csv', 'utf8').trim().split(/\r?\n/).slice(1).map(l => l.split(','))
-        .map(c => ({ x: Number(c[1]), y: Number(c[2]), lavender: parseInt(c[0].split('#')[1].slice(0, 2), 16) > 150 })); // the light fill, whatever the export named it
-    const results = extractAll(readImage(ENGAGEMENT + '.png'), false);
+// the user's hand-checked dots (truth JSON, px)
+test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(`${NATURE}${ENGAGEMENT}.png`) && existsSync(`${NATURE}truth/${ENGAGEMENT}.json`)) && 'bench-nature engagement1 absent' }, () => {
+    // before: one family (50, 55, 99) with 33 dots; no lavender dot found; the user's truth has 46 dots, 10 lavender
+    const t = readTruthJson(`${NATURE}truth/${ENGAGEMENT}.json`);
+    const light = new Set(t.families.filter(f => f.color[0] > 150).map(f => f.family)); // the light fill, whatever its label
+    const truth = t.dots.map(d => ({ ...d, lavender: light.has(d.family) }));
+    const results = extractAll(readImage(`${NATURE}${ENGAGEMENT}.png`), false);
     const lav = results.find(r => r.est.familyMeasure.stroke && r.est.style.color[0] > 150);
     assert.ok(lav, 'a stroked lavender family');
     const m = matchDots(truth.filter(t => t.lavender), lav.fit.dots, 3);
@@ -276,4 +278,15 @@ test('opaqueFamilyEstimate: a family measured with a user-given outline finds it
     // and the dark family, told of the light fill, gives the light dots' rings to them
     const darkRes = fit(opaqueFamilyEstimate(image, dark, { others: [light], ringsToOthers: true }));
     assert.equal(matchDots(dots.filter(d => d.family === 0), darkRes.dots, 2).pairs.length, 0);
+});
+
+test('truth JSON: a dots export converts to truth, families and fills from its labels', () => {
+    const csv = 'family,x_px,y_px,se_noise_x_px,se_noise_y_px,visible,depth,flags,fill\n'
+        + '1 #323763,197.403,106.808,0.001,0.001,0.92,1,,\n'
+        + '2 #bab8f7,253.5,234.0,,,1.00,1,weak,2? #a0c4ff\n';
+    assert.equal(isDotsExport(csv), true);
+    assert.equal(isDotsExport('# x ticks: 1, 2\nx,y\n1,2\n'), false);
+    const t = truthFromExport(csv, 'a.png', 'abc');
+    assert.deepEqual(t.families, [{ family: 0, color: [50, 55, 99] }, { family: 1, color: [186, 184, 247] }]);
+    assert.deepEqual(t.dots, [{ x: 197.403, y: 106.808, family: 0 }, { x: 253.5, y: 234, family: 1, fill: 1, fillSure: false }]);
 });

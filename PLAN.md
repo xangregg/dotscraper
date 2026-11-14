@@ -1367,3 +1367,19 @@ pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
   colors, and the noise), on for a JPEG file, or, when the image has JPEG-like noise and the box is off, "try this
   if dots are missed".
 
+**Hand-made truth** (2026-11-13). Truth placed by hand is the app's Save truth JSON (image px, family and fill per
+dot, the image's pixel hash), in `testgraphs/truth/` and `bench-nature/truth/`; `<name>.csv` stays for published
+data in data units. A Save CSV export under that name isn't truth (fit-dependent columns, labels from the fit's
+colors): the bench skips it with a note, and `node tools/truth-json.mjs <export.csv> <image>` converts one (done for
+engagement1). The bench used to fit only the first family for the JSON truth and read only testgraphs PNGs; it now
+fits every family, scores them by group (each truth family, and fill) like the CSV group rows, reads both sets and
+JPEGs, and skips a PNG whose pixel hash isn't the truth's. The old rows understated the multi-family images:
+
+| image | before (family 0 only) | now (every family) |
+|---|---|---|
+| cantons-haemocytes-dotplot | 60 of 239, P 1.000 R 0.251 | 239 of 239, P 1.000 R 1.000 |
+| Laser-Asyllable-Maturity | P 0.813 R 0.371 | 80 for 70, P 0.875 R 1.000 |
+| nicest language | P 0.971 R 0.414 | 149 for 162, P 0.987 R 0.907 |
+| dog-ages (one family) | P 1.000 R 1.000 | the same |
+| bench-nature engagement1 | – | 44 for 46, P 0.841 R 0.804 |
+
