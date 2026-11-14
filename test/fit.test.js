@@ -104,9 +104,10 @@ test('refitNear: an added dot near another settles where the image has one; a re
     const moved = res.dots.find(d => Math.hypot(d.x - 140, d.y - 100) < 1);
     assert.ok(moved, `refined to ${JSON.stringify(res.dots)}`);
     assert.equal(res.dots.length, points.length);
-    // the dots come back sorted by x, not in the order given: `added` says which is the new one (Add mode nudges it)
-    assert.deepEqual(res.added.map(i => res.dots[i]), [moved]);
-    assert.notEqual(res.added[0], res.dots.length - 1);
+    // the dots come back sorted by x, not in the order given: `from` says which is the new one (Add mode nudges it)
+    const added = res.from.indexOf(points.length - 1);
+    assert.equal(res.dots[added], moved);
+    assert.notEqual(added, res.dots.length - 1);
 });
 
 test('regression: a missing dot whose neighbors drifted into its place is born (births re-settle neighbors)', () => {
@@ -124,6 +125,18 @@ test('regression: a missing dot whose neighbors drifted into its place is born (
     const m = matchDots(truth, res.dots, 3);
     assert.equal(res.dots.length, truth.length);
     assert.equal(m.recall, 1);
+});
+
+test('refitNear leaves pinned dots where the user put them and refines the others; from maps each dot back', () => {
+    const points = [{ x: 85, y: 90 }, { x: 125, y: 100 }, ...SEPARATE];
+    const { input } = prepare(spec(points));
+    // both dots 3 px off and within reach of the edit: the pinned one was put there by hand, the other is the fit's
+    const given = [{ x: 88, y: 90, pinned: true }, { x: 128, y: 100 }, ...SEPARATE];
+    const res = refitNear(input, given, 105, 95);
+    const at = j => res.dots[res.from.indexOf(j)];
+    assert.deepEqual([at(0).x, at(0).y], [88, 90]);
+    assert.ok(Math.hypot(at(1).x - 125, at(1).y - 100) < 1, `unpinned dot at ${at(1).x}, ${at(1).y}`);
+    assert.deepEqual([...res.from].sort((a, b) => a - b), [...given.keys()]);
 });
 
 test('flagClose marks both dots of a pair closer than 0.35 r, and clears the flag once they part', () => {

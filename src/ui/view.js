@@ -32,7 +32,8 @@ const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axi
  * @param {HTMLElement} opts.stage   container whose size the canvas fills; receives the pointer events
  * @param {HTMLCanvasElement} opts.canvas
  * @param {function(number|null, number|null): void} opts.onHover  image pixel under the pointer, or nulls
- * @param {function(number, number): void} opts.onClick  image pixel clicked (a press and release without a drag)
+ * @param {function(number, number, {alt: boolean, point: {x: number, y: number}}): void} opts.onClick  image pixel
+ *   clicked (a press and release without a drag), whether Option/Alt was held, and the exact point (image px)
  * @param {function(number): void} opts.onZoom  the new scale
  */
 export function createView({ stage, canvas, onHover, onClick, onZoom }) {
@@ -241,7 +242,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
             const x = Math.floor(p.x);
             const y = Math.floor(p.y);
             if (x >= 0 && y >= 0 && x < width && y < height)
-                onClick(x, y);
+                onClick(x, y, { alt: e.altKey, point: p });
         }
         drag = null;
         stage.classList.remove('dragging');

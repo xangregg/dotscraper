@@ -1474,3 +1474,13 @@ strong arc) and its 9 white fills are the page's color. comment1: 102 → 103 (o
 thick x axis: the speck family's black, excluded from the orange family's final measure until now, kept the axis
 out). Everything else, synthetic, bench1–3, testgraphs and the other bench-nature rows, unchanged.
 
+**Hand edits and the refit** (2026-11-14). An add or remove refines the family's dots within NEIGHBOR_RADII (2.2 r)
+of it, since neighbors drift into a missing dot's place and spread into a removed one's. That refit used to treat a
+dot placed or nudged by hand like any other (editAt passed only x, y and z, dropping the `moved` mark), so a nearby
+edit silently undid a nudge. Now dots added or moved by hand are pinned (`fit.pin`: refineAll skips them, also when
+the refinement spreads from a neighbor), refitNear reports which input each output dot came from so the marks
+survive, and Option-click (Alt) in Add or Remove mode edits without any refit: an added dot goes exactly where
+clicked (sub-pixel), marked placed. The hover line and the dot table (`by_hand`: added, moved, placed) say which
+dots are the user's; a moved dot's standard errors and removal margin are dropped, as they describe the fit's
+position, not the user's.
+

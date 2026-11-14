@@ -37,6 +37,8 @@ const REMOVE_HIT_RADII = 1; // × r: Remove takes the nearest dot of the selecte
 const UNDO_DEPTH = 100; // edits kept for Undo
 const NUDGE_STEP = 1; // px, an arrow key in Move mode
 const NUDGE_FINE = 0.1; // px, Shift + an arrow key
+// the modifier for edits without a refit, by its name on this platform
+const OPTION_KEY = /Mac/.test(navigator.platform) ? 'Option' : 'Alt';
 const OUTLINE_DEFAULT = { color: [60, 60, 80], width: 1.5 }; // 0–255, px: an outline turned on for a family without one
 // Find dots progress: a family's share of its bar at each stage the fit reports (rounds share the middle; a fit
 // may converge before MAX_ROUNDS, so the bar can jump at the end)
@@ -309,11 +311,11 @@ function showPixel(x, y) {
     // the curvature standard errors reflect pixel noise only; systematic error (resampled rims, model mismatch) is
     // several times larger (PLAN.md phase 4: two renderings of dog-ages differ by 3–6× these), so say so
     const se = d.seX === undefined ? '' : ` ± ${d.seX.toFixed(2)}, ${d.seY.toFixed(2)} (noise only)`;
-    const extra = d.visible === undefined ? '' : `; ${Math.round(100 * d.visible)}% visible, depth ${d.depth}, margin ${d.margin.toFixed(0)}λ`;
+    const extra = d.visible === undefined ? '' : `; ${Math.round(100 * d.visible)}% visible, depth ${d.depth}${d.margin === undefined ? '' : `, margin ${d.margin.toFixed(0)}λ`}`;
     const dd = dataAt(d.x, d.y);
     const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
     const fill = d.fill === undefined ? '' : `; fill ${fillLabel(d)}${d.fillSure ? '' : ' (mostly hidden: color unsure)'}`;
-    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.moved ? ' (moved by hand)' : ''}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.moved ? (d.placed ? ' (placed by hand)' : ' (moved by hand)') : d.placed ? ' (added by hand)' : ''}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
 }
 
 function setHoverDot(i) {
@@ -731,7 +733,7 @@ function renderLegend() {
         legend.textContent = `No fitted dots for ${familyName(state.current)} yet: showing the image.`;
 }
 
-function clickAt(x, y) {
+function clickAt(x, y, { alt = false, point = null } = {}) {
     if (!state.image)
         return;
     if (state.mode === 'pick') {
@@ -745,8 +747,9 @@ function clickAt(x, y) {
         outlineChanged(k);
         return;
     }
+    // Option-click: no refit, and an added dot goes exactly where clicked rather than at the pixel's center
     if (state.mode === 'add' || state.mode === 'remove')
-        editAt(state.mode, x + 0.5, y + 0.5);
+        editAt(state.mode, alt && point ? point.x : x + 0.5, alt && point ? point.y : y + 0.5, alt);
     if (state.mode === 'move')
         chooseMoving(x + 0.5, y + 0.5);
 }
@@ -854,9 +857,9 @@ function updateModeHint() {
     const name = familyName(state.current);
     const text = state.mode === 'pick' ? 'Click a dot to add a family of its color · Esc to cancel'
         : state.mode === 'pick-outline' ? `Click the darkest part of an outline of ${name} · Esc to cancel`
-        : state.mode === 'add' && state.moving ? `Adding to ${name}: click to add a dot · arrow keys move the last one ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · Esc to finish`
-        : state.mode === 'add' ? `Adding to ${name}: click to add a dot · drag to pan · Esc to finish`
-        : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it · drag to pan · Esc to finish`
+        : state.mode === 'add' && state.moving ? `Adding to ${name}: click to add a dot (${OPTION_KEY}-click: exactly there, nothing refitted) · arrow keys move the last one ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · Esc to finish`
+        : state.mode === 'add' ? `Adding to ${name}: click to add a dot (${OPTION_KEY}-click: exactly there, nothing refitted) · drag to pan · Esc to finish`
+        : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it (${OPTION_KEY}-click: nothing refitted) · drag to pan · Esc to finish`
         : state.mode === 'move' && !state.moving ? `Moving in ${name}: click a dot to choose it · drag to pan · Esc to finish`
         : state.mode === 'move' ? `Arrow keys move the dot ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · click another dot · Esc to finish`
         : '';
@@ -1068,11 +1071,13 @@ function undo() {
     fitChanged();
 }
 
-// add a dot to the selected family, or remove its nearest one, then refit the dots nearby
-function editAt(kind, x, y) {
+// Add a dot to the selected family, or remove its nearest one, then refit the dots nearby: they were placed to
+// explain the image without that dot (neighbors drift into a missing dot's place). Dots placed or moved by hand are
+// pinned: the refit leaves them alone. `exact` (Option-click) refits nothing: an added dot stays where clicked.
+function editAt(kind, x, y, exact = false) {
     const k = state.current;
     const f = familyFit(k) ?? { family: k, dots: [], radius: currentStyle().radius, sigma: NaN };
-    const dots = f.dots.map(d => ({ x: d.x, y: d.y, z: d.z }));
+    const dots = f.dots.map(d => ({ ...d, flags: [...(d.flags ?? [])] }));
     if (kind === 'remove') {
         const i = nearestDot(f.dots.map(d => ({ ...d, r: f.radius })), x, y, REMOVE_HIT_RADII);
         if (i < 0) {
@@ -1084,19 +1089,50 @@ function editAt(kind, x, y) {
         dots.splice(i, 1);
     }
     else {
-        dots.push({ x, y, added: true });
+        dots.push({ x, y, added: true, flags: [] });
     }
     pushUndo();
-    const res = refitNear({ ...fitInputFor(k), style: { ...currentStyle(), radius: f.radius } }, dots, x, y);
-    const updated = { ...f, dots: res.dots, sigma: res.sigma };
+    let out;
+    let addedAt = -1;
+    let sigma = f.sigma;
+    if (exact) {
+        // the dot is the user's, as clicked: no position or numbers from the fit, drawn on top if layered
+        const added = dots.find(d => d.added);
+        if (added) {
+            delete added.added;
+            Object.assign(added, { placed: true, moved: true },
+                currentStyle().layered ? { z: Math.max(0, ...dots.map(d => d.z ?? 0)) + 1 } : {});
+        }
+        out = flagClose(dots.sort((a, b) => a.x - b.x || a.y - b.y), f.radius);
+        addedAt = added ? out.indexOf(added) : -1;
+    }
+    else {
+        const input = dots.map(d => ({ x: d.x, y: d.y, z: d.z, added: d.added, pinned: !!(d.placed || d.moved) }));
+        const res = refitNear({ ...fitInputFor(k), style: { ...currentStyle(), radius: f.radius } }, input, x, y);
+        // the refit assesses every dot again; the marks of what the user did stay, and a moved dot's position isn't
+        // the fit's, so its standard errors and removal margin don't describe it
+        out = res.dots.map((d, i) => {
+            const was = dots[res.from[i]];
+            if (was.added)
+                return { ...d, placed: true };
+            if (was.moved) {
+                const { seX, seY, margin, ...rest } = d;
+                return { ...rest, placed: was.placed, moved: true };
+            }
+            return was.placed ? { ...d, placed: true } : d;
+        });
+        addedAt = res.from.findIndex(j => dots[j].added);
+        sigma = res.sigma;
+    }
+    const updated = { ...f, dots: out, sigma };
     const others = state.fit?.families.filter(g => g.family !== k) ?? [];
     setFits([...others, updated].sort((a, b) => a.family - b.family), { ...(state.fit ? extraOf(state.fit) : {}), edited: true });
     // the added dot becomes the one the arrow keys nudge
-    const i = kind === 'add' ? res.added[0] : -1;
-    state.moving = i >= 0 ? { family: k, i } : null;
+    state.moving = addedAt >= 0 ? { family: k, i: addedAt } : null;
     state.nudged = false;
-    state.hoverDot = i >= 0 ? globalIndex(k, i) : -1;
-    setStatus(`${kind === 'add' ? 'Added a dot to' : 'Removed a dot from'} ${familyName(k)}: ${updated.dots.length} dots.`);
+    state.hoverDot = addedAt >= 0 ? globalIndex(k, addedAt) : -1;
+    const how = exact ? (kind === 'add' ? ' where clicked, nothing refitted' : ', nothing refitted') : '';
+    setStatus(`${kind === 'add' ? 'Added a dot to' : 'Removed a dot from'} ${familyName(k)}${how}: ${updated.dots.length} dots.`);
     updateModeHint();
     fitChanged();
 }
@@ -1173,7 +1209,8 @@ function dotsTable() {
     if (hasData)
         head.push('x', 'y', 'se_noise_x', 'se_noise_y');
     const fills = state.fit.dots.some(d => d.fill !== undefined);
-    head.push('visible', 'depth', 'flags');
+    // by_hand: added (clicked, then refined), moved (nudged) or placed (Option-click: exactly as clicked)
+    head.push('visible', 'depth', 'flags', 'by_hand');
     if (fills)
         head.push('fill');
     const rows = [head];
@@ -1189,7 +1226,7 @@ function dotsTable() {
             const value = (v, res) => (v === null || v === undefined ? '' : formatData(v, res));
             row.push(value(dd.x, dd.resX), value(dd.y, dd.resY), se(d.seX, dd.resX), se(d.seY, dd.resY));
         }
-        row.push(d.visible?.toFixed(2) ?? '', String(d.depth ?? ''), d.flags.join(' '));
+        row.push(d.visible?.toFixed(2) ?? '', String(d.depth ?? ''), d.flags.join(' '), d.moved ? (d.placed ? 'placed' : 'moved') : d.placed ? 'added' : '');
         if (fills)
             row.push(d.fill === undefined ? '' : fillLabel(d));
         rows.push(row);

@@ -343,6 +343,7 @@ export function createFit(input) {
     const minVisible = opaque ? MIN_VISIBLE_OPAQUE : (style.layered ? MIN_VISIBLE_OUTLINE : 0);
     const fillT = FILL_LEVEL * Math.hypot(B[0] - style.color[0], B[1] - style.color[1], B[2] - style.color[2]);
     const pos = new Map(); // id → { x, y }
+    const pinned = new Set(); // ids placed by hand: refinement leaves them where they are
 
     function modelT(p) {
         return model.image.data[p];
@@ -436,7 +437,7 @@ export function createFit(input) {
         for (let sweep = 0; sweep < MAX_SWEEPS; sweep++) {
             const moved = [];
             for (const id of active) {
-                if (pos.has(id) && refineDot(id, sweep === 0 ? FIRST_SWEEP_STEP : RESWEEP_FIRST_STEP) >= CONVERGED_MOVE)
+                if (pos.has(id) && !pinned.has(id) && refineDot(id, sweep === 0 ? FIRST_SWEEP_STEP : RESWEEP_FIRST_STEP) >= CONVERGED_MOVE)
                     moved.push(pos.get(id));
             }
             if (!moved.length)
@@ -1002,7 +1003,7 @@ export function createFit(input) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, births, splits, deaths, merges, fitFills, refitRadius, totalLoss, assess, bestZ,
+        add, remove, refineAll, refineDot, pin: id => pinned.add(id), births, splits, deaths, merges, fitFills, refitRadius, totalLoss, assess, bestZ,
         get birthFailures() {
             return birthFailures;
         },
@@ -1134,21 +1135,33 @@ export function flagClose(dots, radius) {
  * The dot set itself is kept as given: no births or deaths, since the user just decided what is there.
  *
  * Outlined dots keep their drawing order (z); one marked `added` is placed where in its neighbors' order it fits
- * best (bestZ), after the others are in.
+ * best (bestZ), after the others are in. Dots marked `pinned` (placed or moved by hand) stay where they are: the
+ * user's placement overrides the fit's.
  *
  * @param {object} input  as createFit
- * @param {{x: number, y: number, z?: number, added?: boolean}[]} dots  px
+ * @param {{x: number, y: number, z?: number, added?: boolean, pinned?: boolean}[]} dots  px
  * @param {number} x  px, the edit
  * @param {number} y  px
- * @returns {{dots: object[], sigma: number, lambda: number, added: number[]}}  dots sorted by x; added: their indices
- *   of the dots marked `added`
+ * @returns {{dots: object[], sigma: number, lambda: number, from: number[]}}  dots sorted by x; from[i]: the index
+ *   in `dots` of dots[i]
  */
 export function refitNear(input, dots, x, y) {
     const fit = createFit(input);
-    for (const d of dots.filter(d => !d.added))
-        fit.add(d.x, d.y, d.z);
-    const added = new Set(dots.filter(d => d.added).map(d => fit.add(d.x, d.y, input.style.layered ? fit.bestZ(d.x, d.y) : undefined)));
+    const idOf = new Array(dots.length);
+    dots.forEach((d, i) => {
+        if (!d.added)
+            idOf[i] = fit.add(d.x, d.y, d.z);
+    });
+    dots.forEach((d, i) => {
+        if (d.added)
+            idOf[i] = fit.add(d.x, d.y, input.style.layered ? fit.bestZ(d.x, d.y) : undefined);
+    });
+    dots.forEach((d, i) => {
+        if (d.pinned)
+            fit.pin(idOf[i]);
+    });
     fit.refineAll(fit.near(x, y, NEIGHBOR_RADII * input.style.radius));
     const { dots: assessed, sigma, ids } = fit.assess();
-    return { dots: assessed, sigma, lambda: fit.lambda, added: ids.flatMap((id, i) => (added.has(id) ? [i] : [])) };
+    const indexOf = new Map(idOf.map((id, i) => [id, i]));
+    return { dots: assessed, sigma, lambda: fit.lambda, from: ids.map(id => indexOf.get(id)) };
 }
