@@ -12,33 +12,42 @@
 <body>
     <noscript><p class="warning">dotscraper runs in the browser and needs JavaScript.</p></noscript>
     <header>
-        <h1 title="Dot locations from images of graphs">dotscraper <span id="dev-badge" class="dev-badge" hidden title="Dev mode: local test images and Save truth. Add ?dev=0 to the URL for the public view.">dev</span></h1>
-        <div class="group" role="group" aria-label="Image source">
-            <select id="test-image" aria-label="Test image" title="Local test images" hidden>
-                <option value="">Test image…</option>
-            </select>
-            <button type="button" id="open-file" title="Open an image file; you can also paste (⌘V) or drop one on the view">Open…</button>
-            <input type="file" id="file-input" accept="image/*" hidden>
+        <!-- two rows, each a left and a right side that wrap onto lines of their own on narrow screens -->
+        <div class="bar">
+            <div class="side">
+                <h1 title="Dot locations from images of graphs">dotscraper <span id="dev-badge" class="dev-badge" hidden title="Dev mode: local test images and Save truth. Add ?dev=0 to the URL for the public view.">dev</span></h1>
+                <div class="group" role="group" aria-label="Image source">
+                    <select id="test-image" aria-label="Test image" title="Local test images" hidden>
+                        <option value="">Test image…</option>
+                    </select>
+                    <button type="button" id="open-file" title="Open an image file; you can also paste (⌘V) or drop one on the view">Open…</button>
+                    <input type="file" id="file-input" accept="image/*" hidden>
+                </div>
+            </div>
+            <div class="side">
+                <div class="group" role="group" aria-label="Export">
+                    <button type="button" id="copy-table" disabled title="Copy the dots as a tab-separated table that pastes into a spreadsheet: pixel and data coordinates, standard errors, flags">Copy table</button>
+                    <button type="button" id="save-csv" disabled title="Download the same table as a CSV file">Save CSV</button>
+                    <button type="button" id="save-truth" disabled hidden title="Save the current dots as ground truth JSON (for testgraphs/truth/)">Save truth</button>
+                </div>
+                <button type="button" id="about-open" title="What dotscraper does, how to use it, and its limits">About</button>
+            </div>
         </div>
-        <div class="group" role="group" aria-label="Find dots">
-            <button type="button" id="fit-run" class="primary" disabled>Find dots</button>
-            <button type="button" id="fit-stop" disabled title="Stop the fit and keep the dots found so far (not assessed)">Stop</button>
-            <progress id="fit-progress" max="1" value="0" hidden></progress>
-            <span id="fit-status" class="status" role="status"></span>
+        <div class="bar">
+            <div class="group" role="group" aria-label="Find dots">
+                <button type="button" id="fit-run" class="primary" disabled>Find dots</button>
+                <button type="button" id="fit-stop" disabled title="Stop the fit and keep the dots found so far (not assessed)">Stop</button>
+                <progress id="fit-progress" max="1" value="0" hidden></progress>
+                <span id="fit-status" class="status" role="status"></span>
+            </div>
+            <div class="group" role="group" aria-label="Edit dots">
+                <button type="button" id="edit-add" aria-pressed="false" disabled title="Click to add a dot to the selected family; the dots nearby are refit (A; Esc to finish)">+ Add dot</button>
+                <button type="button" id="edit-remove" aria-pressed="false" disabled title="Click a dot of the selected family to remove it; the dots nearby are refit (R; Esc to finish)">− Remove dot</button>
+                <button type="button" id="edit-move" aria-pressed="false" disabled title="Click a dot of the selected family, then move it with the arrow keys: 1 px, or 0.1 px with Shift; it isn't refit (M; Esc to finish)">Move dot</button>
+                <button type="button" id="edit-clear" disabled title="Remove every dot of every family; Undo brings them back">Clear all</button>
+                <button type="button" id="edit-undo" disabled title="Undo the last edit (⌘Z)">Undo</button>
+            </div>
         </div>
-        <div class="group" role="group" aria-label="Edit dots">
-            <button type="button" id="edit-add" aria-pressed="false" disabled title="Click to add a dot to the selected family; the dots nearby are refit (A; Esc to finish)">+ Add dot</button>
-            <button type="button" id="edit-remove" aria-pressed="false" disabled title="Click a dot of the selected family to remove it; the dots nearby are refit (R; Esc to finish)">− Remove dot</button>
-            <button type="button" id="edit-move" aria-pressed="false" disabled title="Click a dot of the selected family, then move it with the arrow keys: 1 px, or 0.1 px with Shift; it isn't refit (M; Esc to finish)">Move dot</button>
-            <button type="button" id="edit-clear" disabled title="Remove every dot of every family; Undo brings them back">Clear all</button>
-            <button type="button" id="edit-undo" disabled title="Undo the last edit (⌘Z)">Undo</button>
-        </div>
-        <div class="group" role="group" aria-label="Export">
-            <button type="button" id="copy-table" disabled title="Copy the dots as a tab-separated table that pastes into a spreadsheet: pixel and data coordinates, standard errors, flags">Copy table</button>
-            <button type="button" id="save-csv" disabled title="Download the same table as a CSV file">Save CSV</button>
-            <button type="button" id="save-truth" disabled hidden title="Save the current dots as ground truth JSON (for testgraphs/truth/)">Save truth</button>
-        </div>
-        <button type="button" id="about-open" class="about-open" title="What dotscraper does, how to use it, and its limits">About</button>
     </header>
     <main>
         <aside id="panel" aria-label="Details">

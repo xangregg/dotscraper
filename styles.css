@@ -58,12 +58,23 @@ body {
 
 header {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 20px;
+    flex-direction: column;
+    gap: 6px;
     padding: 8px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+}
+
+/* a toolbar row: its left and right sides pushed apart; on a narrow screen the right side wraps to a line of its own */
+.bar, .side {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 20px;
+}
+
+.bar {
+    justify-content: space-between;
 }
 
 h1 {
@@ -115,11 +126,6 @@ h1 {
 
 #about a {
     color: var(--accent);
-}
-
-/* the About button sits at the toolbar's far end */
-.about-open {
-    margin-left: auto;
 }
 
 #about {

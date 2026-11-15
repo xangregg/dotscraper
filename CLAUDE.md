@@ -69,7 +69,7 @@ test/*.test.js          node:test + node:assert/strict
   Model views) is on for a local host and off on the deployed site (https://xangregg.github.io/dotscraper/, GitHub
   Pages from the branch root); `?dev` turns it on anywhere, `?dev=0` off.
 - Page check (server must be running): `npm run check:page -- http://localhost:8003/ --until '<js expr>'
-  --eval '<js expr>' --screenshot out.png [--dark]`. Exits 1 on any console error, exception, or failed load.
+  --eval '<js expr>' --screenshot out.png [--dark] [--width px]` (`--width` for narrow layouts; default 1280). Exits 1 on any console error, exception, or failed load.
 - Test image list: after adding an image to `testgraphs/`, `npm run images:index` (the test suite fails if
   `testgraphs/index.json` is stale). Servers that don't list directories (WebStorm's built-in one) need it.
 - Consistency check without ground truth: `node tools/compare-fits.mjs a.png b.png` fits two renderings of one

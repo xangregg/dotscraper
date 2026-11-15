@@ -1358,6 +1358,11 @@ the ordered model, and the style panel says "fitted by its outlines in drawing o
 `dev-only`); Image and Residual stay for everyone, the residual being how a user sees what the dots don't explain
 (the display-honesty rule). Checked headless: all six views on localhost, Image and Residual with `?dev=0`.
 
+**Two toolbar rows** (2026-11-15). The header is two explicit rows, each a left and a right side pushed apart: row 1
+the name and the image source | export and About; row 2 Find dots, Stop and the status | the edit buttons. A narrow
+screen wraps each row's right side onto a line of its own. check-page takes `--width` for that; checked at 1280, 900,
+600 and 400 px and in the public view, no console errors.
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to

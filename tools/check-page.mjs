@@ -4,12 +4,13 @@
 // (Node 22+).
 //
 // Usage: node tools/check-page.mjs [url] [--until <js expr>] [--eval <js expr>] [--screenshot file.png]
-//                                 [--dark] [--timeout seconds]
+//                                 [--dark] [--width px] [--timeout seconds]
 //   --until       wait until this expression is truthy in the page (default: document load)
 //   --eval        print the value of this expression after waiting
 //   --eval-file   like --eval, reading the expression from a file
 //   --screenshot  save a PNG of the viewport
 //   --dark        emulate prefers-color-scheme: dark
+//   --width       viewport width in CSS px (default 1280), for narrow layouts
 //   --timeout     seconds to wait for --until (default 20; long benchmarks need more)
 // Exit status 1 if any errors were seen or --until timed out.
 
@@ -39,6 +40,8 @@ function parseArgs(argv) {
             opts.screenshot = argv[++i];
         else if (arg === '--dark')
             opts.dark = true;
+        else if (arg === '--width')
+            opts.width = Number(argv[++i]);
         else if (arg === '--timeout')
             opts.timeout = 1000 * Number(argv[++i]);
         else
@@ -153,7 +156,7 @@ async function main() {
         await cdp.send('Runtime.enable', {}, pageSession);
         await cdp.send('Log.enable', {}, pageSession);
         await cdp.send('Emulation.setDeviceMetricsOverride',
-            { ...VIEWPORT, deviceScaleFactor: 1, mobile: false }, pageSession);
+            { ...VIEWPORT, ...(opts.width ? { width: opts.width } : {}), deviceScaleFactor: 1, mobile: false }, pageSession);
         if (opts.dark) {
             await cdp.send('Emulation.setEmulatedMedia',
                 { features: [{ name: 'prefers-color-scheme', value: 'dark' }] }, pageSession);
