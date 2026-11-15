@@ -1297,6 +1297,23 @@ requests. A red "dev" badge by the title marks it. Opening a file keeps the quer
 hash. Checked headless: localhost (dev: 10 test images, Save truth), `?dev=0` (neither, the public message) and
 `?dev#image=dog-ages.png` (opens it), no console errors.
 
+**cells1's magenta family** (2026-11-15). cells1 found only its green dots (38 of 72). Magenta (196, 78, 174), pink
+fills in the same black outline, failed all three tries: no isolated whole dot (the gray lines joining each session's
+two dots chain them, and most sit over a gray bar), so its radius came from the distance transform (4.5 for 20), and
+the fill-disc fallback found no round fill because isolatedDots judges a component in a window 4 px around it, which in
+a cluster takes in the neighbors' fills 2 px away across the outlines. Now:
+
+- `roundFills` judges a fill component's roundness on its own pixels and antialiased rim, not a window.
+- Stroked families use the fill-based radius and center search too (their fill weight, as outlined ones use the fill's
+  coverage).
+- The local outline model (try 3) needs a ring darker than the fill: with round fills found, bench3 ANOVA's pink under
+  a pale blue band became a second family "outlined" in the band's color (31 dots; it had 204 in one).
+
+Tried and reverted: letting any background color (the bar's gray, 2 isolated magenta fills on white against 8 with it)
+surround an isolated fill in strokeColor. It wasn't needed, and it let bench1 group-smoother-ci's red–blue overlap
+purple become a stroked family (109 for 100). cells1: 38 → 73 for 72, P 0.904 R 0.917 (rmse 2.2 px: the truth is data
+values in jittered lanes); hair2 9 → 10 (P 0.900); phase1 65 → 75 (P 0.387 R 0.299); everything else unchanged.
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to

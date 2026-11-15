@@ -1388,10 +1388,12 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     // are not its dots
     const fill = stroke ? fillW : own;
     const isolated = isolatedDots(D, width, height, tol).filter(d => discShare(fill, width, height, d.cx, d.cy, ISOLATED_FILL_RADII * d.r) >= DOT_MIN_FILL);
-    // outlined dots without an isolated whole one: their fills give the radius, and the center search runs on the
-    // fills, whose edges are each dot's own wherever it's on top (D's edge is the union's, joined to lines of the
-    // fill's color and to touching dots)
-    const byFill = !isolated.length && outline ? outlinedRadius(fillK, own, D, width, height, tol) : null;
+    // outlined or stroked dots without an isolated whole one: their fills give the radius, and the center search runs
+    // on the fills, whose edges are each dot's own wherever it's on top (D's edge is the union's, joined to lines of
+    // the fill's color and to touching dots; cells1's magenta, chained to its neighbors by gray lines that read as
+    // half the stroke, got 4.5 for 20 from the distance transform)
+    const fillCover = outline ? fillK : stroke ? fillW : null;
+    const byFill = !isolated.length && fillCover ? outlinedRadius(fillCover, own, D, width, height) : null;
     const radius = isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height);
     let dots = 0;
     let strongDots = 0;
@@ -1403,7 +1405,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         // a center counts if most of its edge is seen and its disc is filled with the family's own color (text:
         // round glyphs are hollow; fanc2: a rim gray between dot and overlap read black text as beyond its color,
         // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
-        const rf = DOT_FILL_RADII * (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : byFill?.fillRadius ?? radius);
+        const rf = DOT_FILL_RADII * (byFill?.fillRadius ?? (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : radius));
         const inside = stroke ? fillW : own;
         const filled = c => {
             let count = 0;
@@ -1419,7 +1421,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
             return count > 0 && on >= DOT_MIN_FILL * count;
         };
-        const centers = (byFill ? houghCenters(fillK, weight, width, height, byFill.fillRadius) : houghCenters(D, weight, width, height, radius))
+        const centers = (byFill ? houghCenters(fillCover, weight, width, height, byFill.fillRadius) : houghCenters(D, weight, width, height, radius))
             .filter(c => c.arc >= DOT_MIN_ARC && filled(c));
         dots = centers.length;
         strongDots = centers.filter(c => c.arc >= DOT_STRONG_ARC).length;
@@ -1527,12 +1529,12 @@ function fillSaturatedOverlaps(image, D, B, color, others) {
  * them (phase1: most dots sit on their fitted curve, whose distance-transform ridge outvoted them, r 4–6 against
  * 18). The fill radius is the median of the round fill components; the outline's width comes from the covered
  * pixels in a ring just outside each, as the area they add to the disc. Null without a round fill. fillK is the fill's
- * antialiased coverage (0 at the outline's color, 1 at the fill's).
+ * antialiased coverage (0 at the outline's color, 1 at the fill's), or a stroked family's fill weight.
  *
  * @returns {{radius: number, fillRadius: number}|null}  px
  */
-function outlinedRadius(fillK, own, D, width, height, tol) {
-    const discs = isolatedDots(fillK, width, height, tol).filter(d => d.r >= DOT_MIN_RADIUS);
+function outlinedRadius(fillK, own, D, width, height) {
+    const discs = roundFills(fillK, width, height).filter(d => d.r >= DOT_MIN_RADIUS);
     if (!discs.length)
         return null;
     const rf = median(discs.map(d => d.r));
@@ -1550,6 +1552,71 @@ function outlinedRadius(fillK, own, D, width, height, tol) {
         return Math.sqrt(d.r * d.r + added / Math.PI) - d.r;
     });
     return { radius: rf + median(widths), fillRadius: rf };
+}
+
+/**
+ * Round fill components: those of fill > 0.5, away from the image border, round by their second moments over their
+ * own pixels and their antialiased rim (fill 0–0.5 next to them), weighted by min(fill, 1). Unlike isolatedDots, a
+ * window around the component isn't read: fills in a cluster sit 2 px apart, across their strokes (cells1's magenta:
+ * every fill failed when its neighbors' fills fell in the window). O(pixels).
+ *
+ * @returns {{cx: number, cy: number, r: number}[]}  px
+ */
+function roundFills(fill, width, height) {
+    const out = [];
+    const taken = new Uint8Array(fill.length);
+    for (const comp of components(fill, width, height)) {
+        for (const p of comp)
+            taken[p] = 1;
+    }
+    for (const comp of components(fill, width, height)) {
+        const pixels = new Set(comp);
+        for (const p of comp) {
+            const x = p % width;
+            for (const q of [p - 1, p + 1, p - width, p + width, p - width - 1, p - width + 1, p + width - 1, p + width + 1]) {
+                const qx = q % width;
+                if (q >= 0 && q < fill.length && Math.abs(qx - x) <= 1 && !taken[q] && fill[q] > 0)
+                    pixels.add(q);
+            }
+        }
+        let a = 0;
+        let sx = 0;
+        let sy = 0;
+        let edge = false;
+        for (const p of pixels) {
+            const x = p % width;
+            const y = (p - x) / width;
+            edge ||= x === 0 || y === 0 || x === width - 1 || y === height - 1;
+            const w = Math.min(1, fill[p]);
+            a += w;
+            sx += w * (x + 0.5);
+            sy += w * (y + 0.5);
+        }
+        if (edge || a < ISOLATED_MIN_AREA)
+            continue;
+        const cx = sx / a;
+        const cy = sy / a;
+        let mxx = 0;
+        let myy = 0;
+        let mxy = 0;
+        for (const p of pixels) {
+            const x = p % width;
+            const y = (p - x) / width;
+            const w = Math.min(1, fill[p]);
+            mxx += w * (x + 0.5 - cx) ** 2;
+            myy += w * (y + 0.5 - cy) ** 2;
+            mxy += w * (x + 0.5 - cx) * (y + 0.5 - cy);
+        }
+        mxx /= a;
+        myy /= a;
+        mxy /= a;
+        const tr = mxx + myy;
+        const disc = Math.sqrt(Math.max(0, tr * tr / 4 - (mxx * myy - mxy * mxy)));
+        const r = Math.sqrt(a / Math.PI);
+        if (Math.sqrt((tr / 2 + disc) / (tr / 2 - disc)) <= ISOLATED_MAX_ASPECT && Math.sqrt(2 * tr) / r <= ISOLATED_MAX_MOMENT_RATIO)
+            out.push({ cx, cy, r });
+    }
+    return out;
 }
 
 // share of the pixels whose centers lie within r of (cx, cy) where v > 0.5
@@ -1584,6 +1651,11 @@ function hasSquare(comp, width, height, depth) {
         }
         return true;
     });
+}
+
+// relative luminance proxy, 0–255 (Rec. 709 weights on the sRGB values): only compared, never displayed
+function luminance(c) {
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 }
 
 // whether a color's pixels are thin as a whole: an opening by OUTLINE_OPENING keeps under OUTLINE_MAX_THICK of them
@@ -1680,7 +1752,9 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         // outlines around grays, which the stroke model can't read, white, gray and black being on one line, with
         // text, axes and a black colorbar block in the outline's color; hair2's pink, one strong arc as stroked).
         // Not around a translucent family's level (economist: a red–blue lens inside red dots made a phantom
-        // "outlined" family).
+        // "outlined" family). In (3) the outline is darker than the fill, as ink shared with text is: a lighter ring is
+        // a band or region the dots lie under (bench3 ANOVA: pink under a pale blue band read as fills "outlined" in
+        // the band's color, a second family of 31).
         const plain = fam;
         const ring = plain.background;
         const ringable = !onTranslucent(ring) && !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL);
@@ -1692,7 +1766,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             fam = outlinedFamily() ?? fam;
         if (!isDotFamily(fam))
             fam = strokedFamily(image, cl.color, backgrounds, tol, plain) ?? fam;
-        if (!isDotFamily(fam) && ringable && !isThin(image, cl.color))
+        if (!isDotFamily(fam) && ringable && !isThin(image, cl.color) && luminance(ring) < luminance(cl.color))
             fam = outlinedFamily() ?? fam;
         fam.interior = interior / count;
         if (isDotFamily(fam))

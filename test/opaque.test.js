@@ -344,6 +344,19 @@ test('regression: kite1, a translucent family without a measured radius is kept 
     assert.ok(estimates.some(e => e.familyMeasure?.kind === 'translucent' && !(e.style.radius > 0)), estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
 });
 
+const CELLS1 = 'cells1-10.1038-s41586-026-10946-1.png';
+
+test('regression: cells1, magenta dots over a gray bar and clustered are a family like the green, by their fills', { skip: !existsSync(NATURE + CELLS1) && 'bench-nature cells1 absent' }, () => {
+    // before: only green. Magenta has no isolated whole dot (the gray connecting lines chain the dots, and most sit
+    // over a gray bar), so its radius came from the distance transform (4.5 for 20), and its round fills were judged
+    // in a window that took in their neighbors' fills, 2 px away across the outlines
+    const { estimates } = estimateFamilies(readImage(NATURE + CELLS1));
+    assert.equal(estimates.length, 2, estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
+    const magenta = estimates.find(e => Math.hypot(...e.style.color.map((v, ch) => v - [196, 78, 174][ch])) < 10);
+    assert.ok(magenta, 'a magenta family');
+    near(magenta.style.radius, 20, 0.6, 'radius');
+});
+
 const COMMENT1 = 'comment1-2026-10-22.png';
 
 test('regression: comment1, small round specks beside regular dots are no family', { skip: !existsSync(NATURE + COMMENT1) && 'bench-nature comment1 absent' }, () => {
