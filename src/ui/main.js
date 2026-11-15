@@ -2,7 +2,7 @@
 //
 // Dev mode (on where the app is served from this machine, or anywhere with ?dev; ?dev=0 turns it off) adds what only
 // development needs: the list of local test images, the current one's name kept in the URL hash (#image=<file>) so a
-// reload reopens it, and Save truth. The deployed site never has the test images, so it doesn't look for them.
+// reload reopens it, Save truth, and the diagnostic views (Count, Mask, Classes, Model; elements with class dev-only). The deployed site never has the test images, so it doesn't look for them.
 //
 // On each new image the app estimates every dot family (src/core/families.js) and builds the selected family's
 // mask (src/core/layers.js). The panel lists the families: checked ones are fitted by Find dots, the selected one is
@@ -1609,6 +1609,10 @@ function wireControls() {
 async function init() {
     $('dev-badge').hidden = !DEV;
     $('save-truth').hidden = !DEV;
+    // diagnostic views (Count, Mask, Classes, Model): Image and Residual, which shows what the dots don't explain,
+    // are for everyone
+    for (const el of document.querySelectorAll('.dev-only'))
+        el.hidden = !DEV;
     const names = DEV ? await listTestImages() : [];
     const select = $('test-image');
     for (const name of names)

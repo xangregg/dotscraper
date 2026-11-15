@@ -1354,6 +1354,10 @@ so they stay unions). In the app, such a family's Model view draws each dot outl
 (sharp, blurred once: blurring each pass blurred the dots under it again), the Residual compares in ring units with
 the ordered model, and the style panel says "fitted by its outlines in drawing order" (no α of its own).
 
+**Diagnostic views are dev-only** (2026-11-15). Count, Mask, Classes and Model show only in dev mode (class
+`dev-only`); Image and Residual stay for everyone, the residual being how a user sees what the dots don't explain
+(the display-honesty rule). Checked headless: all six views on localhost, Image and Residual with `?dev=0`.
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to

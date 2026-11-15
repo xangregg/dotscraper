@@ -52,7 +52,8 @@ npm run serve
 `npm run check:page -- http://localhost:8003/` loads the page headless and fails on any console error.
 
 **Dev mode** adds what only development needs: the list of local test images (and the `#image=` URL that reopens
-one) and *Save truth* for placing ground truth by hand. It is on for a local server and off on the deployed site;
+one), *Save truth* for placing ground truth by hand, and the diagnostic views (Count, Mask, Classes, Model; Image and
+Residual are for everyone). It is on for a local server and off on the deployed site;
 `?dev` turns it on anywhere and `?dev=0` off, to see the public view locally. A "dev" badge by the title shows it.
 
 `npm run bench` scores the detector against ground truth: synthetic presets, and the renderings in `bench1/`–`bench3/`
