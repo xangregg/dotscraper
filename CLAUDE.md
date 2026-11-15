@@ -36,8 +36,8 @@ src/core/               pure algorithms: image.js (hash, pixel access), render.j
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
                         ticks, labels, scales), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
-                        dots), colormap.js (dots colored by a continuous scale), outline.js (outlined dots whose fills vary,
-                        fitted by their rings in drawing order), families.js (all of the
+                        dots), colormap.js (dots colored by a continuous scale), outline.js (outlined dots fitted by their rings in drawing order:
+                        whole images whose fills vary, and single outlined families), families.js (all of the
                         above, per image: what the bench and the app fit), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
                         axes-panel.js (tick values, scales, data coordinates), input.js

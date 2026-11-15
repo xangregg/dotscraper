@@ -136,6 +136,10 @@ const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–o
 // An outline is the family's only next to its fill: farther out, the outline's color is other ink (phase1: black
 // outlines around gray fills, and black text, axes and a black family, which counted as dots everywhere)
 const OUTLINE_REACH = 4; // px from the family's fill
+// A family's ring image (familyRings) reads a full outline as this, below outline.js's MASK_INK (0.8), which masks
+// near-black ink as text: the reach already masks text here, and black outlines are exactly text's color
+const FAMILY_RING_P = 0.45;
+const COLLINEAR_SIN2 = 0.01; // sin² of the angle between page→fill and page→outline below which they're one line
 // A fill is thick and an outline is a thin ring: an opening by a disc wider than the ring leaves little of its color
 // (JMP's 1.7 px outlines keep 0.5–4.8%), so a thin cluster is no fill to try the outline model on (a synthetic ring's
 // color read as a "fill" with the real fill for its outline)
@@ -1140,6 +1144,85 @@ function ringOwners(image, own, rings) {
         }
     }
     return out;
+}
+
+/**
+ * One outlined or stroked family's ring image, for fitting it by its rings in drawing order (outline.js): each pixel's
+ * weight of the outline in the triangle page–fill–outline, scaled so a full outline reads FAMILY_RING_P. The fill and
+ * the page read 0, so an outline crossing a lower dot of the family is the upper dot's edge, which the opaque union
+ * can't see (degradation1: two mint dots 6–10 px apart read as one solid blob, fill and outline alike "dot").
+ * Unknown: pixels off the triangle, other families' fills and the rings nearer them, and outline-colored ink beyond
+ * OUTLINE_REACH of this family's thick fill (text, axes).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} fill  0–255
+ * @param {number[]} outline  0–255
+ * @param {number[][]} backgrounds  0–255, the page's first
+ * @param {number[][]} others  0–255, the other families' fill colors
+ * @returns {{P: Float32Array, unknown: Uint8Array}}  P 0–FAMILY_RING_P
+ */
+export function familyRings(image, fill, outline, backgrounds, others) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const own = new Uint8Array(n);
+    for (let p = 0; p < n; p++)
+        own[p] = Math.hypot(data[4 * p] - fill[0], data[4 * p + 1] - fill[1], data[4 * p + 2] - fill[2]) <= CLUSTER_TOL ? 1 : 0;
+    const reach = dilate(opening(own, width, height, THICK_OPENING), width, height, OUTLINE_REACH);
+    const theirs = ringOwners(image, own, others.map(c => ({ fill: c, reach: STROKE_RING })));
+    const otherFill = others.length ? thickMembers(image, others) : null;
+    const B = backgrounds[0];
+    const a1 = fill.map((v, ch) => v - B[ch]);
+    const a2 = outline.map((v, ch) => v - B[ch]);
+    const m11 = a1[0] * a1[0] + a1[1] * a1[1] + a1[2] * a1[2];
+    const m12 = a1[0] * a2[0] + a1[1] * a2[1] + a1[2] * a2[2];
+    const m22 = a2[0] * a2[0] + a2[1] * a2[1] + a2[2] * a2[2];
+    const det = m11 * m22 - m12 * m12;
+    const P = new Float32Array(n);
+    const unknown = new Uint8Array(n);
+    for (let p = 0; p < n; p++) {
+        const r = data[4 * p];
+        const g = data[4 * p + 1];
+        const b = data[4 * p + 2];
+        if (backgrounds.some(Q => Math.hypot(r - Q[0], g - Q[1], b - Q[2]) <= INK_TOL))
+            continue;
+        if ((otherFill && !own[p] && otherFill[p]) || (theirs && theirs[p]) || !reach[p]) {
+            unknown[p] = 1;
+            continue;
+        }
+        const v = [r - B[0], g - B[1], b - B[2]];
+        let wf;
+        let ws;
+        if (det > COLLINEAR_SIN2 * m11 * m22) {
+            const r1 = v[0] * a1[0] + v[1] * a1[1] + v[2] * a1[2];
+            const r2 = v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2];
+            wf = (m22 * r1 - m12 * r2) / det;
+            ws = (m11 * r2 - m12 * r1) / det;
+        }
+        else {
+            // page, fill and outline on one line (gray fills in black outlines): the position on the outline–fill
+            // segment, or beyond the fill on the page–outline one (an outline's rim on the page passes through the
+            // fill's color too, and reads as fill: unavoidable on one line)
+            const e = outline.map((c, ch) => [r, g, b][ch] - c);
+            const fo = fill.map((c, ch) => c - outline[ch]);
+            const k = (e[0] * fo[0] + e[1] * fo[1] + e[2] * fo[2]) / (fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2]);
+            if (k <= 1) {
+                wf = Math.max(0, k);
+                ws = 1 - Math.max(0, k);
+            }
+            else {
+                wf = 0;
+                ws = (v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2]) / m22;
+            }
+        }
+        const off = Math.hypot(v[0] - wf * a1[0] - ws * a2[0], v[1] - wf * a1[1] - ws * a2[1], v[2] - wf * a1[2] - ws * a2[2]);
+        const span = Math.hypot(wf * a1[0] + ws * a2[0], wf * a1[1] + ws * a2[1], wf * a1[2] + ws * a2[2]);
+        if (off > Math.max(OFF_MIX_ABS, OFF_MIX_REL * span) || wf < -STROKE_SLACK || ws < -STROKE_SLACK || wf + ws > MAX_MIX) {
+            unknown[p] = 1;
+            continue;
+        }
+        P[p] = FAMILY_RING_P * Math.min(1, Math.max(0, ws));
+    }
+    return { P, unknown };
 }
 
 // 1 on the thick parts (an opening) of the pixels within CLUSTER_TOL of any of `colors`

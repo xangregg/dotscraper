@@ -14,9 +14,9 @@ import { restoreChroma, jpegNoise } from '../core/jpeg.js';
 import { estimateStyle, opaqueFamilyEstimate } from '../core/style.js';
 import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
-import { renderDots, solidImage } from '../core/render.js';
+import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render.js';
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
-import { dotFamilies } from '../core/outline.js';
+import { dotFamilies, createOutlineModel } from '../core/outline.js';
 import { detectAxes, plotBounds } from '../core/axes.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
@@ -392,11 +392,34 @@ function findBlocked() {
  * where dots overlap the picture differs from the chart's.
  */
 function renderModel(bg, dots, style) {
+    // fitted by its rings, an outlined family knows each dot's drawing order (z): outline, then fill, dot by dot
+    if (style.layered && style.outline) {
+        // sharp, dot by dot, then blurred once: blurring each pass would blur the dots under it again and again
+        let out = bg;
+        const opaque = { ...style, alpha: 1, blur: 0, levels: undefined, ring: undefined, layered: undefined };
+        for (const d of [...dots].sort((a, b) => (a.z ?? 0) - (b.z ?? 0))) {
+            out = renderDots(out, [d], { ...opaque, color: style.outline.color });
+            out = renderDots(out, [d], { ...opaque, radius: style.outline.inner * style.radius });
+        }
+        if (!(style.blur > 0))
+            return out;
+        const blurred = { width: out.width, height: out.height, data: new Float32Array(out.data.length) };
+        blurRect(out, blurred, gaussianKernel(style.blur), [0, 0, out.width, out.height]);
+        return blurred;
+    }
     if (!style.outline)
         return renderDots(bg, dots, style);
     // the level table would paint over the background image, so both passes composite over it instead
     const rings = renderDots(bg, dots, { ...style, color: style.outline.color, levels: undefined });
     return renderDots(rings, dots, { ...style, radius: style.outline.inner * style.radius, levels: undefined });
+}
+
+// an outlined family fitted by its rings, in the fit's units: its ordered ring model over the base (outline.js)
+function layeredT(base, dots, style, image) {
+    const model = createOutlineModel(base, image.width, image.height, { radius: style.radius, ring: style.ring, fillAlpha: style.layered.fillAlpha, ringT: style.layered.ringT, blur: style.blur });
+    for (const d of dots)
+        model.add(d.x, d.y, d.z);
+    return model.image.data;
 }
 
 function displayImage() {
@@ -415,7 +438,7 @@ function displayImage() {
         const bg = solidImage(image.width, image.height, line.B);
         if (state.overlay === 'model')
             return rgbOverlay(renderModel(bg, fam.dots, style));
-        const modelT = renderDots(bg, fam.dots, { ...style, project: line }).data;
+        const modelT = style.layered && estimate.base ? layeredT(estimate.base, fam.dots, style, image) : renderDots(bg, fam.dots, { ...style, project: line }).data;
         let imgT = estimate.fitT;
         if (!imgT) {
             imgT = new Float32Array(image.width * image.height);
@@ -611,7 +634,9 @@ function renderStylePanel() {
     const nInferred = style?.inferredLevels?.length ?? 0;
     $('style-levels').textContent = style ? `${style.measuredLevels - nInferred} measured${nInferred ? `, ${nInferred} inferred` : ''}` : '–';
     const fam = est.familyMeasure;
-    if (fam?.kind === 'opaque')
+    if (fam?.kind === 'opaque' && style?.layered)
+        $('style-fit').textContent = 'opaque, fitted by its outlines in drawing order';
+    else if (fam?.kind === 'opaque')
         $('style-fit').textContent = 'opaque: overlaps aren’t seen, α = 1';
     else if (fam?.fit?.underdetermined)
         $('style-fit').textContent = 'one level: α not measured, 1 assumed';
@@ -625,7 +650,9 @@ function renderStylePanel() {
     const overrides = state.families[state.current].overrides;
     for (const [key, digits] of [['radius', 2], ['alpha', 3], ['blur', 2]]) {
         const input = $(`style-${key}`);
-        const notOwn = key === 'alpha' && est.scale === 'outline';
+        // outlined dots fitted by their rings: the ring's and fill's opacities, not one α (an opaque family's rings
+        // have α 0 in the fit's style, which isn't its fill's)
+        const notOwn = key === 'alpha' && (est.scale === 'outline' || !!style?.layered);
         input.value = style && !notOwn && style[key] !== null && style[key] !== undefined ? style[key].toFixed(digits) : '';
         input.classList.toggle('overridden', key in overrides);
         input.disabled = !style || notOwn;
@@ -730,7 +757,8 @@ function renderLegend() {
     }
     else if (state.overlay === 'model') {
         legend.textContent = `Model${fam}: the fitted dots rendered with the style (radius from the fit).`
-            + (currentStyle()?.outline ? ' Outlines are all drawn before the fills, so overlaps can differ from the chart’s drawing order.' : '');
+            + (currentStyle()?.layered && currentStyle()?.outline ? ' Each dot is drawn in its fitted order, outline then fill.'
+                : currentStyle()?.outline ? ' Outlines are all drawn before the fills, so overlaps can differ from the chart’s drawing order.' : '');
     }
     else if (state.overlay === 'count') {
         legend.innerHTML = `Overlap count${fam}: black 0 to white ${COUNT_MAX_SHOWN}+ (hover for the value); ${item(OFF_LINE_COLOR, 'not the dot color')}`;

@@ -922,9 +922,17 @@ export function relativeDarkness(image) {
     return out;
 }
 
-// Rings from P (fills near 0, rings toward 1): the isolated rings, what is under the rings, ring ink A, the ring's
-// style and αf
-function outlinesInP(P, width, height) {
+/**
+ * Rings from P (fills near 0, rings toward 1): the isolated rings, what is under the rings, ring ink A, the ring's
+ * style and αf. Null when no consistent ring shows.
+ *
+ * @param {Float32Array} P  0–1 per pixel
+ * @param {number} width
+ * @param {number} height
+ * @param {Uint8Array} [unknown]  1 where P can't be read (one family's rings: other families' fills and their rings,
+ *   ink beyond the outline's reach); masked in A and D
+ */
+export function outlinesInP(P, width, height, unknown = null) {
     const rings = isolatedRings(P, width, height);
     if (rings.length < ISO_MIN)
         return null;
@@ -943,7 +951,7 @@ function outlinesInP(P, width, height) {
     }
     const A = new Float32Array(P.length);
     for (let p = 0; p < P.length; p++)
-        A[p] = under[p] > MASK_BG || ink[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
+        A[p] = under[p] > MASK_BG || ink[p] || unknown?.[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
     // the most ring-like of the isolated components
     const used = rings.slice().sort((a, b) => Math.abs(a.r - r0) - Math.abs(b.r - r0)).slice(0, ISO_MAX);
     const ring = measureRing(A, width, height, used);

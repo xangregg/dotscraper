@@ -4,11 +4,12 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO } from './style.js';
+import { estimateStyle, measureFamily, backgroundColor, flatMask, familyRings, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
-import { findOutlines, findHueOutlines, fillFamilies } from './outline.js';
+import { findOutlines, findHueOutlines, fillFamilies, outlinesInP } from './outline.js';
+import { backgroundColors } from './axes.js';
 
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
@@ -130,6 +131,72 @@ function outlineEstimate(image) {
     return found && outlinedEstimate(image, background, found);
 }
 
+// what can't be read in P (D NaN), dilated by OUTLINE_MASK_DILATE: the fit's mask for outlined dots
+function unreadMask(D, width, height) {
+    const mask = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (!Number.isNaN(D[y * width + x]))
+                continue;
+            for (let yy = Math.max(0, y - OUTLINE_MASK_DILATE); yy <= Math.min(height - 1, y + OUTLINE_MASK_DILATE); yy++) {
+                for (let xx = Math.max(0, x - OUTLINE_MASK_DILATE); xx <= Math.min(width - 1, x + OUTLINE_MASK_DILATE); xx++)
+                    mask[yy * width + xx] = 1;
+            }
+        }
+    }
+    return mask;
+}
+
+/**
+ * An outlined opaque family, set up to be fitted by its rings in drawing order (outline.js's layered
+ * model) instead of as a union of discs: in the union, fill and outline alike are "dot", so two dots of the family
+ * overlapping are one blob, and the upper one's outline crossing the lower, which tells them apart, is invisible
+ * (degradation1: 6 mint dots missed this way). The family keeps its fill color and outline for display; its ring
+ * image (style.familyRings) gives the fit's image, base, coverage and mask, and its ring style. Fills are opaque, so
+ * a fill drawn later hides the rings under it entirely. Only when its isolated rings fit the annulus as well as
+ * outline.js asks of a whole image: where the rings are poorly measured, most of each ring is hidden or another
+ * family's, and the union, which also reads the visible fill, places the dots better (degradation1's mint: 3 rings at
+ * rms 0.095, and by rings it lost 5 of the dots the union found; the orange, 5 rings at 0.044, gained 3).
+ * The estimate as it was otherwise.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {object} est  an opaque family's estimate with an outline
+ * @param {number[][]} others  0–255, the other families' fill colors
+ * @param {number[][]} backgrounds  0–255, the page's first
+ * @returns {object}  the estimate
+ */
+function ringEstimate(image, est, others, backgrounds) {
+    const fam = est.familyMeasure;
+    const outline = fam.outline;
+    const { width, height } = image;
+    const n = width * height;
+    const { P, unknown } = familyRings(image, est.style.color, outline, backgrounds, others);
+    const found = outlinesInP(P, width, height, unknown);
+    if (!found)
+        return est;
+    const { ring, under, D } = found;
+    const fitT = new Float32Array(n);
+    const base = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+        fitT[p] = T_BLACK * P[p];
+        base[p] = T_BLACK * Math.min(under[p], 1);
+    }
+    return {
+        ...est,
+        familyMeasure: { ...fam, line: { B: [255, 255, 255], u: [1, 1, 1].map(v => v / Math.sqrt(3)) } },
+        style: {
+            ...est.style, alpha: 0, radius: ring.radius, blur: ring.blur,
+            ring: { inner: ring.inner, alpha: ring.alpha },
+            layered: { fillAlpha: 1, ringT: T_BLACK },
+            outline: { color: [...outline], inner: ring.inner },
+        },
+        D, fitT, base, outlineMask: unreadMask(D, width, height),
+        isolated: found.isolated.map(c => ({ cx: c.x, cy: c.y, r: c.r })),
+        // the rings gave the radius: the union's note about having no isolated whole dot no longer applies
+        notes: [...est.notes.filter(t => !t.startsWith('No isolated whole dot')), `Fitted by its outlines in drawing order: an outline crossing another dot of the family is the edge of the dot on top. Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px.`],
+    };
+}
+
 // the estimate from outline.findOutlines or findHueOutlines
 function outlinedEstimate(image, background, found) {
     const { width, height } = image;
@@ -138,26 +205,14 @@ function outlinedEstimate(image, background, found) {
     const data = new Uint8ClampedArray(4 * n);
     const fitT = new Float32Array(n);
     const base = new Float32Array(n);
-    const unknown = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
         const v = Math.round(255 * (1 - Math.min(1, Math.max(0, P[p]))));
         data[4 * p] = data[4 * p + 1] = data[4 * p + 2] = v;
         data[4 * p + 3] = 255;
         fitT[p] = T_BLACK * P[p];
         base[p] = T_BLACK * Math.min(under[p], 1);
-        unknown[p] = Number.isNaN(D[p]) ? 1 : 0;
     }
-    const mask = Uint8Array.from(unknown);
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            if (!unknown[y * width + x])
-                continue;
-            for (let yy = Math.max(0, y - OUTLINE_MASK_DILATE); yy <= Math.min(height - 1, y + OUTLINE_MASK_DILATE); yy++) {
-                for (let xx = Math.max(0, x - OUTLINE_MASK_DILATE); xx <= Math.min(width - 1, x + OUTLINE_MASK_DILATE); xx++)
-                    mask[yy * width + xx] = 1;
-            }
-        }
-    }
+    const mask = unreadMask(D, width, height);
     const style = {
         color: [0, 0, 0], alpha: 0, radius: ring.radius, blur: ring.blur, measuredLevels: 1,
         ring: { inner: ring.inner, alpha: ring.alpha },
@@ -265,7 +320,16 @@ export function estimateFamilies(image, opts = {}) {
         for (const e of separated)
             e.notes = [...e.notes, ...note];
     }
-    return { image: work, layers, estimates: withoutSpeckLevels(separated) };
+    const kept = withoutSpeckLevels(separated);
+    // outlined opaque families are fitted by their rings (ringEstimate)
+    const backgrounds = backgroundColors(work);
+    const fills = kept.filter(e => e.style).map(e => e.style.color);
+    // outlines only: a stroke too thin to show its own color is a ring the image barely resolves (engagement1, strokes
+    // under a pixel wide: 54 dots for 49 by the union, 40 by rings)
+    const ringed = kept.map(e => (e.familyMeasure?.kind === 'opaque' && e.familyMeasure.outline && e.style
+        ? ringEstimate(work, e, fills.filter(c => c !== e.style.color), backgrounds)
+        : e));
+    return { image: work, layers, estimates: ringed };
 }
 
 // A translucent family's radius is known only now: one far smaller than the others is text's antialiased grays

@@ -12,7 +12,7 @@ import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
 import { readTruthJson, truthFromExport, isDotsExport } from '../tools/truth-json.mjs';
-import { extractAll } from '../tools/bench.mjs';
+import { extractAll, groupRow } from '../tools/bench.mjs';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -370,6 +370,19 @@ test('regression: degradation1, mint and orange fills in gray outlines are two f
         assert.ok(e.style.outline, 'outlined');
         near(e.style.radius, 21.7, 0.8, 'radius');
     }
+});
+
+test('regression: degradation1, overlapping orange dots are told apart by their outlines (fitted by rings)', { skip: !(existsSync(NATURE + DEGRADATION1) && existsSync(NATURE + 'truth/' + DEGRADATION1.replace('.png', '.json'))) && 'bench-nature degradation1 or its truth absent' }, () => {
+    // before: fitted as a union of discs, where fill and outline alike are "dot", two overlapping dots of a family
+    // were one blob: against the user's truth (70 dots with some interior visible, the 2 legend dots among them),
+    // 58 found, P 0.966 R 0.800; the orange family by its rings, P 0.967 R 0.843. The mint's rings are too poorly
+    // measured (rms 0.095) and stay a union.
+    const truth = readTruthJson(NATURE + 'truth/' + DEGRADATION1.replace('.png', '.json'));
+    const results = extractAll(readImage(NATURE + DEGRADATION1));
+    const orange = results.find(r => r.est.style.color[0] > 200);
+    assert.ok(orange.est.style.layered, 'the orange family is fitted by its rings');
+    const row = groupRow('degradation1', truth.dots, results, 0);
+    assert.ok(row.recall >= 0.83 && row.precision >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}`);
 });
 
 const COMMENT1 = 'comment1-2026-10-22.png';

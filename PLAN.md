@@ -1333,6 +1333,27 @@ px, about what the published values and the drawing agree to).
 of possible duplicates; off, such a dot is drawn by its other flags (red if any, else blue). The close flag itself stays
 in the Flagged count, the table and the hover line; the Dots legend drops the magenta item while it's off.
 
+**Outlined families fitted by their rings** (2026-11-15). With the user's hand truth for degradation1 (70 dots with
+some interior visible, legend dots included), 58 found, P 0.966 R 0.800. Of the 7 missed mint dots, 6 were pairs of one
+family merged: fitted as a union of discs, fill and outline alike are "dot", so two overlapping mint dots are one blob,
+and the upper one's outline crossing the lower, which tells them apart, is invisible (a dot added at a missed truth
+position had removal margin 0). Now an outlined opaque family (a visible ring of its own color) gets a ring image
+(style.familyRings: each pixel's weight of the outline in the triangle page–fill–outline, 0.45 for a full outline;
+unknown off the triangle, on other families' fills and the rings nearer them, and beyond 4 px of this family's
+thick fill) and is fitted by outline.js's layered model with opaque fills (families.ringEstimate), when
+outlinesInP measures a consistent ring in it (the existing limit, rms 0.06). Tried and not kept:
+
+- A looser ring limit (0.12) let the mint fit by its 3 poorly measured rings (0.095): recall 0.843 → 0.771; where most
+  of each ring is hidden or another family's, the union, which also reads the visible fill, places dots better.
+- Sharing the best-measured ring (width, opacity, blur) among families of one outline color: no change.
+- Stroked families too: engagement1 (strokes under a pixel wide) 54 dots for 49 → 40, R 0.980 → 0.816.
+
+degradation1: the orange family by its rings, 58 → 61, P 0.967 R 0.843 (rmse 2.7 px; against the source data, 61
+for 127, P 0.705 R 0.339); every other bench row unchanged (phase1's and hair2's rings aren't measured consistently,
+so they stay unions). In the app, such a family's Model view draws each dot outline then fill in its fitted order
+(sharp, blurred once: blurring each pass blurred the dots under it again), the Residual compares in ring units with
+the ordered model, and the style panel says "fitted by its outlines in drawing order" (no α of its own).
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to
