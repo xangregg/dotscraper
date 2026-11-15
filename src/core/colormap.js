@@ -45,6 +45,10 @@ const LINK_MAX_RATIO = 1.35;
 // translucent family: under 0.05 in a PNG).
 const MIN_SPREAD = 0.2;
 const MIN_POINTS = 8;
+// … and no point holds most of its votes: a scale's colors are many (bench1–2 gradients: at most 11% in one point),
+// while one family's color with JPEG noise around it is one point and a fringe (beeswarm-boxplot: gray, 97% of the
+// votes, with 15 noise points of 5–27 votes reaching a spread of 0.23)
+const MAX_POINT_SHARE = 0.5;
 // α from the ratios of flat pixels: a histogram peak at 1 (one dot, by construction) and one at 2 − α
 const RATIO_BIN = 0.01;
 const RATIO_SMOOTH = 1.5; // bins, sd
@@ -280,7 +284,8 @@ export function findColormap(image, B, flat, tol) {
     const scale = largestChain(points);
     points = scale.points;
     const spread = scale.spread;
-    if (points.length < MIN_POINTS || spread < MIN_SPREAD)
+    const votes = points.reduce((t, q) => t + q.votes, 0);
+    if (points.length < MIN_POINTS || spread < MIN_SPREAD || Math.max(...points.map(q => q.votes)) > MAX_POINT_SHARE * votes)
         return null;
     const ratios = [];
     for (let p = 0; p < n; p++) {

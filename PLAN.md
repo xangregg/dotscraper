@@ -1363,6 +1363,32 @@ the name and the image source | export and About; row 2 Find dots, Stop and the 
 screen wraps each row's right side onto a line of its own. check-page takes `--width` for that; checked at 1280, 900,
 600 and 400 px and in the public view, no console errors.
 
+**beeswarm-boxplot** (2026-11-15). A JPEG-noisy screenshot (31%) of packed red and gray beeswarms, a few outliers in
+black outlines; the user's truth has 711 dots in four families (red, gray, and the outlined of each). No family was
+found. Five changes, each from a measured cause:
+
+- With exact colors, JPEG fringes gave red a dark red "background" and no dots; the app turned on noisy color
+  matching only when exact colors found nothing, and they found gray. Now, on an image with JPEG noise, noisy color
+  matching is also tried when exact colors find families, and kept if it finds more (app and bench alike; the hint
+  says why). It costs a second analysis on noisy images only.
+- In noisy color mode the colormap took gray and its noise for a color scale: one curve point held 97% of the votes,
+  15 noise points of 5–27 votes reached a spread of 0.23. A curve whose largest point holds over half its votes is no
+  scale now (colormap.js MAX_POINT_SHARE; the gradient renders: at most 11%).
+- Gray's radius came from the distance transform, 6.2 for about 9: no dot is isolated in a packed swarm. When that
+  radius finds too few strong centers, Hough tries larger radii (to 1.6×) and keeps the largest with 75% of the most
+  strong, filled centers (the evidence leans small in a pack): 9.0. Only for a fill on the page: one surrounded by
+  another ink is an outlined or stroked dot (hair3 and cells1 passed as plain fills, 26.4 px for 28.3).
+- Gray then had 30 strong centers but coverage 0.27 (Hough finds part of a packed swarm): 10 strong, filled centers
+  now pass a family without the coverage or isolated dots (DOT_MANY_STRONG).
+- At 8.2–8.7 px the fit put two dots in nearly every gray dot, and its radius refit settled small because the pairs
+  covered the dots (474 dots, 352 close; at a fixed 9.2, 282 and none). fitDots refits an opaque family 0.5 px larger
+  while over 40% of its dots are close, up to three times.
+
+beeswarm-boxplot: radius unknown → 682 for 711, P 0.956 R 0.917 (gray 284 at r 9.09, no pairs; red 398; the outlined
+outliers aren't separated yet). Also: delta1 no family → 23 of 48, P 0.957 R 0.458; phase1 75 → 50 found, P 0.387 →
+0.580 (the doubled refit), R 0.299 the same; everything else unchanged. Fits on noisy images take longer (this one 129 s
+in the bench, both modes).
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to

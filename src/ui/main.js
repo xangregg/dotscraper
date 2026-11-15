@@ -466,15 +466,23 @@ function analyze({ auto = false } = {}) {
     stopFit(false);
     const t0 = performance.now();
     let prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
-    // A PNG made from a JPEG (a screenshot of a web figure) fails the exact-color tests; when nothing shows with
-    // exact colors and the image has JPEG noise, analyze it as a JPEG. Only on loading: the box is the user's after.
-    // Not whenever the noise shows: restoring chroma cost pathogen precision (0.972 → 0.637), which worked as is.
-    if (auto && !state.jpeg && state.noise.likely && prepared.estimates.every(e => !e.style)) {
-        setJpeg(true, true);
-        prepared = estimateFamilies(state.work, { jpeg: true });
-        const note = `No dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
-        for (const e of prepared.estimates)
-            e.notes = [note, ...e.notes];
+    // A PNG made from a JPEG (a screenshot of a web figure) fails the exact-color tests; when the image has JPEG noise
+    // and noisy color matching finds more families (all of them, when none showed with exact colors), analyze it as
+    // a JPEG. Only on loading: the box is the user's after. Not whenever the noise shows: restoring chroma cost
+    // pathogen precision (0.972 → 0.637), which worked as is.
+    if (auto && !state.jpeg && state.noise.likely) {
+        const found = est => est.estimates.filter(e => e.style).length;
+        const exact = found(prepared);
+        const noisy = estimateFamilies(restoreChroma(state.image), { jpeg: true });
+        if (found(noisy) > exact) {
+            setJpeg(true, true);
+            prepared = noisy;
+            const note = exact
+                ? `Noisy color matching found more dot families than exact colors (${found(noisy)} against ${exact}), and the image has JPEG-like noise (${noiseText()}), so it was turned on.`
+                : `No dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
+            for (const e of prepared.estimates)
+                e.notes = [note, ...e.notes];
+        }
     }
     state.base = prepared.image;
     state.families = prepared.estimates.map(estimate => ({ estimate, picked: null, enabled: !!estimate.style, overrides: {} }));
@@ -1374,7 +1382,7 @@ function setJpeg(jpeg, auto = false) {
     // why the box is set as it is, beside it, where it can be changed
     const hint = $('noise-hint');
     hint.textContent = !state.image ? ''
-        : state.jpegAuto ? `On by itself: no dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}).`
+        : state.jpegAuto ? `On by itself: it finds more dot families than exact colors do, and the image has JPEG-like noise (${noiseText()}).`
         : jpeg && state.jpegFile ? 'On: the file is a JPEG.'
         : !jpeg && state.noise?.likely ? `The image has JPEG-like noise (${noiseText()}): try this if dots are missed.`
         : '';

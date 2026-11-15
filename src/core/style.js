@@ -88,6 +88,9 @@ const DOT_MIN_COVERAGE = 0.35;
 // … and with isolated dots instead, at least this much: a color 98% text with a few round specks (hair2–3: decimal
 // points and a colon's dots, coverage 0.02) is no family, even alone; real ones sharing text's color measured 0.18
 const DOT_MIN_COVERAGE_ANY = 0.1;
+// … or many strong, filled centers: in a packed beeswarm Hough finds only part of the dots, so coverage stays low, and
+// no dot is isolated (beeswarm-boxplot's gray: 30 strong, coverage 0.27; round glyphs are hollow and fail the fill)
+const DOT_MANY_STRONG = 10;
 const DOT_MIN_ISOLATED = 3;
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
@@ -99,6 +102,10 @@ const DOT_MIN_FILL = 0.85; // … to this fraction
 // plus the half pixel the transform loses between pixel centers, matched synthetic swarms within a few tenths
 const DT_RADIUS_QUANTILE = 0.75;
 const DT_RADIUS_OFFSET = 0.5; // px
+// When that radius finds no family, Hough tries larger ones (measureOpaque): packed dots' peaks are short of r
+const RADIUS_SCAN_STEP = 0.5; // px
+const RADIUS_SCAN_MAX = 1.6; // × the distance transform's radius
+const RADIUS_SCAN_KEEP = 0.75; // of the most strong centers, at the largest radius that keeps them
 // A dot color can also be text's (nicest language: its gray dots' color is the gray of antialiased black text on the
 // white page, which made white their "background" and text strokes their radius). Text is thin: the family's
 // background comes from its thick parts (an opening), and distance peaks below DOT_MIN_RADIUS are ignored.
@@ -1477,7 +1484,8 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     // half the stroke, got 4.5 for 20 from the distance transform)
     const fillCover = outline ? fillK : stroke ? fillW : null;
     const byFill = !isolated.length && fillCover ? outlinedRadius(fillCover, own, D, width, height) : null;
-    const radius = isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height);
+    let radius = isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height);
+    const fromDistance = !isolated.length && !byFill;
     let dots = 0;
     let strongDots = 0;
     let coverage = 0;
@@ -1488,9 +1496,9 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         // a center counts if most of its edge is seen and its disc is filled with the family's own color (text:
         // round glyphs are hollow; fanc2: a rim gray between dot and overlap read black text as beyond its color,
         // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
-        const rf = DOT_FILL_RADII * (byFill?.fillRadius ?? (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : radius));
+        const rfOf = r => DOT_FILL_RADII * (byFill?.fillRadius ?? (stroke ? opts.fillRadius ?? r * DOT_FILL_RADII : r));
         const inside = stroke ? fillW : own;
-        const filled = c => {
+        const filled = (c, rf) => {
             let count = 0;
             let on = 0;
             for (let y = Math.max(0, Math.floor(c.y - rf)); y < Math.min(height, Math.ceil(c.y + rf)); y++) {
@@ -1504,10 +1512,33 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
             return count > 0 && on >= DOT_MIN_FILL * count;
         };
-        const centers = (byFill ? houghCenters(fillCover, weight, width, height, byFill.fillRadius) : houghCenters(D, weight, width, height, radius))
-            .filter(c => c.arc >= DOT_MIN_ARC && filled(c));
+        const centersAt = r => (byFill ? houghCenters(fillCover, weight, width, height, byFill.fillRadius) : houghCenters(D, weight, width, height, r))
+            .filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
+        const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
+        let centers = centersAt(radius);
+        // The distance transform underestimates the radius where dots touch; packed past the dot test, larger radii
+        // are tried by Hough. Its evidence leans small in a packed swarm (neighbors cut more of each arc as the radius
+        // grows), so the largest radius keeping RADIUS_SCAN_KEEP of the most strong, filled centers is taken
+        // (beeswarm-boxplot's gray: 6.16 from the transform, no center; 30 strong at 8–8.5 px, 23 at 9; the user's
+        // truth has 9.0, and at 8.2 the fit put a second dot in nearly every dot).
+        // Only for a fill on the page: one surrounded by another ink is an outlined or stroked dot, measured whole by
+        // those readings (hair3, cells1: the scan passed their fills alone, 26.4 px for 28.3)
+        const onPage = backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - B[ch])) <= INK_TOL);
+        if (fromDistance && !stroke && !outline && onPage && strong(centers) < DOT_MIN_STRONG) {
+            const scan = [];
+            for (let r = radius + RADIUS_SCAN_STEP; r <= RADIUS_SCAN_MAX * radius; r += RADIUS_SCAN_STEP) {
+                const cs = centersAt(r);
+                scan.push({ r, cs, n: strong(cs) });
+            }
+            const most = Math.max(0, ...scan.map(t => t.n));
+            const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * most).pop();
+            if (pick && pick.n > strong(centers)) {
+                centers = pick.cs;
+                radius = pick.r;
+            }
+        }
         dots = centers.length;
-        strongDots = centers.filter(c => c.arc >= DOT_STRONG_ARC).length;
+        strongDots = strong(centers);
         // share of the family's pixels inside the found discs
         const inDisc = new Uint8Array(n);
         for (const c of centers) {
@@ -1762,7 +1793,7 @@ function radiusPlausible(radius, isolatedCount) {
 
 function isDotFamily(f) {
     return radiusPlausible(f.radius, f.isolated.length) && f.strongDots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE_ANY
-        && (f.coverage >= DOT_MIN_COVERAGE || f.isolated.length >= DOT_MIN_ISOLATED);
+        && (f.coverage >= DOT_MIN_COVERAGE || f.isolated.length >= DOT_MIN_ISOLATED || f.strongDots >= DOT_MANY_STRONG);
 }
 
 /**

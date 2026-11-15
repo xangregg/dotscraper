@@ -385,6 +385,23 @@ test('regression: degradation1, overlapping orange dots are told apart by their 
     assert.ok(row.recall >= 0.83 && row.precision >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}`);
 });
 
+test('regression: beeswarm-boxplot, packed red and gray swarms are two families with their dots, gray not doubled', { skip: !has('beeswarm-boxplot.png') && 'local test image absent' }, () => {
+    // before: no family. With exact colors JPEG fringes gave red a dark red "background"; with noisy colors the
+    // colormap took gray plus its noise for a scale (one point held 97% of the votes); gray's radius came from the
+    // distance transform, 6.2 for 9 (no dot isolated in a packed swarm), and at 8.2–8.7 the fit put two dots in
+    // nearly every gray dot
+    const results = extractAll(readImage(TESTGRAPHS + 'beeswarm-boxplot.png'));
+    assert.equal(results.length, 2, results.map(r => `${r.est.style.color.map(Math.round)}`).join('; '));
+    const gray = results.find(r => r.est.style.color[0] < 200);
+    const red = results.find(r => r.est.style.color[0] > 200);
+    assert.ok(gray && red, 'a gray and a red family');
+    assert.ok(gray.fit.radius > 8.8, `gray radius ${gray.fit.radius}`);
+    const close = gray.fit.dots.filter(d => d.flags.includes('close')).length;
+    assert.ok(close < 0.1 * gray.fit.dots.length, `${close} of ${gray.fit.dots.length} gray dots in close pairs`);
+    assert.ok(gray.fit.dots.length >= 270 && gray.fit.dots.length <= 310, `${gray.fit.dots.length} gray dots`);
+    assert.ok(red.fit.dots.length >= 380 && red.fit.dots.length <= 430, `${red.fit.dots.length} red dots`);
+});
+
 const COMMENT1 = 'comment1-2026-10-22.png';
 
 test('regression: comment1, small round specks beside regular dots are no family', { skip: !existsSync(NATURE + COMMENT1) && 'bench-nature comment1 absent' }, () => {

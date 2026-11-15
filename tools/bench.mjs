@@ -82,14 +82,20 @@ export function extractAll(image, jpeg = false) {
     if (jpeg)
         image = restoreChroma(image);
     let { estimates } = estimateFamilies(image, { jpeg });
-    // as the app does: a PNG with JPEG noise in which no family shows with exact colors is analyzed as a JPEG
-    let missing = estimates.find(e => !e.style);
-    const jpegAuto = !jpeg && !!missing && jpegNoise(source).likely;
-    if (jpegAuto) {
-        image = restoreChroma(source);
-        ({ estimates } = estimateFamilies(image, { jpeg: true }));
-        missing = estimates.find(e => !e.style);
+    // as the app does: a PNG with JPEG noise is analyzed as a JPEG when that finds more families (all of them, when
+    // none shows with exact colors)
+    let jpegAuto = false;
+    if (!jpeg && jpegNoise(source).likely) {
+        const restored = restoreChroma(source);
+        const noisy = estimateFamilies(restored, { jpeg: true }).estimates;
+        const found = es => es.filter(e => e.style).length;
+        if (found(noisy) > found(estimates)) {
+            jpegAuto = true;
+            image = restored;
+            estimates = noisy;
+        }
     }
+    const missing = estimates.find(e => !e.style);
     if (missing)
         throw new Error(missing.notes.join(' '));
     const bounds = plotBounds(detectAxes(image));

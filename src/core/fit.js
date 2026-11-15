@@ -93,6 +93,10 @@ const RADIUS_TOL = 0.01; // px
 const UNCERTAINTY_STEP = 0.25; // px, finite-difference step for the curvature
 const FLAG_MARGIN = 3; // flag a dot whose removal costs less than this × λ
 const FLAG_VISIBLE = 0.5; // flag a dot less than this fraction visible
+// fitDots: an opaque fit with more than this share of its dots flagged close is refit with a larger radius
+const DOUBLED_MAX_SHARE = 0.4;
+const DOUBLED_RADIUS_STEP = 0.5; // px
+const DOUBLED_MAX_BUMPS = 3;
 // flag a dot this close to another of its family (× r): in the view the two marks are one, and for opaque dots one
 // dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
 // of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
@@ -1029,6 +1033,24 @@ export function createFit(input) {
 export function fitDots(input, opts = {}, onProgress = () => {}) {
     if (!(input.style.radius > 0))
         throw new Error('The dot radius is unknown: set it before fitting.');
+    let res = fitOnce(input, opts, onProgress);
+    // Opaque dots don't come in near-coincident pairs. When most do, the radius is too small: a disc can't cover a
+    // dot, so the fit puts in two, and the radius refit settles small because the pairs already cover it
+    // (beeswarm-boxplot's gray at 8.7 px: 474 dots, 352 in close pairs; at 9.2, 282 and none). Fit again larger.
+    const doubled = r => r.dots.filter(d => d.flags.includes('close')).length > DOUBLED_MAX_SHARE * r.dots.length;
+    if (input.style.alpha >= 1 && !input.style.layered && (opts.refitRadius ?? true)) {
+        for (let k = 0; k < DOUBLED_MAX_BUMPS && doubled(res); k++) {
+            const next = fitOnce({ ...input, style: { ...input.style, radius: res.radius + DOUBLED_RADIUS_STEP } }, opts, onProgress);
+            next.log.unshift({ stage: 'doubled', radius: res.radius, close: res.dots.filter(d => d.flags.includes('close')).length, dots: res.dots.length });
+            next.ms += res.ms; // the time of the fits before it too
+            res = next;
+        }
+    }
+    return res;
+}
+
+// fitDots without the radius check for doubled dots
+function fitOnce(input, opts, onProgress) {
     const t0 = Date.now();
     const fit = createFit(input);
     const { width, height } = input.image;
