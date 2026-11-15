@@ -158,7 +158,10 @@ function row(name, truth, res, ms) {
     return { name, n: truth.length, found: res.fit.dots.length, precision: m.precision, recall: m.recall, countError: m.countError, rmse: m.rmse, houghRecall: h.recall, houghPrecision: h.precision, flagged, ms, radius: res.fit.radius, m };
 }
 
-// a found family explains a truth group if it takes at least this share of the group's dots when all are pooled
+// a found family explains a truth group if it takes at least this share of the group's dots when all are pooled, or
+// of its own matched dots if fewer: a group can be mostly hidden (degradation1: 127 rows, about 60 visible dots in
+// two colors with no colors in the data, so neither family reached 20% of the group and every match was dropped),
+// while a family's few strays in another color's group stay short of either
 const GROUP_LINK_SHARE = 0.2;
 
 /**
@@ -183,9 +186,10 @@ export function groupRow(name, truth, results, ms) {
     const parent = [...Array(F + groups.length).keys()];
     const root = i => (parent[i] === i ? i : (parent[i] = root(parent[i])));
     taken.forEach((v, k) => {
+        const mine = [...v.values()].reduce((t, c) => t + c, 0);
         for (const [g, c] of v) {
             const gi = groups.indexOf(g);
-            if (c >= GROUP_LINK_SHARE * truth.filter(t => t.group === g).length)
+            if (c >= GROUP_LINK_SHARE * Math.min(truth.filter(t => t.group === g).length, mine))
                 parent[root(k)] = root(F + gi);
         }
     });

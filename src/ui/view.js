@@ -48,7 +48,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     // the view shows the whole image as last fitted, so a resize should fit it again (the stage can be laid out,
     // or resized, after the image arrives); any zoom or pan by the user ends that
     let fitted = false;
-    let marks = null; // { dots: [{ x, y, flags, family }], radius, selected, family }
+    let marks = null; // { dots: [{ x, y, flags, family }], radius, selected, family, showClose }
     let closeGroups = []; // indices into marks.dots of each group of 'close' dots, one shared ring each
     let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos] }]
 
@@ -107,8 +107,13 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
 
     // dot outlines and centers in image coordinates, line widths constant in CSS px
     // a mark's stroke width in CSS px at the current zoom
+    // drawn as a possible duplicate: flagged 'close', unless that display is off (then it is drawn by its other flags)
+    function isClose(d) {
+        return marks.showClose !== false && !!d.flags?.includes('close');
+    }
+
     function markLine(d) {
-        if (d.flags?.includes('close') && scale >= CLOSE_THICKEN_SCALE)
+        if (isClose(d) && scale >= CLOSE_THICKEN_SCALE)
             return MARK_LINE * (scale / CLOSE_THICKEN_SCALE) ** MARK_GROWTH;
         if (d.family === marks.family && scale >= FAMILY_THICKEN_SCALE)
             return MARK_LINE * (scale / FAMILY_THICKEN_SCALE) ** MARK_GROWTH;
@@ -117,12 +122,13 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
 
     function drawMarks() {
         marks.dots.forEach((d, i) => {
-            const close = d.flags?.includes('close');
+            const close = isClose(d);
             const line = markLine(d);
             ctx.lineWidth = line / scale;
             const c = Math.max(MARK_CROSS, 2 * line) / scale;
+            const otherFlags = d.flags?.some(f => f !== 'close');
             ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected
-                : close ? MARK_COLORS.close : (d.flags?.length ? MARK_COLORS.flagged : MARK_COLORS.ok);
+                : close ? MARK_COLORS.close : (otherFlags ? MARK_COLORS.flagged : MARK_COLORS.ok);
             ctx.beginPath();
             const r = d.r ?? marks.radius;
             ctx.arc(d.x, d.y, r, 0, 2 * Math.PI);
@@ -150,6 +156,8 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     // Groups of 'close' dots: those of one family within FLAG_CLOSE_RADII · r of each other, chained. O(k²) in the
     // k flagged dots, which are few.
     function groupClose(m) {
+        if (m.showClose === false)
+            return [];
         const ids = m.dots.flatMap((d, i) => (d.flags?.includes('close') ? [i] : []));
         const parent = new Map(ids.map(i => [i, i]));
         const root = i => (parent.get(i) === i ? i : root(parent.get(i)));

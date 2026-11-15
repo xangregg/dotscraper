@@ -1314,6 +1314,25 @@ surround an isolated fill in strokeColor. It wasn't needed, and it let bench1 gr
 purple become a stroked family (109 for 100). cells1: 38 → 73 for 72, P 0.904 R 0.917 (rmse 2.2 px: the truth is data
 values in jittered lanes); hair2 9 → 10 (P 0.900); phase1 65 → 75 (P 0.387 R 0.299); everything else unchanged.
 
+**degradation1** (2026-11-15). Mint and orange fills in gray outlines, a thick gray regression line, two legend dots.
+Only a translucent gray "family" was found, with no radius: its levels were the line (166, 2330 px) and the outlines
+(136, 6936 px). The fills' ring, the outline gray, lay on that family's line, which ruled out the outline model for
+them (a guard against economist's red–blue lens). The local outline model (try 3) no longer takes that guard: its own,
+a ring darker than the fill and a thick fill, already stop the lens (the economist test passes either way). And a
+translucent candidate with a level in an opaque family's outline or stroke color is dropped as those outlines. Now two
+outlined families at r 21.6–21.7, 58 dots; every other bench row unchanged.
+
+The source CSV's first column is the predicted value, plotted on y: the columns are swapped in the file now, with a
+note (the user's original is kept aside). The data has no train/test split and no legend dots, and many rows are
+hidden in the upper cluster, so the bench's group scoring linked neither family to the single 127-row group (each
+must take 20% of it) and scored 0. A family now links when it takes 20% of the group or of its own matches, whichever
+is fewer. degradation1: 58 for 127, P 0.672 R 0.307; rmse 6.3 px from cluster pairings (isolated dots are within 1–2.5
+px, about what the published values and the drawing agree to).
+
+**Close pairs toggle** (2026-11-15). A "Close pairs" box beside Dots and Axes hides the magenta marks and shared rings
+of possible duplicates; off, such a dot is drawn by its other flags (red if any, else blue). The close flag itself stays
+in the Flagged count, the table and the hover line; the Dots legend drops the magenta item while it's off.
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to

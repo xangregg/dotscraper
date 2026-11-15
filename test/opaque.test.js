@@ -357,6 +357,21 @@ test('regression: cells1, magenta dots over a gray bar and clustered are a famil
     near(magenta.style.radius, 20, 0.6, 'radius');
 });
 
+const DEGRADATION1 = 'degradation1-10.1038-s41586-026-10980-z.png';
+
+test('regression: degradation1, mint and orange fills in gray outlines are two families, and the grays are none', { skip: !existsSync(NATURE + DEGRADATION1) && 'bench-nature degradation1 absent' }, () => {
+    // before: one translucent gray "family" with no radius, its levels the gray line (166) and the outlines (136);
+    // the fills' ring lay on its line, which ruled out the outline model for them
+    const { estimates } = estimateFamilies(readImage(NATURE + DEGRADATION1));
+    assert.equal(estimates.length, 2, estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
+    for (const target of [[136, 214, 185], [250, 148, 101]]) {
+        const e = estimates.find(e => Math.hypot(...e.style.color.map((v, ch) => v - target[ch])) < 10);
+        assert.ok(e, `a family of ${target}`);
+        assert.ok(e.style.outline, 'outlined');
+        near(e.style.radius, 21.7, 0.8, 'radius');
+    }
+});
+
 const COMMENT1 = 'comment1-2026-10-22.png';
 
 test('regression: comment1, small round specks beside regular dots are no family', { skip: !existsSync(NATURE + COMMENT1) && 'bench-nature comment1 absent' }, () => {

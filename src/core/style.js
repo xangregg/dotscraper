@@ -1754,10 +1754,13 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         // Not around a translucent family's level (economist: a red–blue lens inside red dots made a phantom
         // "outlined" family). In (3) the outline is darker than the fill, as ink shared with text is: a lighter ring is
         // a band or region the dots lie under (bench3 ANOVA: pink under a pale blue band read as fills "outlined" in
-        // the band's color, a second family of 31).
+        // the band's color, a second family of 31). That guard and the thick fill stop economist's lens, so (3) may
+        // take a ring on a translucent family's line: gray outlines and a gray line can read as one (degradation1:
+        // outline 136 and line 166 as two levels of a "family" with no dots).
         const plain = fam;
         const ring = plain.background;
-        const ringable = !onTranslucent(ring) && !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL);
+        const notPage = !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL);
+        const ringable = !onTranslucent(ring) && notPage;
         const outlinedFamily = () => {
             const outlined = measureOpaque(image, cl.color, backgrounds, [], tol, ring);
             return isDotFamily(outlined) ? { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius } : null;
@@ -1766,7 +1769,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             fam = outlinedFamily() ?? fam;
         if (!isDotFamily(fam))
             fam = strokedFamily(image, cl.color, backgrounds, tol, plain) ?? fam;
-        if (!isDotFamily(fam) && ringable && !isThin(image, cl.color) && luminance(ring) < luminance(cl.color))
+        if (!isDotFamily(fam) && notPage && !isThin(image, cl.color) && luminance(ring) < luminance(cl.color))
             fam = outlinedFamily() ?? fam;
         fam.interior = interior / count;
         if (isDotFamily(fam))
@@ -1916,7 +1919,12 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent);
     for (const c of translucent)
         c.kind = 'translucent';
-    return [...translucent, ...opaqueFamilies(image, backgrounds, translucent, tol)];
+    const opaque = opaqueFamilies(image, backgrounds, translucent, tol);
+    // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
+    // gray outlines and the gray line as two levels, no isolated dot, no radius)
+    const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
+    const real = translucent.filter(t => !t.levels.some(L => rims.some(c => Math.hypot(...c.map((v, ch) => v - L.color[ch])) <= CLUSTER_TOL)));
+    return [...real, ...opaque];
 }
 
 // Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline, the

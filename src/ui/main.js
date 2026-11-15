@@ -95,6 +95,7 @@ const state = {
     tick: null, // the status timer while a fit runs
     blockedShown: false, // the status shows why Find dots can't run (findBlocked)
     showDots: true,
+    showClose: true, // possible duplicates drawn in magenta with a shared ring (their 'close' flag stays either way)
     hoverDot: -1, // index into fit.dots of the dot Remove would take or Move has chosen, highlighted
     axes: null, // from detectAxes
     axisEntries: { x: null, y: null }, // typed tick values and scale types
@@ -434,7 +435,7 @@ function refreshView(keepTransform) {
 function refreshMarks(dots = state.fit?.dots) {
     const style = currentStyle();
     const selected = dots === state.fit?.dots && state.hoverDot >= 0 ? state.hoverDot : undefined;
-    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected, family: state.current } : null);
+    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected, family: state.current, showClose: state.showClose } : null);
 }
 
 /** Estimate every family and select the first. Fitted dots are dropped: they were fitted to other estimates. */
@@ -720,7 +721,8 @@ function renderLayersPanel() {
 function renderLegend() {
     const legend = $('overlay-legend');
     const item = (color, text) => `<span class="key" style="background:${typeof color === 'string' ? color : cssColor(color)}"></span>${text}`;
-    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${item(MARK_COLORS.close, 'double ring: two dots of one family almost in one place (if opaque, maybe one dot counted twice)')} ${item(MARK_COLORS.selected, 'Remove would take it, or Move has chosen it')}`;
+    const close = state.showClose ? `${item(MARK_COLORS.close, 'double ring: two dots of one family almost in one place (if opaque, maybe one dot counted twice)')} ` : '';
+    $('dots-legend').innerHTML = `${item(MARK_COLORS.ok, 'dot')} ${item(MARK_COLORS.flagged, 'flagged (hover for why)')} ${close}${item(MARK_COLORS.selected, 'Remove would take it, or Move has chosen it')}`;
     const fam = state.estimate ? ` (${familyName(state.current)})` : '';
     if (state.overlay === 'residual') {
         legend.innerHTML = `Residual${fam}, image − model along the dot color line: ${item(RESIDUAL_DARKER, 'image darker (missing ink)')} `
@@ -1471,6 +1473,12 @@ function wireControls() {
     });
     $('show-dots').addEventListener('change', e => {
         state.showDots = e.target.checked;
+        $('show-close').disabled = !state.showDots;
+        refreshMarks();
+    });
+    $('show-close').addEventListener('change', e => {
+        state.showClose = e.target.checked;
+        renderLegend();
         refreshMarks();
     });
     $('copy-table').addEventListener('click', async () => {
