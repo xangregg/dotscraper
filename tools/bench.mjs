@@ -6,9 +6,10 @@
 // scored by lane, "(J)" after a name when JPEG noise turned JPEG mode on). Prints precision, recall,
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
-// Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose]
+// Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose] [--json file]
+//   --json  also write every row, and every image that fails, as JSON (tools/results.mjs builds RESULTS.md from it)
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readImage } from './png.mjs';
@@ -36,7 +37,7 @@ const MATCH_TOL_RADII = 0.5;
 const JITTER_BOX = { x: 14, y: 27 }; // px, half-widths
 
 function parseArgs(argv) {
-    const opts = { seeds: 5, preset: null, set: null, only: null, verbose: false };
+    const opts = { seeds: 5, preset: null, set: null, only: null, verbose: false, json: null };
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === '--seeds')
             opts.seeds = Number(argv[++i]);
@@ -48,6 +49,8 @@ function parseArgs(argv) {
             opts.only = argv[++i];
         else if (argv[i] === '--verbose')
             opts.verbose = true;
+        else if (argv[i] === '--json')
+            opts.json = argv[++i];
     }
     return opts;
 }
@@ -276,6 +279,18 @@ function print(rows) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const opts = parseArgs(process.argv.slice(2));
     const rows = [];
+    // for --json: what each row is, and what failed
+    const record = (row, meta) => {
+        rows.push(row);
+        row.meta = meta;
+        return row;
+    };
+    const failures = [];
+    const fail = (meta, message) => {
+        console.log(`${meta.set}/${meta.image}: ${message}`);
+        failures.push({ ...meta, error: message });
+    };
+    const modeOf = (results, jpeg) => (jpeg ? 'jpeg' : results[0]?.jpegAuto ? 'noisy' : 'exact');
     for (const name of Object.keys(SYNTH_PRESETS)) {
         if (opts.preset && name !== opts.preset)
             continue;
@@ -285,12 +300,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const t0 = Date.now();
             if (spec.families.length > 1) {
                 const results = extractAll(image);
-                rows.push(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0));
+                record(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0), { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' });
                 continue;
             }
             const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
-            const r = row(`${name} #${seed}`, truth, res, Date.now() - t0);
-            rows.push(r);
+            const r = record(row(`${name} #${seed}`, truth, res, Date.now() - t0), { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' });
             if (opts.verbose) {
                 console.log(r.name, 'missed', r.m.missed.map(i => `${truth[i].x.toFixed(1)},${truth[i].y.toFixed(1)}`).join(' '), 'extra', r.m.extra.map(j => `${res.fit.dots[j].x.toFixed(1)},${res.fit.dots[j].y.toFixed(1)}`).join(' '));
                 console.log('   log', JSON.stringify(res.fit.log));
@@ -303,7 +317,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             continue;
         const px = truthPixels(readTruthCsv(join(dir, 'data.csv')));
         if (px.error) {
-            console.log(`${set}: ${px.error}`);
+            fail({ set, image: 'data.csv', truth: 'data' }, px.error);
             continue;
         }
         for (const file of readdirSync(dir).filter(f => /\.(png|jpe?g)$/i.test(f)).sort()) {
@@ -311,18 +325,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 continue;
             const image = readImage(join(dir, file));
             const label = `${set}/${file.replace(/\.png$/, '')}`;
+            const meta = { set, image: file, truth: 'exact' };
             const t0 = Date.now();
             let results;
             try {
                 results = extractAll(image, /\.jpe?g$/i.test(file));
             }
             catch (e) {
-                console.log(`${label}: ${e.message}`);
+                fail(meta, e.message);
                 continue;
             }
             const ms = Date.now() - t0;
-            const r = px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms) : groupRow(label, px.dots, results, ms);
-            rows.push(r);
+            const r = record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms) : groupRow(label, px.dots, results, ms),
+                { ...meta, mode: modeOf(results, /\.jpe?g$/i.test(file)) });
             if (opts.verbose) {
                 console.log(label, results.map(q => `${q.est.style.alpha < 1 ? 'translucent' : 'opaque'} ${q.est.style.color.map(Math.round)} r ${q.fit.radius.toFixed(2)}`).join('; '));
                 console.log('   missed', r.missed.map(t => `${t.x.toFixed(1)},${t.y.toFixed(1)}`).join(' '), ' extra', r.extra.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' '));
@@ -345,11 +360,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 continue;
             }
             const jpeg = /\.jpe?g$/i.test(img);
+            const meta = { set, image: basename(img), truth: 'data' };
             const image = readImage(img);
             const t0 = Date.now();
             const px = truthPixelsByTicks(readTruthCsv(join(testDir, file)), detectAxes(jpeg ? restoreChroma(image) : image));
             if (px.error) {
-                console.log(`${set}/${name}: ${px.error}`);
+                fail(meta, px.error);
                 continue;
             }
             let results;
@@ -357,14 +373,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 results = extractAll(image, jpeg);
             }
             catch (e) {
-                console.log(`${set}/${name}: ${e.message}`);
+                fail(meta, e.message);
                 continue;
             }
             const mark = results[0]?.jpegAuto ? ' (J)' : '';
             const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
             const ms = Date.now() - t0;
-            rows.push(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
-                : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms));
+            record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
+                : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms), { ...meta, mode: modeOf(results, jpeg) });
         }
     }
     // truth placed by hand (Save truth JSON, px): every family fitted, scored by group (each truth family, and fill)
@@ -378,15 +394,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 continue;
             const truth = readTruthJson(join(truthDir, file));
             const img = join(ROOT, set, truth.image ?? name + '.png');
+            const meta = { set, image: basename(img), truth: 'hand' };
             if (!existsSync(img)) {
-                console.log(`${set}/${name}: image ${truth.image} absent`);
+                fail(meta, `image ${truth.image} absent`);
                 continue;
             }
             const jpeg = /\.jpe?g$/i.test(img);
             const image = readImage(img);
             // JPEG decoders differ, so only a PNG's hash can be checked
             if (!jpeg && truth.hash && pixelHash(image) !== truth.hash) {
-                console.log(`${set}/${name}: the image's pixel hash ${pixelHash(image)} isn't the truth's ${truth.hash}; skipped`);
+                fail(meta, `the image's pixel hash ${pixelHash(image)} isn't the truth's ${truth.hash}; skipped`);
                 continue;
             }
             const t0 = Date.now();
@@ -395,13 +412,18 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
                 results = extractAll(image, jpeg);
             }
             catch (e) {
-                console.log(`${set}/${name}: ${e.message}`);
+                fail(meta, e.message);
                 continue;
             }
             const mark = results[0]?.jpegAuto ? ' (J)' : '';
             const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
-            rows.push(groupRow(label, truth.dots, results, Date.now() - t0));
+            record(groupRow(label, truth.dots, results, Date.now() - t0), { ...meta, mode: modeOf(results, jpeg) });
         }
     }
     print(rows);
+    if (opts.json) {
+        const keep = ({ name, n, found, precision, recall, countError, rmse, flagged, radius, ms, families, meta }) =>
+            ({ ...meta, name, n, found, precision, recall, countError, rmse, flagged, radius, ms, families });
+        writeFileSync(opts.json, JSON.stringify({ seeds: opts.seeds, rows: rows.map(keep), failures }, null, 1) + '\n');
+    }
 }

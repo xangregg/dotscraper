@@ -82,6 +82,10 @@ test/*.test.js          node:test + node:assert/strict
   fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
   sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. Record results in PLAN.md.
+- Results table: `npm run results` runs the full benchmark and rewrites RESULTS.md, a table per set with every
+  image's counts, precision, recall and notes (`--json file` on the bench gives its rows). The numbers are
+  regenerated; the Notes column is hand-written and kept. Regenerate it after a change that moves bench numbers, and
+  keep each image's note current (what it shows, what fails and why).
 
 ## Conventions
 

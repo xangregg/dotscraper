@@ -14,7 +14,8 @@
     "check:page": "node tools/check-page.mjs",
     "images:index": "node tools/images-index.mjs",
     "measure": "node tools/measure-dots.mjs",
-    "bench": "node tools/bench.mjs"
+    "bench": "node tools/bench.mjs",
+    "results": "node tools/results.mjs"
   },
   "devDependencies": {
     "jpeg-js": "0.4.4",

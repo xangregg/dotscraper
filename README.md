@@ -61,7 +61,8 @@ with their exact data. The real-world test images (`testgraphs/`, `bench-nature/
 not cleared for redistribution, so they stay local and out of the repository; the benchmark and the tests skip them
 when they're absent.
 
-`PLAN.md` has the design, the decisions and every measurement; `CLAUDE.md` has the conventions.
+`npm run results` runs the whole benchmark and rewrites `RESULTS.md`: every image's counts, precision, recall and a
+note. `PLAN.md` has the design, the decisions and every measurement; `CLAUDE.md` has the conventions.
 
 ## Deployment
 

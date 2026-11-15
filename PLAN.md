@@ -1389,6 +1389,11 @@ outliers aren't separated yet). Also: delta1 no family → 23 of 48, P 0.957 R 0
 0.580 (the doubled refit), R 0.299 the same; everything else unchanged. Fits on noisy images take longer (this one 129 s
 in the bench, both modes).
 
+**RESULTS.md** (2026-11-15). `npm run results` runs the full bench (`--json` writes its rows and failures) and rewrites
+RESULTS.md: a table per set, synthetic presets summarized over seeds, every image with truth kind, color mode, counts,
+precision, recall, RMSE, flags, radius, time, and a hand-written note that regeneration keeps. First run: 119 rows, 10
+failures (radius unknown, no family, category ticks not paired).
+
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
 - Edit did nothing: the first click threw (`editAt` passed `families: undefined, dots: undefined` as extras to
