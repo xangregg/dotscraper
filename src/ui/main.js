@@ -1,5 +1,8 @@
-// App entry: image source and action toolbar, the view, and the details panel. The current image name is kept in
-// the URL hash (#image=<test image file>) so a reload or a shared local link reopens it.
+// App entry: image source and action toolbar, the view, and the details panel.
+//
+// Dev mode (on where the app is served from this machine, or anywhere with ?dev; ?dev=0 turns it off) adds what only
+// development needs: the list of local test images, the current one's name kept in the URL hash (#image=<file>) so a
+// reload reopens it, and Save truth. The deployed site never has the test images, so it doesn't look for them.
 //
 // On each new image the app estimates every dot family (src/core/families.js) and builds the selected family's
 // mask (src/core/layers.js). The panel lists the families: checked ones are fitted by Find dots, the selected one is
@@ -39,6 +42,16 @@ const NUDGE_STEP = 1; // px, an arrow key in Move mode
 const NUDGE_FINE = 0.1; // px, Shift + an arrow key
 // the modifier for edits without a refit, by its name on this platform
 const OPTION_KEY = /Mac/.test(navigator.platform) ? 'Option' : 'Alt';
+const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|.+\.localhost)$/;
+const DEV = devMode(location);
+
+// ?dev or ?dev=1 on, ?dev=0 or ?dev=false off; without the parameter, on for a local server
+function devMode({ search, hostname }) {
+    const param = new URLSearchParams(search).get('dev');
+    if (param !== null)
+        return param !== '0' && param !== 'false';
+    return LOCAL_HOST.test(hostname);
+}
 const OUTLINE_DEFAULT = { color: [60, 60, 80], width: 1.5 }; // 0–255, px: an outline turned on for a family without one
 // Find dots progress: a family's share of its bar at each stage the fit reports (rounds share the middle; a fit
 // may converge before MAX_ROUNDS, so the bar can jump at the end)
@@ -1389,7 +1402,7 @@ async function openFile(file) {
         if (load !== loads || !await setImage(name, image, file.type === 'image/jpeg' || JPEG_NAME.test(file.name ?? ''), load))
             return;
         // a pasted or uploaded image can't be reopened from a link
-        history.replaceState(null, '', location.pathname);
+        history.replaceState(null, '', location.pathname + location.search);
         $('test-image').value = '';
     }
     catch (err) {
@@ -1475,6 +1488,7 @@ function wireControls() {
         setStatus(`Saved ${state.fit.dots.length} dots as ${name}.`);
     });
     $('save-truth').addEventListener('click', saveTruth);
+    $('about-open').addEventListener('click', () => $('about').showModal());
     for (const key of ['radius', 'alpha', 'blur']) {
         $(`style-${key}`).addEventListener('change', e => {
             const v = Number(e.target.value);
@@ -1530,7 +1544,8 @@ function wireControls() {
             setMode(null);
             return;
         }
-        if (typing(e))
+        // the About dialog is modal: its keys aren't the view's
+        if (typing(e) || $('about').open)
             return;
         const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
         if (arrow && (state.mode === 'move' || state.mode === 'add') && state.moving && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -1556,12 +1571,16 @@ function wireControls() {
 }
 
 async function init() {
-    const names = await listTestImages();
+    $('dev-badge').hidden = !DEV;
+    $('save-truth').hidden = !DEV;
+    const names = DEV ? await listTestImages() : [];
     const select = $('test-image');
     for (const name of names)
         select.add(new Option(name, name));
+    // without test images (the public site, or none here): offer only what a visitor can do
+    select.hidden = !names.length;
     if (!names.length)
-        select.disabled = true;
+        showMessage('Open an image file, or paste or drop one here.');
     select.addEventListener('change', () => {
         if (select.value)
             openTestImage(select.value);
@@ -1581,7 +1600,7 @@ async function init() {
     $('zoom-in').addEventListener('click', () => view.zoomBy(view.ZOOM_STEP));
     $('zoom-out').addEventListener('click', () => view.zoomBy(1 / view.ZOOM_STEP));
 
-    const match = /^#image=(.+)$/.exec(location.hash);
+    const match = DEV && /^#image=(.+)$/.exec(location.hash);
     if (match)
         await openTestImage(decodeURIComponent(match[1]));
 }

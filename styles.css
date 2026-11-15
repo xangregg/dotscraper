@@ -101,6 +101,102 @@ h1 {
     max-width: 200px;
 }
 
+/* dev mode marker beside the title */
+.dev-badge {
+    margin-left: 4px;
+    padding: 0 5px;
+    font-size: 11px;
+    font-weight: 600;
+    vertical-align: middle;
+    color: var(--warning);
+    border: 1px solid var(--warning);
+    border-radius: 3px;
+}
+
+#about a {
+    color: var(--accent);
+}
+
+/* the About button sits at the toolbar's far end */
+.about-open {
+    margin-left: auto;
+}
+
+#about {
+    max-width: min(640px, calc(100vw - 32px));
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding: 20px 24px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+#about::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+}
+
+#about h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+}
+
+#about h3 {
+    margin: 18px 0 6px;
+    font-size: 14px;
+}
+
+#about p, #about li, #about dd {
+    color: var(--ink-2);
+}
+
+#about p {
+    margin: 0 0 8px;
+}
+
+#about ol, #about ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
+#about li {
+    margin-bottom: 4px;
+}
+
+#about strong {
+    color: var(--ink);
+}
+
+.about-close {
+    float: right;
+    margin: 0 0 8px 12px;
+}
+
+.keys {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    margin: 0;
+}
+
+.keys dt {
+    color: var(--ink);
+}
+
+.keys dd {
+    margin: 0;
+}
+
+kbd {
+    padding: 0 4px;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--page);
+}
+
 #fit-progress {
     width: 120px;
     height: 8px;

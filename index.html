@@ -12,9 +12,9 @@
 <body>
     <noscript><p class="warning">dotscraper runs in the browser and needs JavaScript.</p></noscript>
     <header>
-        <h1 title="Dot locations from images of graphs">dotscraper</h1>
+        <h1 title="Dot locations from images of graphs">dotscraper <span id="dev-badge" class="dev-badge" hidden title="Dev mode: local test images and Save truth. Add ?dev=0 to the URL for the public view.">dev</span></h1>
         <div class="group" role="group" aria-label="Image source">
-            <select id="test-image" aria-label="Test image" title="Local test images">
+            <select id="test-image" aria-label="Test image" title="Local test images" hidden>
                 <option value="">Test image…</option>
             </select>
             <button type="button" id="open-file" title="Open an image file; you can also paste (⌘V) or drop one on the view">Open…</button>
@@ -36,8 +36,9 @@
         <div class="group" role="group" aria-label="Export">
             <button type="button" id="copy-table" disabled title="Copy the dots as a tab-separated table that pastes into a spreadsheet: pixel and data coordinates, standard errors, flags">Copy table</button>
             <button type="button" id="save-csv" disabled title="Download the same table as a CSV file">Save CSV</button>
-            <button type="button" id="save-truth" disabled title="Save the current dots as ground truth JSON (for testgraphs/truth/)">Save truth</button>
+            <button type="button" id="save-truth" disabled hidden title="Save the current dots as ground truth JSON (for testgraphs/truth/)">Save truth</button>
         </div>
+        <button type="button" id="about-open" class="about-open" title="What dotscraper does, how to use it, and its limits">About</button>
     </header>
     <main>
         <aside id="panel" aria-label="Details">
@@ -152,5 +153,55 @@
             </div>
         </div>
     </main>
+    <dialog id="about" aria-labelledby="about-title">
+        <form method="dialog" class="about-close"><button type="submit" aria-label="Close">Close</button></form>
+        <h2 id="about-title">dotscraper</h2>
+        <p>Finds the dots in an image of a scatterplot or dot plot and reports where they are, in pixels and, once the
+            axes have values, in data units. It is made for the hard case: dots that overlap, drawn with
+            transparency, where counting blobs or circles fails.</p>
+        <p>It works by <em>analysis by synthesis</em>. It measures the dots' style (color, size, transparency, edge
+            blur, outline), sets aside what isn't dots (text, lines, axes), then searches for the set of dot positions
+            whose rendering reproduces the image. A dot hidden in a stack shows up as a darker level, not as an edge.</p>
+
+        <h3>Using it</h3>
+        <ol>
+            <li><strong>Open an image:</strong> Open…, or paste (⌘V / Ctrl+V), or drop one on the view. A PNG
+                straight from the source works best; screenshots and JPEGs work with <em>Noisy color matching</em>.</li>
+            <li><strong>Check the dot families</strong> it found, one per dot color. Add a missing one with
+                <em>Add family by color</em> and a click on a dot; type a radius if it asks for one.</li>
+            <li><strong>Find dots.</strong> The fit runs in the background; Stop keeps what it has.</li>
+            <li><strong>Review.</strong> Hover a dot for its position and uncertainty. Flagged dots are red: hover for
+                why. A magenta double ring marks dots of one family almost in one place, which for opaque dots may be
+                one dot counted twice. The Residual view shows what the dots don't explain.</li>
+            <li><strong>Fix</strong> with Add, Remove and Move. Edits refit the dots nearby, but never dots you
+                placed or moved. Option-click (Alt-click) adds or removes without any refit.</li>
+            <li><strong>Axes:</strong> type two or more tick values to get data units.</li>
+            <li><strong>Export:</strong> Copy table (pastes into a spreadsheet) or Save CSV.</li>
+        </ol>
+
+        <h3>Keys and mouse</h3>
+        <dl class="keys">
+            <dt><kbd>A</kbd> <kbd>R</kbd> <kbd>M</kbd></dt><dd>Add, Remove, Move mode; <kbd>Esc</kbd> ends it</dd>
+            <dt>Arrows</dt><dd>move the chosen or last added dot 1 px; with <kbd>Shift</kbd>, 0.1 px</dd>
+            <dt><kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd></dt><dd>undo an edit</dd>
+            <dt>Wheel, drag</dt><dd>zoom at the pointer, pan</dd>
+        </dl>
+
+        <h3>What to trust</h3>
+        <ul>
+            <li>Opaque dots hide one another: a dot entirely behind others can't be found, and a stack's count is
+                a lower bound. Translucent dots show stacks as darker levels, so their counts are better determined.</li>
+            <li>The ± values are standard errors from pixel noise alone. The real error, from resampling and from how
+                well the model matches the drawing, is a few tenths of a pixel.</li>
+            <li>Data values are only as good as the tick values you type and the ticks it finds. The Axes section
+                gives each axis's resolution in data units per pixel.</li>
+        </ul>
+
+        <h3>Privacy</h3>
+        <p>Everything runs in your browser. Images are never uploaded; nothing leaves your computer.</p>
+
+        <p class="fine">Source, documentation and issues: <a href="https://github.com/xangregg/dotscraper">github.com/xangregg/dotscraper</a>.
+            Open source under the BSD Zero Clause License. © 2026 Xan Gregg.</p>
+    </dialog>
 </body>
 </html>

@@ -65,7 +65,9 @@ test/*.test.js          node:test + node:assert/strict
 
 - Tests: `npm test` (runs `node --test`). Node 22+ (`tools/check-page.mjs` uses Node's built-in WebSocket).
 - Serve locally: `npm run serve` (python3 on port **8003**, leaving 8000–8002 to related projects), then open
-  http://localhost:8003/
+  http://localhost:8003/. Dev mode (test image list, `#image=` URL state, Save truth) is on for a local host and off
+  on the deployed site (https://xangregg.github.io/dotscraper/, GitHub Pages from the branch root); `?dev` turns it
+  on anywhere, `?dev=0` off.
 - Page check (server must be running): `npm run check:page -- http://localhost:8003/ --until '<js expr>'
   --eval '<js expr>' --screenshot out.png [--dark]`. Exits 1 on any console error, exception, or failed load.
 - Test image list: after adding an image to `testgraphs/`, `npm run images:index` (the test suite fails if

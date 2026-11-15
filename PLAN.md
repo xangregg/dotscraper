@@ -493,9 +493,11 @@ What the real images taught:
 - [x] Worker (`src/fit-worker.js`) with progress drawn live and Stop (a stopped fit keeps its dots, marked
       unassessed); Dots panel (count, flags, fitted radius, residual sd, Copy CSV, Save truth JSON); Model and
       Residual overlays with a legend; Edit mode (click to add or remove, then `refitNear`); dot readout on hover.
-- [ ] Ground truth for dog-ages: **needs a person**. The app's Edit mode and Save truth write
+- [x] Ground truth for dog-ages: **needs a person**. The app's Edit mode and Save truth write
       `testgraphs/truth/dog-ages.json`, which `npm run bench` then scores. The fit's own output must not be used
-      as truth without review.
+      as truth without review. Done by the user (2026-11-12, 95 dots, reviewed in the app). Its positions are the
+      fit's (they agree to 0.004 px), so the row checks the count and which dots, not sub-pixel accuracy; bench1–3's
+      exact truth and the dog-ages-actual-size cross-check cover positions.
 
 **Measured (phase 3)**, `npm run bench` (5 seeds per preset, matching tolerance r/2), Node 22 on this Mac:
 
@@ -1266,13 +1268,34 @@ No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
 **Milestone 4.**
 
 - [ ] Ground truth and benchmark rows for each test image. (bench1–3 have exact truth for their 59 renderings.)
+      Status 2026-11-14: every testgraphs image has truth but dog-ages-actual-size (derivable from dog-ages.json
+      through the measured 3× scale and offset); every bench-nature image has truth, but four lane CSVs (cells1,
+      hair1, protrusion3, tumour1) can't be scored until the bench pairs category ticks with lanes.
 
 ### Phase 6 — Polish and deploy
 - [x] Layout and editing review (2026-11-12, below).
-- [ ] About panel, CSV/JSON export, copy to clipboard, URL state, dark theme.
+- [x] About panel (2026-11-14, below).
+- [x] CSV and truth JSON export, copy to clipboard (Copy table), URL state (`#image=`), dark theme.
 - [ ] Optional OCR of tick labels (open question 2).
 - [x] Move dot, Clear all, Copy table and Save CSV (2026-11-13, below).
-- [ ] GitHub Pages workflow and live-site check.
+- [x] README.md (2026-11-14).
+- [ ] GitHub Pages deploy (from the branch root, no workflow needed) and live-site check.
+
+**About panel and README** (2026-11-14). An About button at the toolbar's end opens a modal `<dialog>` (Esc and its
+Close button close it; the view's keys are ignored while it's open): what the app does and how (analysis by
+synthesis), the steps of using it, keys and mouse, what to trust (hidden opaque dots, noise-only standard errors, tick
+values), privacy (nothing is uploaded) and the license. README.md covers the same briefly, development commands, why
+the test images are local only, and deployment: GitHub Pages from the branch root, nothing to build. Without local
+test images (the deployed site) the test-image list is hidden and the empty view says to open, paste or drop an
+image; checked by serving only the deployable files (no console errors). The site is
+https://xangregg.github.io/dotscraper/ and the About panel links the repository.
+
+**Dev mode** (2026-11-14). The test-image list, the `#image=` URL state and Save truth are for development: they show
+only in dev mode, which is on for a local host (localhost, 127.0.0.1, ::1, *.localhost) and off elsewhere, and `?dev`
+or `?dev=0` overrides it. Out of dev mode the app doesn't probe for test images, so the public site makes no failing
+requests. A red "dev" badge by the title marks it. Opening a file keeps the query string (`?dev`) when it clears the
+hash. Checked headless: localhost (dev: 10 test images, Save truth), `?dev=0` (neither, the public message) and
+`?dev#image=dog-ages.png` (opens it), no console errors.
 
 **Layout and editing review** (2026-11-12, from the user's notes and a review of my own).
 
