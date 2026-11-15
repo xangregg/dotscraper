@@ -39,8 +39,13 @@ const WORD_MIN_OVERLAP = 0.5; // × the shorter glyph's height
 const WORD_MAX_HEIGHT_RATIO = 2.5; // glyphs of one word differ in height by less than this (a tall rule doesn't join)
 const LABEL_ON_TICK_SPACINGS = 0.3; // a word belongs to a tick only if centered within this × spacing of it
 // Labels on the side away from the ticks must label at least this many (beeswarm-boxplot: the "***" above a gray
-// significance bracket labeled 2 of its 3 down-pointing ends and made it an x axis)
+// significance bracket labeled 2 of its 3 down-pointing ends and made it an x axis) …
 const OTHER_SIDE_MIN_LABELS = 3;
+// … with words no wider along the axis than this many tick spacings: data beside a sparsely labeled axis can
+// outnumber its labels (economist: dots "labeled" 3 ticks above its baseline, one of them a chain of dots 566 px wide
+// at a 74 px spacing, against "2007" and "2023" below; the plot was bounded above the baseline and every dot masked).
+// No ratio of the two sides' counts separates that from dots beside 4 of an inward frame's 6 ticks (6 to 4).
+const OTHER_SIDE_MAX_WIDTH = 1.5; // × the tick spacing
 const BACKGROUND_MIN_FRACTION = 0.05; // any flat color covering this share of the image is a background (panels)
 const GRID_BASELINE_TOL = 0.03; // × spacing: a dark baseline this close to the gridlines' progression is a tick
 const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of the line's length of either end
@@ -374,7 +379,8 @@ function union(a, b) {
  * economist chart) belong to none. Labels are usually on the ticks' side, but ticks drawn into the plot (Nature's
  * frames) have them on the other side, and their own side holds data (crystal1: dots "labeled" 2 of 5 y ticks and
  * masked the plot as beyond the axes). Both sides are searched and the one labeling more ticks wins; on a tie, the
- * ticks' side. The other side must label at least OTHER_SIDE_MIN_LABELS ticks.
+ * ticks' side. The other side must label at least OTHER_SIDE_MIN_LABELS ticks, with words no wider than
+ * OTHER_SIDE_MAX_WIDTH spacings.
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[][]} backgrounds
@@ -387,13 +393,15 @@ export function findLabels(image, backgrounds, axis, ticks) {
     const tickSide = ticks.filter(t => t.side === 'after').length >= ticks.filter(t => t.side === 'before').length ? 'after' : 'before';
     const tickLen = Math.max(...ticks.map(t => t.length));
     const own = labelsOnSide(image, backgrounds, axis, ticks, tickSide, tickLen);
-    const other = labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0);
-    for (const [t, b] of other.size > own.size && other.size >= OTHER_SIDE_MIN_LABELS ? other : own)
+    const other = labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0, OTHER_SIDE_MAX_WIDTH);
+    const far = other.size >= OTHER_SIDE_MIN_LABELS && other.size > own.size;
+    for (const [t, b] of far ? other : own)
         t.label = b;
 }
 
-// tick → label box for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without them)
-function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom) {
+// tick → label box for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without them),
+// and no wider along the axis than `maxWidth` spacings
+function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth = Infinity) {
     const { width, height } = image;
     const h = axis.dir === 'h';
     const labels = new Map();
@@ -413,6 +421,8 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom) {
     const assigned = [];
     for (const b of mergeWords(inkComponents(image, backgrounds, rect).map(c => c.box))) {
         const mid = h ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2;
+        if ((h ? b[2] - b[0] : b[3] - b[1]) > maxWidth * spacing)
+            continue;
         let best = null;
         for (const t of ticks) {
             if (Math.abs(t.pos - mid) <= LABEL_ON_TICK_SPACINGS * spacing && (best === null || Math.abs(t.pos - mid) < Math.abs(best.pos - mid)))

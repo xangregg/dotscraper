@@ -1484,3 +1484,12 @@ clicked (sub-pixel), marked placed. The hover line and the dot table (`by_hand`:
 dots are the user's; a moved dot's standard errors and removal margin are dropped, as they describe the fit's
 position, not the user's.
 
+**Labels across the axis, economist** (2026-11-14). With the user's new truth, economist scored 0 of 210: the label
+search on the far side of the ticks (for inward frames) found dots "labeling" 3 ticks above its baseline, one a chain
+of dots 566 px wide, against its 2 year labels below, so the baseline became the plot's top and every dot was masked.
+Far-side words wider than OTHER_SIDE_MAX_WIDTH (1.5) tick spacings are no labels now. A ratio of the two sides'
+counts doesn't work: economist's 3 to 2 is the synthetic inward frame's 6 to 4. economist: 0 → 198 for 210,
+P 0.874 R 0.824; crystal1 and beeswarm-boxplot's axes unchanged; every other bench row unchanged. New hand-truth rows:
+fibers-distance 39 for 44 (P 0.897 R 0.795), violin-beeswarm 734 for 702 (P 0.956 R 1.000), pathogen (hand truth,
+493 dots) 468, P 0.989 R 0.939; beeswarm-boxplot: no radius (no family).
+

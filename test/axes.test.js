@@ -123,6 +123,9 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
     assert.ok(e.y.ticks.every(t => t.source === 'grid' && t.label));
     // all four labels are the right-aligned numbers, not a dot rim at the zero line's left end
     assert.ok(e.y.ticks.every(t => t.label[0] > 700), JSON.stringify(e.y.ticks.map(t => t.label)));
+    // its baseline bounds the plot below: the dots above it, labeling 3 ticks against its 2 year labels below, once
+    // made it the plot's top and masked every dot
+    assert.deepEqual(plotBounds(e), { left: null, right: null, top: null, bottom: e.x.line.pos });
     // thin antialiased axes count as dark (cantons, beeswarm-boxplot)
     assert.equal(detectAxes(readPng(TESTGRAPHS + 'cantons-haemocytes-dotplot.png')).y.ticks.length, 5);
     const bb = detectAxes(readPng(TESTGRAPHS + 'beeswarm-boxplot.png'));
