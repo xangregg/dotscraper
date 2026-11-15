@@ -257,7 +257,9 @@ as poorly determined rather than silently placed or dropped.
    width, opacity), measured from its own isolated dots, so outlined and plain families can share an image.
    phase1 and engagement1's PDF capture (2026-11-14, below) add two cases: black outlines around gray fills, where
    white, fill and stroke are collinear and the outline shares its color with text and a black family; and five
-   discrete fills read as one scale. Outline pixels should count only next to a fill of the family.
+   discrete fills read as one scale. Outline pixels should count only next to a fill of the family. Done for opaque
+   families (2026-11-14, below); outline.js's global readers still decide first for JMP-style and scale outlines,
+   and kite2 (translucent, own-shade ring) is still open.
    engagement1 (2026-11-13) shows how the global view fails. Five blue fills (navy 4, 3, 87 to lavender
    188, 186, 234) share one dark stroke, under a pixel wide and blurred, so it never shows its own color (on
    lavender its darkest pixel is about 80, 80, 105). (a) Lavender and cyan never become families: their edge
@@ -1492,4 +1494,38 @@ counts doesn't work: economist's 3 to 2 is the synthetic inward frame's 6 to 4. 
 P 0.874 R 0.824; crystal1 and beeswarm-boxplot's axes unchanged; every other bench row unchanged. New hand-truth rows:
 fibers-distance 39 for 44 (P 0.897 R 0.795), violin-beeswarm 734 for 702 (P 0.956 R 1.000), pathogen (hand truth,
 493 dots) 468, P 0.989 R 0.939; beeswarm-boxplot: no radius (no family).
+
+**Per-family outlines** (2026-11-14, open question 10). An opaque family's outline is now read with the family, not
+before any family is known, in three tries when the plain fill fails the dot test: (1) the outline model when the
+ring's color is thin over the whole image (JMP's own-color outlines, as before); (2) the stroke model (a stroke too
+thin to show its color, off the line from the page to the fill; it places colored fills better: cells1 rmse 0.28 px
+against 0.95 by the outline model); (3) the outline model again for a thick fill whose outline color is also other
+ink. For (3) to work:
+
+- Outline pixels count only within OUTLINE_REACH (4 px) of the fill's thick parts: phase1's black outlines share
+  their color with text, axes, a black family and a colorbar block, which all read as dots. Thick parts, because an
+  antialiased edge from black to anything lighter passes through each gray (phase1: 82-gray pixels on every black
+  edge put every outline within reach, and the 82 family took the light and black dots).
+- Without an isolated whole dot, the radius comes from the fills: each dot's fill is bounded by its own outline, so
+  the top dots' fills are whole discs even on a same-gray curve drawn behind them (phase1: the curves' distance ridge
+  gave 6.3 for 19). Fill radius plus the outline width (the covered area in a ring outside each fill disc). The
+  center search runs on the fill's antialiased coverage (the position between outline and fill), at the fill radius:
+  a binary mask's stair-steps gave whole fills arcs of only 0.6.
+- A cluster between a found family's fill and its outline is a rim only if mostly edge (interior < 0.3) or within
+  the fill's color tolerance (a synthetic rim 39 units from its fill): phase1's darker grays sit between the lighter
+  one and black, 62% interior.
+- mergeAcrossRegions no longer merges outlined families: any two grays fit "one translucent family over white and
+  over black" (phase1's black colorbar block was the region).
+- The colormap's hue-outline reading (outlines a darker shade of each fill, on a scale) yields to families found one
+  at a time when two or more are stroked or outlined and their fills hold 60% of the colored ink (engagement1: 4,
+  0.87; the gradient renders: none). Translucent families far smaller than the others (SPECK_RADIUS_RATIO) are text
+  read as levels (engagement1: black at r 3.5, 1362 "dots"); one without a measured radius stays for the user.
+
+Results: engagement1 22 → 54 for 49, P 0.889 R 0.980 (cyan is no family; mid-blue fits its dots); hair2 no family →
+9 of 18, P 1.000 (its pink; the white fills are the page's color); phase1 no family → 65 for 97, P 0.431 R 0.289 (grays
+187 and 82 found; 136 fails coverage, 0.29; 228's ring is the page, its curve's white surroundings; black shares
+text's color; about 7 dots per family fill the colorbar's blocks, and the 187 family puts near-duplicates where its
+same-gray curve meets dots); hair3 and cells1 unchanged; every other row identical. Bounding the plot by where its
+axis lines end would have masked the colorbar, but lines stop short of data in cantons (86 dots), comment1 (35, its
+axis broken by dots) and delta1 (1).
 

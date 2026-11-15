@@ -4,7 +4,7 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCES, EXACT_TOLERANCES } from './style.js';
+import { estimateStyle, measureFamily, backgroundColor, flatMask, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
@@ -13,6 +13,15 @@ import { findOutlines, findHueOutlines, fillFamilies } from './outline.js';
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
 const DEFAULT_RADIUS = 5; // px, for the region test when no family has a radius yet
+// The hue-outline reading (outline.js findHueOutlines, after colormap.js finds opaque fills on a scale) sees outlines
+// darker than each fill; dots of a few discrete fills in one dark stroke look like that too (engagement1: five blues
+// read as a scale fitted by rings found 22 of 49). Families
+// found one at a time win when at least PER_FAMILY_MIN of them are stroked or outlined and their fills hold
+// PER_FAMILY_INK_SHARE of the colored ink (engagement1: 4 families, 0.87; the gradient renders: none, 0).
+const PER_FAMILY_MIN = 2;
+const PER_FAMILY_INK_SHARE = 0.6;
+const INK_MIN_CHROMA = 40; // 0–255, max − min channel: colored ink, not the page, text or a dark stroke
+const FILL_TOL = 40; // 0–255 units (RGB distance) from a fill's color
 // One translucent family over two backgrounds looks like two opaque families when it has too few overlaps to show
 // its levels (bench1 ellipse: orange on white and orange on lavender). Its colors there differ by q·(B − B₂), with
 // q = 1 − α, which gives α and c without any overlap. A color within this of the prediction is that family.
@@ -60,7 +69,9 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
             for (let j = 0; j < out.length; j++) {
                 const a = out[i];
                 const b = out[j];
-                if (i === j || a.kind !== 'opaque' || b.kind !== 'opaque')
+                // outlined fills are dots of their own: grays over white and black always fit a − b = q (B − B₂)
+                // (phase1: gray 187 and 82 in black outlines, with a black colorbar block for B₂)
+                if (i === j || a.kind !== 'opaque' || b.kind !== 'opaque' || a.outline || b.outline)
                     continue;
                 // a over B, b over B₂: a − b = q (B − B₂)
                 const diff = sub(a.seed, b.seed);
@@ -178,6 +189,27 @@ function outlinedEstimate(image, background, found) {
     };
 }
 
+// whether stroked or outlined families found one at a time account for the image's colored dots (see PER_FAMILY_MIN)
+function familiesExplainInk(image, candidates) {
+    const fills = candidates.filter(c => c.kind === 'opaque' && (c.stroke || c.outline)).map(c => c.seed);
+    if (fills.length < PER_FAMILY_MIN)
+        return false;
+    const { data } = image;
+    let ink = 0;
+    let inFill = 0;
+    for (let p = 0; p < data.length; p += 4) {
+        const r = data[p];
+        const g = data[p + 1];
+        const b = data[p + 2];
+        if (Math.max(r, g, b) - Math.min(r, g, b) < INK_MIN_CHROMA)
+            continue;
+        ink++;
+        if (fills.some(c => Math.hypot(r - c[0], g - c[1], b - c[2]) <= FILL_TOL))
+            inFill++;
+    }
+    return ink > 0 && inFill >= PER_FAMILY_INK_SHARE * ink;
+}
+
 /**
  * @param {import('./image.js').RgbaImage} image  as analyzed (a JPEG's chroma already restored)
  * @param {object} [opts]
@@ -193,17 +225,22 @@ export function estimateFamilies(image, opts = {}) {
     const outlined = outlineEstimate(image);
     if (outlined)
         return { image, layers: null, estimates: [outlined] };
+    let first = null;
     const scaled = colormapEstimate(image, jpeg);
     if (scaled?.scale === 'opaque') {
         // opaque fills on a scale whose outlines are a darker shade of each fill: the rings place the dots where
-        // the union of discs can't (bench2 gradient-opaque-stroke's dense stacks)
+        // the union of discs can't (bench2 gradient-opaque-stroke's dense stacks); unless a few stroked families
+        // found one at a time explain the fills (engagement1: five blues in one dark stroke)
         const hue = findHueOutlines(image);
-        if (hue)
-            return { image, layers: null, estimates: [outlinedEstimate(image, backgroundColor(image), hue)] };
+        if (hue) {
+            first = estimateStyle(image, { jpeg });
+            if (!familiesExplainInk(image, first.candidates))
+                return { image, layers: null, estimates: [outlinedEstimate(image, backgroundColor(image), hue)] };
+        }
     }
-    if (scaled)
+    if (scaled && !first)
         return { image, layers: null, estimates: [scaled] };
-    let first = estimateStyle(image, { jpeg });
+    first ??= estimateStyle(image, { jpeg });
     if (!first.candidates.length)
         return { image, layers: null, estimates: [{ ...first, image }] };
     const B = first.background.color;
@@ -228,5 +265,15 @@ export function estimateFamilies(image, opts = {}) {
         for (const e of separated)
             e.notes = [...e.notes, ...note];
     }
-    return { image: work, layers, estimates: separated };
+    return { image: work, layers, estimates: withoutSpeckLevels(separated) };
+}
+
+// A translucent family's radius is known only now: one far smaller than the others is text's antialiased grays
+// read as levels, its isolated "dots" decimal points (engagement1: black at r 3.5 beside fills at r 14.3, 1362 dots).
+// Opaque specks went earlier (style.js withoutSpecks), with their coverage.
+function withoutSpeckLevels(estimates) {
+    const largest = Math.max(...estimates.map(e => e.style?.radius ?? 0));
+    // a family whose radius wasn't measured stays: the user can type it
+    const kept = estimates.filter(e => e.familyMeasure?.kind !== 'translucent' || !(e.style?.radius > 0) || e.style.radius >= SPECK_RADIUS_RATIO * largest);
+    return kept.length ? kept : estimates;
 }

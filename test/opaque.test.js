@@ -246,9 +246,9 @@ const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
 const ENGAGEMENT = 'engagement1-10.1038-s41586-026-10967-w';
 
 // the user's hand-checked dots (truth JSON, px)
-// todo: written for the 2026-11 web capture; the PDF capture that replaced it (2× the pixels, hash 76da23c6) is claimed
-// by outlineEstimate as one scale-colored family fitted by its rings (22 of 49 dots), like phase1's outlined grays
-test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(`${NATURE}${ENGAGEMENT}.png`) && existsSync(`${NATURE}truth/${ENGAGEMENT}.json`)) && 'bench-nature engagement1 absent', todo: 'the PDF capture is read as outlined dots on a color scale' }, () => {
+// Written for the web capture; the PDF capture that replaced it (2× the pixels) was read as one scale-colored family
+// fitted by its rings (22 of 49 dots) until stroked families found one at a time took precedence (familiesExplainInk)
+test('regression: engagement1, lavender dots in a dark stroke are found, and the navy family no longer takes them', { skip: !(existsSync(`${NATURE}${ENGAGEMENT}.png`) && existsSync(`${NATURE}truth/${ENGAGEMENT}.json`)) && 'bench-nature engagement1 absent' }, () => {
     // before: one family (50, 55, 99) with 33 dots; no lavender dot found; the user's truth has 46 dots, 10 lavender
     const t = readTruthJson(`${NATURE}truth/${ENGAGEMENT}.json`);
     const light = new Set(t.families.filter(f => f.color[0] > 150).map(f => f.family)); // the light fill, whatever its label
@@ -299,11 +299,49 @@ test('regression: hair3, pink fills in a black stroke are one family at their fu
     assert.ok(estimates[0].style.outline, 'outlined');
 });
 
-test('regression: hair2, decimal points alone are no family', { skip: !existsSync(NATURE + HAIR2) && 'bench-nature hair2 absent' }, () => {
-    // before: black specks (r 4.86, coverage 0.02, 4 isolated) made the only family, 170 "dots". Its pink dots are
-    // nine in two heavy clusters (one strong arc), and its white-filled dots are the page's color: no family yet.
+test('regression: hair2, decimal points alone are no family; its clustered pink dots are one, by their outlines', { skip: !existsSync(NATURE + HAIR2) && 'bench-nature hair2 absent' }, () => {
+    // before: black specks (r 4.86, coverage 0.02, 4 isolated) made the only family, 170 "dots". Its nine pink dots
+    // sit in two heavy clusters (one strong arc in the stroke model); the outline model finds them by their fills.
+    // Its white-filled dots are the page's color: no family yet.
     const { estimates } = estimateFamilies(readImage(NATURE + HAIR2));
-    assert.ok(estimates.every(e => !e.style || Math.hypot(...e.style.color) > 100), estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
+    assert.equal(estimates.length, 1, estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
+    assert.ok(Math.hypot(...estimates[0].style.color.map((v, ch) => v - [255, 175, 179][ch])) < 8);
+    near(estimates[0].style.radius, 30.3, 0.8, 'radius');
+});
+
+const PHASE1 = 'phase1-10.1038-s41586-026-11163-6.png';
+
+test('regression: phase1, gray fills in black outlines are families of their own', { skip: !existsSync(NATURE + PHASE1) && 'bench-nature phase1 absent' }, () => {
+    // before: no family. White, gray and black are on one line, so the stroke model can't read a gray fill; the
+    // outline model counted every black pixel (text, axes, a black family) as dot, was gated on black being thin over
+    // the whole image, and the darker grays were taken for rims between the lighter one and its outline, then merged
+    // with it as one translucent family over a black "region"; the same-gray curves behind the dots set the radius
+    // (6.3 for 19). Still missing: gray 136 (coverage 0.29) and 228, and the black family (text's color).
+    const { estimates } = estimateFamilies(readImage(NATURE + PHASE1));
+    const grays = estimates.filter(e => e.style?.outline && e.familyMeasure?.kind === 'opaque');
+    assert.ok(grays.length >= 2, estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
+    for (const e of grays) {
+        near(e.style.radius, 19.4, 0.8, `radius of ${e.style.color.map(Math.round)}`);
+        assert.ok(Math.max(...e.style.outline.color) < 40, 'a black outline');
+    }
+});
+
+test('regression: engagement1, five blues in one dark stroke are stroked families, not a scale; text is no family', { skip: !existsSync(`${NATURE}${ENGAGEMENT}.png`) && 'bench-nature engagement1 absent' }, () => {
+    // before: read as one family on a color scale fitted by its rings (22 of 49); then, with the families found one
+    // at a time preferred, black text's grays as a translucent family at r 3.5 (1362 "dots")
+    const { estimates } = estimateFamilies(readImage(`${NATURE}${ENGAGEMENT}.png`));
+    assert.ok(!estimates.some(e => e.scale), 'no scale reading');
+    assert.ok(estimates.length >= 4, `${estimates.length} families`);
+    for (const e of estimates)
+        near(e.style.radius, 14.3, 0.6, `radius of ${e.style.color.map(Math.round)}`);
+});
+
+const KITE1 = 'kite1-10.1038-s41586-026-11194-z.png';
+
+test('regression: kite1, a translucent family without a measured radius is kept for the user to set it', { skip: !existsSync(NATURE + KITE1) && 'bench-nature kite1 absent' }, () => {
+    // the speck filter for translucent families once compared a null radius as 0 and dropped the teal family
+    const { estimates } = estimateFamilies(readImage(NATURE + KITE1));
+    assert.ok(estimates.some(e => e.familyMeasure?.kind === 'translucent' && !(e.style.radius > 0)), estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
 });
 
 const COMMENT1 = 'comment1-2026-10-22.png';

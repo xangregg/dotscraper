@@ -80,7 +80,7 @@ const DOT_MIN_RADIUS = 3; // px
 // measure r 2.5–2.74 but never have an isolated round component)
 const SMALL_DOT_MIN_RADIUS = 2; // px
 const SMALL_DOT_MIN_ISOLATED = 5;
-const SPECK_RADIUS_RATIO = 0.4; // × the largest family's radius: below it, a mostly-text color's dots are specks
+export const SPECK_RADIUS_RATIO = 0.4; // × the largest family's radius: below it, a mostly-text color's dots are specks
 const DOT_MIN_ARC = 0.5; // fraction of the circumference for a Hough center to count
 const DOT_STRONG_ARC = 0.75;
 const DOT_MIN_STRONG = 3;
@@ -92,6 +92,7 @@ const DOT_MIN_ISOLATED = 3;
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
 const DOT_MIN_INTERIOR = 0.1; // share of a cluster's pixels with all 8 neighbors in the cluster
+const BLEND_OUTLINE_MAX_INTERIOR = 0.3; // a cluster between a fill and its outline with more interior is a family
 const DOT_FILL_RADII = 0.75; // × r: the disc that must be filled around a Hough center …
 const DOT_MIN_FILL = 0.85; // … to this fraction
 // distance-transform peaks underestimate the radius where dots touch or overlap; the upper quartile of the peaks,
@@ -132,6 +133,12 @@ const OVERLAP_MIN_DEPTH = 2; // px, half the side of a square that must fit insi
 // 86). Unbounded, a pale family's line reached black text (economist: a light gray "family" at 226 filled its text).
 const OVERLAP_MAX_MIX = 2; // × the family's contrast with its background
 const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–outline segment still lies on it
+// An outline is the family's only next to its fill: farther out, the outline's color is other ink (phase1: black
+// outlines around gray fills, and black text, axes and a black family, which counted as dots everywhere)
+const OUTLINE_REACH = 4; // px from the family's fill
+// A fill is thick and an outline is a thin ring: an opening by a disc wider than the ring leaves little of its color
+// (JMP's 1.7 px outlines keep 0.5–4.8%), so a thin cluster is no fill to try the outline model on (a synthetic ring's
+// color read as a "fill" with the real fill for its outline)
 const OUTLINE_OPENING = 1.5; // px, radius of the disc that must remove an outline's color …
 const OUTLINE_MAX_THICK = 0.25; // … all but this share of it
 // Stroked fills (PLAN.md open question 10): a fill inside a stroke so thin and blurred that it never shows its own
@@ -1237,13 +1244,17 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const n = width * height;
     const member = (p, c) => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL;
     const own = new Uint8Array(n);
-    const mask = new Uint8Array(n);
-    for (let p = 0; p < n; p++) {
+    for (let p = 0; p < n; p++)
         own[p] = member(p, color) ? 1 : 0;
-        mask[p] = own[p] || (outline && member(p, outline)) ? 1 : 0;
-    }
+    // the reach is from the fill's thick parts: an antialiased edge between the outline's color and a lighter one
+    // passes through the fill's color (phase1: every black edge, text's and other grays' outlines, had 82-gray
+    // pixels, and the reach covered them all)
+    const thickOwn = outline ? opening(own, width, height, THICK_OPENING) : null;
+    const ownReach = outline ? dilate(thickOwn, width, height, OUTLINE_REACH) : null;
+    const mask = new Uint8Array(n);
+    for (let p = 0; p < n; p++)
+        mask[p] = own[p] || (outline && ownReach[p] && member(p, outline)) ? 1 : 0;
     const thick = opening(mask, width, height, THICK_OPENING);
-    const thickOwn = outline ? opening(own, width, height, THICK_OPENING) : thick;
     // a stroked fill's surroundings are its ring: its background lies beyond
     const body = thick.some(v => v) ? thick : mask;
     const B = ringBackground(image, stroke ? dilate(body, width, height, STROKE_RING) : body) ?? backgrounds[0];
@@ -1256,7 +1267,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
             const p = y * width + x;
-            if (!thickOwn[p] || !own[p - 1] || !own[p + 1] || !own[p - width] || !own[p + width])
+            if (!(thickOwn ?? thick)[p] || !own[p - 1] || !own[p + 1] || !own[p - width] || !own[p + width])
                 continue;
             noiseSum += (data[4 * p] - color[0]) ** 2 + (data[4 * p + 1] - color[1]) ** 2 + (data[4 * p + 2] - color[2]) ** 2;
             noiseN++;
@@ -1277,6 +1288,8 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const otherFill = stroke ? thickMembers(image, others) : null;
     const D = new Float32Array(n);
     const fillW = stroke ? new Float32Array(n) : null;
+    // with an outline, how far each pixel is from the outline toward the fill: the fill's antialiased coverage
+    const fillK = outline ? new Float32Array(n) : null;
     for (let p = 0; p < n; p++) {
         const r = data[4 * p];
         const g = data[4 * p + 1];
@@ -1322,6 +1335,11 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             continue;
         }
         if (fo) {
+            // ink beyond the outline's reach of any fill isn't this family's
+            if (!ownReach[p]) {
+                D[p] = NaN;
+                continue;
+            }
             // between the outline and the fill: inside a dot
             const e0 = r - outline[0];
             const e1 = g - outline[1];
@@ -1329,6 +1347,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             const k = (e0 * fo[0] + e1 * fo[1] + e2 * fo[2]) / foo;
             if (k >= -OUTLINE_SLACK && k <= 1 + OUTLINE_SLACK && Math.hypot(e0 - k * fo[0], e1 - k * fo[1], e2 - k * fo[2]) <= offAbs) {
                 D[p] = 1;
+                fillK[p] = Math.min(1, Math.max(0, k));
                 continue;
             }
         }
@@ -1369,7 +1388,11 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     // are not its dots
     const fill = stroke ? fillW : own;
     const isolated = isolatedDots(D, width, height, tol).filter(d => discShare(fill, width, height, d.cx, d.cy, ISOLATED_FILL_RADII * d.r) >= DOT_MIN_FILL);
-    const radius = isolated.length ? median(isolated.map(d => d.r)) : radiusFromDistance(D, width, height);
+    // outlined dots without an isolated whole one: their fills give the radius, and the center search runs on the
+    // fills, whose edges are each dot's own wherever it's on top (D's edge is the union's, joined to lines of the
+    // fill's color and to touching dots)
+    const byFill = !isolated.length && outline ? outlinedRadius(fillK, own, D, width, height, tol) : null;
+    const radius = isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height);
     let dots = 0;
     let strongDots = 0;
     let coverage = 0;
@@ -1380,7 +1403,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         // a center counts if most of its edge is seen and its disc is filled with the family's own color (text:
         // round glyphs are hollow; fanc2: a rim gray between dot and overlap read black text as beyond its color,
         // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
-        const rf = DOT_FILL_RADII * (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : radius);
+        const rf = DOT_FILL_RADII * (stroke ? opts.fillRadius ?? radius * DOT_FILL_RADII : byFill?.fillRadius ?? radius);
         const inside = stroke ? fillW : own;
         const filled = c => {
             let count = 0;
@@ -1396,7 +1419,8 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
             return count > 0 && on >= DOT_MIN_FILL * count;
         };
-        const centers = houghCenters(D, weight, width, height, radius).filter(c => c.arc >= DOT_MIN_ARC && filled(c));
+        const centers = (byFill ? houghCenters(fillK, weight, width, height, byFill.fillRadius) : houghCenters(D, weight, width, height, radius))
+            .filter(c => c.arc >= DOT_MIN_ARC && filled(c));
         dots = centers.length;
         strongDots = centers.filter(c => c.arc >= DOT_STRONG_ARC).length;
         // share of the family's pixels inside the found discs
@@ -1410,8 +1434,8 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
         }
         // a stroked family's coverage is its fill's: D also covers the stroke's color, which is text and axes too
-        // (hair3: the black ink diluted it to 0.26)
-        const ofFamily = stroke ? fillW : D;
+        // (hair3: the black ink diluted it to 0.26); so is one measured by its fills
+        const ofFamily = stroke ? fillW : byFill ? own : D;
         let fam = 0;
         let covered = 0;
         for (let p = 0; p < n; p++) {
@@ -1425,6 +1449,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const pixels = mask.reduce((t, v) => t + v, 0);
     return {
         kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
+        ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
         levels: [{ t: Math.hypot(...B.map((v, ch) => v - color[ch])), color, count: pixels }],
         beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
     };
@@ -1496,6 +1521,37 @@ function fillSaturatedOverlaps(image, D, B, color, others) {
     }
 }
 
+/**
+ * Radius of outlined dots without an isolated whole one: each dot's fill is bounded by its own outline, so the
+ * topmost dots' fills are whole discs even where the dots touch others or a line of their own color drawn behind
+ * them (phase1: most dots sit on their fitted curve, whose distance-transform ridge outvoted them, r 4–6 against
+ * 18). The fill radius is the median of the round fill components; the outline's width comes from the covered
+ * pixels in a ring just outside each, as the area they add to the disc. Null without a round fill. fillK is the fill's
+ * antialiased coverage (0 at the outline's color, 1 at the fill's).
+ *
+ * @returns {{radius: number, fillRadius: number}|null}  px
+ */
+function outlinedRadius(fillK, own, D, width, height, tol) {
+    const discs = isolatedDots(fillK, width, height, tol).filter(d => d.r >= DOT_MIN_RADIUS);
+    if (!discs.length)
+        return null;
+    const rf = median(discs.map(d => d.r));
+    const widths = discs.map(d => {
+        let added = 0;
+        const outer = d.r + OUTLINE_REACH;
+        for (let y = Math.max(0, Math.floor(d.cy - outer)); y < Math.min(height, Math.ceil(d.cy + outer)); y++) {
+            for (let x = Math.max(0, Math.floor(d.cx - outer)); x < Math.min(width, Math.ceil(d.cx + outer)); x++) {
+                const q = Math.hypot(x + 0.5 - d.cx, y + 0.5 - d.cy);
+                const p = y * width + x;
+                if (q > d.r && q <= outer && !own[p] && D[p] > 0)
+                    added += Math.min(1, D[p]);
+            }
+        }
+        return Math.sqrt(d.r * d.r + added / Math.PI) - d.r;
+    });
+    return { radius: rf + median(widths), fillRadius: rf };
+}
+
 // share of the pixels whose centers lie within r of (cx, cy) where v > 0.5
 function discShare(v, width, height, cx, cy, r) {
     let count = 0;
@@ -1530,9 +1586,7 @@ function hasSquare(comp, width, height, depth) {
     });
 }
 
-// An outline is a thin ring: an opening by a disc wider than it leaves little of its color. Areas around a fill are
-// thick (bench1 ellipse: the lavender ellipse under orange dots keeps 98%; bench2 group-smoother.jpg: red's one-dot
-// level around its two-dot lenses keeps 94%), and JMP's 1.7 px outlines keep 0.5–4.8%.
+// whether a color's pixels are thin as a whole: an opening by OUTLINE_OPENING keeps under OUTLINE_MAX_THICK of them
 function isThin(image, color) {
     const { width, height, data } = image;
     const mask = new Uint8Array(width * height);
@@ -1570,9 +1624,14 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const { width, height, data } = image;
     let out = [];
     // a cluster between a family found already and that family's background, its outline or a page color is an
-    // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family")
+    // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family"). Between a fill and
+    // its outline, only if it is mostly edge, as a rim is: other fills of an outlined scale sit there too (phase1:
+    // grays 136 and 82 between gray 187 and the black outline, 62% interior; a rim is 1–2 px wide, unless the fill's
+    // own tolerance takes in fill pixels: a synthetic rim at 149, 6, 220 was 39 units from its fill)
     const isOutline = c => out.some(f => f.outline && Math.hypot(...f.outline.map((v, ch) => v - c[ch])) <= CLUSTER_TOL);
-    const isBlend = c => out.some(f => [f.background, ...(f.outline ? [f.outline] : []), ...backgrounds].some(P => {
+    const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= CLUSTER_TOL;
+    const rimOf = (f, c, interiorShare) => interiorShare < BLEND_OUTLINE_MAX_INTERIOR || near(c, f.seed) || near(c, f.outline);
+    const isBlend = (c, interiorShare) => out.some(f => [f.background, ...(f.outline && rimOf(f, c, interiorShare) ? [f.outline] : []), ...backgrounds].some(P => {
         const w = f.seed.map((v, ch) => v - P[ch]);
         const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
         const v = c.map((x, ch) => x - P[ch]);
@@ -1582,7 +1641,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and so
     // count as a background color; the dot test tells it from a panel.
     for (const cl of colorClusters(image, backgrounds.slice(0, 1))) {
-        if (onTranslucent(cl.color) || isBlend(cl.color) || isOutline(cl.color))
+        if (onTranslucent(cl.color) || isOutline(cl.color))
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
         const c = cl.color;
@@ -1608,21 +1667,33 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
                     interior++;
             }
         }
+        if (isBlend(cl.color, count ? interior / count : 0))
+            continue;
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
         let fam = measureOpaque(image, cl.color, backgrounds, [], tol);
-        // a fill whose surroundings are another ink, not the page: outlined dots, tried as one family. Not a
-        // translucent family's level (economist: a red–blue lens inside red dots made a phantom "outlined" family)
-        const ring = fam.background;
-        if (!isDotFamily(fam) && !onTranslucent(ring) && !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL)
-            && isThin(image, ring)) {
+        // Outlined or stroked fills, in order: (1) a ring whose color is thin over the whole image is an outline that
+        // shows its own color (JMP's 1.7 px outlines); (2) else a fill inside a stroke too thin to show its color, off
+        // the line from the page to the fill (engagement1, cells1: it places colored fills better than the outline
+        // model, rmse 0.28 px against 0.95); (3) else an outline whose color is also other ink, counted only next to
+        // the fill (measureOpaque's OUTLINE_REACH), for a fill that is thick as an outline is not (phase1: black
+        // outlines around grays, which the stroke model can't read, white, gray and black being on one line, with
+        // text, axes and a black colorbar block in the outline's color; hair2's pink, one strong arc as stroked).
+        // Not around a translucent family's level (economist: a red–blue lens inside red dots made a phantom
+        // "outlined" family).
+        const plain = fam;
+        const ring = plain.background;
+        const ringable = !onTranslucent(ring) && !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL);
+        const outlinedFamily = () => {
             const outlined = measureOpaque(image, cl.color, backgrounds, [], tol, ring);
-            if (isDotFamily(outlined))
-                fam = { ...outlined, fillRadius: fam.radius };
-        }
-        // a fill inside a stroke too thin to show its own color
+            return isDotFamily(outlined) ? { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius } : null;
+        };
+        if (!isDotFamily(fam) && ringable && isThin(image, ring))
+            fam = outlinedFamily() ?? fam;
         if (!isDotFamily(fam))
-            fam = strokedFamily(image, cl.color, backgrounds, tol, fam) ?? fam;
+            fam = strokedFamily(image, cl.color, backgrounds, tol, plain) ?? fam;
+        if (!isDotFamily(fam) && ringable && !isThin(image, cl.color))
+            fam = outlinedFamily() ?? fam;
         fam.interior = interior / count;
         if (isDotFamily(fam))
             out.push(fam);
