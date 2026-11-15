@@ -1649,3 +1649,23 @@ same-gray curve meets dots); hair3 and cells1 unchanged; every other row identic
 axis lines end would have masked the colorbar, but lines stop short of data in cantons (86 dots), comment1 (35, its
 axis broken by dots) and delta1 (1).
 
+
+**Bench: tick pairing for data truth** (2026-11-15). Four bench-nature images with data CSVs couldn't be scored
+("ticks unmatched" in RESULTS.md): the header's tick values pair with detected ticks only when the counts agree.
+- More ticks detected than the header lists: its values pair with the labeled ticks when those are as many (cells1's y
+  has unlabeled ticks between 0, 100, 200, 300).
+- A perpendicular line starting at the axis, at its end, is that end's tick when it continues the ticks' spacing
+  within 3% (`CORNER_SPACING_TOL`); like other ticks on a line, it is kept only if labeled. cells1's "0" tick is
+  hidden by the bars' baseline, which runs right from the y axis's bottom end; without it only 3 of 4 labels paired.
+  This is in detectAxes, so the app gets the tick too.
+- Lane data whose x axis has no ticks to pair (category axes: cells1, hair1, protrusion3; tumour1 detects 4 x ticks
+  for 8 bars) takes its lane centers from the fitted dots: their x split at the widest gaps into the header's number of
+  lanes, each lane's median. Only x's lane matters to laneRow, so this costs no accuracy when lanes are farther apart
+  than their spread.
+- laneRow ordered lanes by their first appearance in the truth rows, while lane centers go left to right: hair1's
+  first row is lane 2, which would have swapped its lanes. Lanes are now sorted.
+
+Results: cells1 data truth scored, 73 for 72, P 0.959 R 0.972 (the hand truth gives 0.904, 0.917); hair1 16 for 29,
+P 0.875 R 0.483 (only the pink family: the white-filled dots aren't found); protrusion3 and tumour1 now pair their
+ticks and fail in detection instead (radius unknown; no family). Every other row identical (full bench, diffed
+without times).

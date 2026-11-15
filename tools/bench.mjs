@@ -22,7 +22,7 @@ import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { dotFamilies } from '../src/core/outline.js';
 import { detectAxes, plotBounds } from '../src/core/axes.js';
-import { readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
+import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 import { readTruthJson, isDotsExport } from './truth-json.mjs';
 import { pixelHash } from '../src/core/image.js';
 
@@ -230,7 +230,8 @@ export function groupRow(name, truth, results, ms) {
 export function laneRow(name, truth, laneCenters, results, ms) {
     const found = results.flatMap(res => res.fit.dots);
     const tol = MATCH_TOL_RADII * Math.min(...results.map(r => r.fit.radius));
-    const lanes = [...new Set(truth.map(t => t.lane))];
+    // left to right, as laneCenters are (truth rows can start in any lane: hair1's first row is lane 2)
+    const lanes = [...new Set(truth.map(t => t.lane))].sort((a, b) => a - b);
     const laneOf = d => lanes[laneCenters.reduce((b, c, k) => (Math.abs(d.x - c) < Math.abs(d.x - laneCenters[b]) ? k : b), 0)];
     let pairs = 0;
     let sq = 0;
@@ -379,6 +380,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const mark = results[0]?.jpegAuto ? ' (J)' : '';
             const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
             const ms = Date.now() - t0;
+            if (px.lanesFromDots) {
+                px.laneCenters = laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), new Set(px.dots.map(d => d.lane)).size);
+                if (!px.laneCenters) {
+                    fail(meta, 'fewer dots found than lanes');
+                    continue;
+                }
+            }
             record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
                 : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms), { ...meta, mode: modeOf(results, jpeg) });
         }

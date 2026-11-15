@@ -27,6 +27,7 @@ const TICK_MAX_LENGTH_FRACTION = 0.06; // of the image dimension along the tick
 const TICK_MAX_WIDTH_THICKNESSES = 3; // a tick is at most this many axis-line thicknesses wide (and ≥ 1 px)
 const TICK_LINE_CLEARANCE = 2; // px: a tick within this of a perpendicular line may be that line (an axis corner)
 const TICK_MINORITY_RATIO = 0.5; // ticks on the side with fewer than this × the other side's count are dropped
+const CORNER_SPACING_TOL = 0.03; // × spacing: a line at the axis's end this close to the ticks' progression is a tick
 // How far beyond a tick to look for its label, as a fraction of the image dimension across the axis. y labels are
 // horizontal text that grows with its digits: at 8% of the width dog-ages-actual-size's "100" lost its "1".
 const LABEL_SEARCH_FRACTION = { h: 0.08, v: 0.15 };
@@ -284,7 +285,33 @@ export function findTicks(image, ink, axis, lines) {
                 kept.push(t);
         }
     }
+    kept.sort((p, q) => p.pos - q.pos);
+    const corner = cornerTick(axis, kept, perpendicular, major);
+    if (corner)
+        kept.push(corner);
     return kept.sort((p, q) => p.pos - q.pos);
+}
+
+/**
+ * A perpendicular line that starts at the axis, at one end of it, hides the tick there (cells1: the bars' baseline
+ * runs from the y axis's bottom end, its "0" tick, to the right). It is that end's tick when it continues the ticks'
+ * regular spacing; marked `onLine`, so it is kept only if it gets a label.
+ */
+function cornerTick(axis, ticks, perpendicular, side) {
+    if (ticks.length < 2)
+        return null;
+    const spacing = (ticks[ticks.length - 1].pos - ticks[0].pos) / (ticks.length - 1);
+    const reach = axis.thickness / 2 + TICK_LINE_CLEARANCE;
+    for (const l of perpendicular) {
+        const touches = Math.abs(l.from - axis.pos) <= reach + l.thickness || Math.abs(l.to - axis.pos) <= reach + l.thickness;
+        const atEnd = Math.abs(l.pos - axis.from) <= reach + l.thickness || Math.abs(l.pos - axis.to) <= reach + l.thickness;
+        if (!touches || !atEnd || ticks.some(t => Math.abs(t.pos - l.pos) <= reach + l.thickness))
+            continue;
+        const gap = Math.min(Math.abs(l.pos - ticks[0].pos), Math.abs(l.pos - ticks[ticks.length - 1].pos));
+        if (Math.abs(gap - spacing) <= Math.max(1, CORNER_SPACING_TOL * spacing))
+            return { pos: l.pos, length: 0, side, label: null, source: 'tick', onLine: true };
+    }
+    return null;
 }
 
 /**

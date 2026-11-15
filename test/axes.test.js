@@ -181,3 +181,47 @@ test('regression: ticks drawn into the plot have their labels outside it, and do
     assert.equal(bounds.right, null);
     assert.equal(bounds.top, null);
 });
+
+// A white image with a y axis whose bottom tick is hidden by a baseline running right from the axis's end (bench-nature
+// cells1: bars standing on a line from the y axis's "0"), every tick labeled by a block left of it.
+function cornerImage(baselineAtEnd) {
+    const width = 200;
+    const height = 260;
+    const data = new Uint8ClampedArray(4 * width * height).fill(255);
+    const rect = (x0, y0, x1, y1) => {
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++)
+                data.fill(0, 4 * (y * width + x), 4 * (y * width + x) + 3);
+        }
+    };
+    const axisX = 60;
+    const ticks = [40, 90, 140, 190];
+    const end = baselineAtEnd ? 240 : 228;
+    rect(axisX, 30, axisX + 2, end + 1);
+    for (const t of ticks)
+        rect(axisX - 6, t, axisX, t + 2);
+    rect(axisX, 240, 190, 242); // the baseline, 2 px thick, from the axis to the right
+    for (const t of [...ticks, 240])
+        rect(30, t - 4, 44, t + 6);
+    return { width, height, data };
+}
+
+test('a baseline from the end of the y axis is its bottom tick when it continues the spacing', () => {
+    const ax = detectAxes(cornerImage(true));
+    assert.equal(ax.y.ticks.length, 5, JSON.stringify(ax.y.ticks.map(t => t.pos)));
+    near(ax.y.ticks[4].pos, 241, 0.5, 'corner tick');
+    assert.ok(ax.y.ticks.every(t => t.label));
+    assert.ok(ax.y.regular);
+    // an axis ending short of the baseline doesn't get it
+    assert.equal(detectAxes(cornerImage(false)).y.ticks.length, 4);
+});
+
+const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
+const CELLS1 = 'cells1-10.1038-s41586-026-10946-1.png';
+
+test('regression: cells1, the "0" tick hidden by the bars\' baseline is found and labeled', { skip: !existsSync(NATURE + CELLS1) && 'bench-nature cells1 absent' }, () => {
+    const ax = detectAxes(readPng(NATURE + CELLS1));
+    const labeled = ax.y.ticks.filter(t => t.label);
+    assert.equal(labeled.length, 4, JSON.stringify(ax.y.ticks.map(t => [t.pos, !!t.label])));
+    near(labeled[3].pos, 1031.8, 0.5, '0 tick');
+});

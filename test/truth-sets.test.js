@@ -9,8 +9,8 @@ import { join } from 'node:path';
 import { detectAxes } from '../src/core/axes.js';
 import { matchDots } from '../src/core/metrics.js';
 import { readImage } from '../tools/png.mjs';
-import { readTruthCsv, truthPixels, plotAreaMapping } from '../tools/truth-csv.mjs';
-import { extractAll } from '../tools/bench.mjs';
+import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks, plotAreaMapping } from '../tools/truth-csv.mjs';
+import { extractAll, laneRow } from '../tools/bench.mjs';
 import { estimateStyle } from '../src/core/style.js';
 
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
@@ -102,4 +102,41 @@ test('truth CSV: category-name ticks become lanes 1, 2, … in the listed order'
     assert.equal(truth.xScale.jitter, true);
     writeFileSync(path, '# x ticks: early, late\n# y ticks: 0, 100\ngroup,speed\nmiddle,3\n');
     assert.throws(() => readTruthCsv(path), /"middle" isn't one of the tick names/);
+});
+
+test('truth CSV by ticks: the header pairs with the labeled ticks when minor ticks are detected too', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'truth-')), 'minor.csv');
+    writeFileSync(path, '# x ticks: 0, 10\n# y ticks: 0, 100, 200\n# x scale: linear\n# y scale: linear\nx,y\n5,100\n');
+    const truth = readTruthCsv(path);
+    const tick = (pos, label) => ({ pos, label: label ? [0, 0, 1, 1] : null });
+    const axes = {
+        x: { ticks: [tick(100, true), tick(200, true)] },
+        y: { ticks: [tick(50, true), tick(100, false), tick(150, true), tick(200, false), tick(250, true)] },
+    };
+    const px = truthPixelsByTicks(truth, axes);
+    assert.deepEqual([px.dots[0].x, px.dots[0].y], [150, 150]);
+    // neither all ticks nor the labeled ones match the header's count
+    axes.y.ticks[0].label = null;
+    assert.match(truthPixelsByTicks(truth, axes).error, /ticks detected/);
+});
+
+test('truth CSV by ticks: lane data without x ticks takes its lanes from the fitted dots', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'truth-')), 'lanes.csv');
+    // the first row is lane 2 (hair1): lanes still go left to right
+    writeFileSync(path, '# x ticks: 1, 2\n# y ticks: 0, 10\n# x scale: linear, with jitter\n# y scale: linear\nx,y\n2,5\n1,5\n1,8\n');
+    const truth = readTruthCsv(path);
+    const px = truthPixelsByTicks(truth, { x: null, y: { ticks: [{ pos: 300, label: [] }, { pos: 100, label: [] }] } });
+    assert.equal(px.lanesFromDots, true);
+    assert.equal(px.laneCenters, null);
+    assert.ok(px.dots.every(d => Number.isNaN(d.x)));
+    // two jittered strips, one stray dot each side of the gap between them
+    const xs = [48, 50, 53, 55, 51, 148, 150, 152, 155];
+    assert.deepEqual(laneCentersFromDots(xs, 2), [51, 151]);
+    assert.equal(laneCentersFromDots([10], 2), null);
+    // lane 1 (left, x ≈ 51) has dots at y 5 and 8 (px 200, 140); lane 2 at y 5
+    const dot = (x, y) => ({ x, y, flags: [] });
+    const results = [{ fit: { radius: 4, dots: [dot(50, 200), dot(52, 140), dot(150, 200)] } }];
+    const r = laneRow('lanes', px.dots, laneCentersFromDots(results[0].fit.dots.map(d => d.x), 2), results, 0);
+    assert.equal(r.precision, 1);
+    assert.equal(r.recall, 1);
 });

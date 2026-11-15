@@ -140,26 +140,71 @@ function interpolate(ticks, f, v) {
     return pa + (f(v) - f(a)) / (f(b) - f(a)) * (pb - pa);
 }
 
+// The detected ticks (px, sorted) that the header's n values name: all of them when the counts agree, else the
+// labeled ones when they are n (cells1: the header lists the labeled 0, 100, 200, 300; the unlabeled minor ticks
+// between them are detected too). Null when neither count fits.
+function headerTicks(ticks, n) {
+    if (ticks.length === n)
+        return ticks.map(t => t.pos).sort((a, b) => a - b);
+    const labeled = ticks.filter(t => t.label);
+    return labeled.length === n ? labeled.map(t => t.pos).sort((a, b) => a - b) : null;
+}
+
 /**
  * Truth dots in pixels through the image's detected ticks (axes.detectAxes), paired in order with the header's tick
- * values: x ticks left to right, y ticks bottom to top.
+ * values: x ticks left to right, y ticks bottom to top. When more ticks are detected than the header lists, its values
+ * pair with the labeled ticks.
+ *
+ * Lane data needs no x ticks: x only says which lane a dot is in. Without x ticks to match (category axes often have
+ * none: cells1, hair1, protrusion3), each dot's x is NaN, `laneCenters` is null and `lanesFromDots` is set: the
+ * scorer finds the lanes in the fitted dots (laneCentersFromDots).
  *
  * @param {ReturnType<typeof readTruthCsv>} truth
- * @param {{x: {ticks: {pos: number}[]}|null, y: {ticks: {pos: number}[]}|null}} axes  tick positions in px
- * @returns {{dots: {x: number, y: number, cell: number[], lane?: number}[], jitter: boolean, laneCenters: number[]|null}
- *   |{error: string}}  px; cell: the data values; for lane data (truth.lanes), each dot's lane and the lanes' x
+ * @param {{x: {ticks: {pos: number, label?: any}[]}|null, y: {ticks: {pos: number, label?: any}[]}|null}} axes
+ *   tick positions in px
+ * @returns {{dots: {x: number, y: number, cell: number[], lane?: number}[], jitter: boolean, laneCenters: number[]|null,
+ *   lanesFromDots: boolean}|{error: string}}  px; cell: the data values; for lane data (truth.lanes), each dot's lane
+ *   and the lanes' x
  */
 export function truthPixelsByTicks(truth, axes) {
     const fx = transformOf(truth.xScale?.type);
     const fy = transformOf(truth.yScale?.type);
     if (!fx || !fy)
         return { error: `scale types ${truth.xScale?.type} and ${truth.yScale?.type} aren't supported` };
-    const xs = (axes.x?.ticks ?? []).map(t => t.pos);
-    const ys = (axes.y?.ticks ?? []).map(t => t.pos);
-    if (!truth.xTicks || !truth.yTicks || xs.length !== truth.xTicks.length || ys.length !== truth.yTicks.length)
-        return { error: `${xs.length} x and ${ys.length} y ticks detected for ${truth.xTicks?.length} and ${truth.yTicks?.length} in the header` };
-    const xt = [...truth.xTicks].sort((a, b) => a - b).map((v, i) => [v, [...xs].sort((a, b) => a - b)[i]]);
-    const yt = [...truth.yTicks].sort((a, b) => a - b).map((v, i) => [v, [...ys].sort((a, b) => b - a)[i]]);
-    const dots = truth.rows.map(r => ({ x: interpolate(xt, fx, r.x), y: interpolate(yt, fy, r.y), cell: [r.x, r.y], ...(truth.lanes ? { lane: r.x } : {}) }));
-    return { dots, jitter: !!(truth.xScale.jitter || truth.yScale.jitter), laneCenters: truth.lanes ? xt.map(([, px]) => px) : null };
+    const xTicks = axes.x?.ticks ?? [];
+    const yTicks = axes.y?.ticks ?? [];
+    const xs = truth.xTicks ? headerTicks(xTicks, truth.xTicks.length) : null;
+    const ys = truth.yTicks ? headerTicks(yTicks, truth.yTicks.length) : null;
+    const lanesFromDots = truth.lanes && !xs;
+    if (!ys || (!xs && !lanesFromDots))
+        return { error: `${xTicks.length} x and ${yTicks.length} y ticks detected for ${truth.xTicks?.length} and ${truth.yTicks?.length} in the header` };
+    const xt = xs ? [...truth.xTicks].sort((a, b) => a - b).map((v, i) => [v, xs[i]]) : null;
+    const yt = [...truth.yTicks].sort((a, b) => a - b).map((v, i) => [v, ys[ys.length - 1 - i]]);
+    const dots = truth.rows.map(r => ({ x: xt ? interpolate(xt, fx, r.x) : NaN, y: interpolate(yt, fy, r.y), cell: [r.x, r.y], ...(truth.lanes ? { lane: r.x } : {}) }));
+    return {
+        dots, jitter: !!(truth.xScale.jitter || truth.yScale.jitter),
+        laneCenters: truth.lanes && xt ? xt.map(([, px]) => px) : null, lanesFromDots,
+    };
+}
+
+/**
+ * Lane centers from the x of fitted dots, for lane data whose x axis has no usable ticks: the dots split into
+ * `count` groups at the widest gaps between neighbors, and each group's center is its median x. Assumes the lanes
+ * are farther apart than the spread within one, as beeswarms and jittered strips are drawn.
+ *
+ * @param {number[]} xs  px
+ * @param {number} count
+ * @returns {number[]|null}  px, left to right; null with fewer dots than lanes
+ */
+export function laneCentersFromDots(xs, count) {
+    if (xs.length < count)
+        return null;
+    const sorted = [...xs].sort((a, b) => a - b);
+    const cuts = sorted.slice(1).map((x, i) => ({ i: i + 1, gap: x - sorted[i] }))
+        .sort((a, b) => b.gap - a.gap).slice(0, count - 1).map(c => c.i).sort((a, b) => a - b);
+    const bounds = [0, ...cuts, sorted.length];
+    return bounds.slice(1).map((end, k) => {
+        const group = sorted.slice(bounds[k], end);
+        return (group[Math.floor((group.length - 1) / 2)] + group[Math.ceil((group.length - 1) / 2)]) / 2;
+    });
 }
