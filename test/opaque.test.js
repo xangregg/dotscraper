@@ -531,3 +531,45 @@ test('regression: tumour1, white dots in black outlines over gray and red bars a
     const r = laneRow(TUMOUR1, px.dots, centers, results, 0);
     assert.ok(r.precision >= 0.9 && r.recall >= 0.85, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
+
+const PLOS = new URL('../bench-plos/', import.meta.url).pathname;
+
+// a PLOS figure's results against its hand truth (truth JSON, px); skipped when the set is absent
+function plos(name) {
+    const truth = readTruthJson(`${PLOS}truth/${name}.json`);
+    const results = extractAll(readImage(PLOS + truth.image));
+    const found = results.flatMap(r => r.fit.dots);
+    return { results, found, m: matchDots(truth.dots, found, 0.5 * Math.min(...results.map(r => r.fit.radius))) };
+}
+const plosSkip = name => !existsSync(`${PLOS}truth/${name}.json`) && `bench-plos ${name} absent`;
+
+const MICROPLASTICS1 = 'microplastics1-10.1371-journal.pone.0362569';
+const MYELOID1 = 'myeloid1-10.1371-journal.pone.0362747';
+const SCORE1 = 'score1-10.1371_journal.pone.0361996';
+
+test('regression: microplastics1, a thin gray border bar is no translucent level of the black dots', { skip: plosSkip(MICROPLASTICS1) }, () => {
+    // before: "The dot radius is unknown": the 3 px bar at 48 and the black dots read as levels 1 and 3 of one
+    // translucent family (α 0.81, no isolated dot), so black was never tried as an opaque family
+    const { results, found, m } = plos(MICROPLASTICS1);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].est.style.alpha, 1);
+    assert.equal(found.length, 24);
+    assert.equal(m.recall, 1);
+});
+
+test('regression: myeloid1, touching teal dots crossed by lines are a family at the orange family\'s radius', { skip: plosSkip(MYELOID1) }, () => {
+    // before: 9 of 18, teal no family: its arcs reach 0.72 at most, under the 0.75 of a strong center
+    const { results, found, m } = plos(MYELOID1);
+    assert.equal(results.length, 2);
+    assert.deepEqual(results.map(r => r.fit.dots.length), [9, 9]);
+    assert.equal(found.length, 18);
+    assert.equal(m.recall, 1);
+});
+
+test('regression: score1, teal dots near a gray line\'s color are not the gray\'s', { skip: plosSkip(SCORE1) }, () => {
+    // before: 316 for 168, a gray family (131, dashed line and label leaders) taking the teal dots, 39.9 units away
+    const { results, found, m } = plos(SCORE1);
+    assert.equal(results.length, 1);
+    assert.equal(m.extra.length, 0);
+    assert.ok(m.recall >= 0.98, `recall ${m.recall}, found ${found.length}`);
+});

@@ -1727,3 +1727,35 @@ validates its fills) and measured from isolated rings (radius, width, opacity; o
 must stay transparent, not the page's color as in pageFilledFamily, since step1's rings show the band and the blue
 dots through them. In reach, but step1 is a hard first case: rings about 6 px in radius and 1.5 px wide, blurred,
 JPEG-noisy, over a translucent band, a curve and another family.
+
+**bench-plos: microplastics1, myeloid1, score1** (2026-11-16). Three scan failures, three changes in style.js:
+- microplastics1 (radius unknown): a 3 px gray border bar down the right edge (48, 820 flat pixels) and the black
+  dots fitted a translucent black family as levels 1 and 3 (α 0.81, level 2 inferred), which had no isolated dot,
+  and black was then never tried as an opaque family (on the translucent line). A translucent candidate whose
+  first level's color is thin over the whole image (isThin, as for outlines) is no family: level 1 fills the insides
+  of single dots. 24 of 24.
+- myeloid1 (teal no family): its 9 dots touch in pairs and a stack and gray pair lines (unknown pixels) reach each,
+  so the best arcs were 0.72–0.76 at 13–13.84 px and no center was strong (0.75); the dot test needs 3. A plain
+  fill rejected by the dot test now counts when its radius is within 10% of a family found (SIBLING_RADIUS_TOL;
+  figures draw every group with one marker size) and it has DOT_MIN_STRONG filled centers of half an arc and
+  coverage DOT_MIN_COVERAGE (teal: 5, 0.64). 18 of 18. This also finds nicest language's cyan (59, 186, 209, 15
+  dots at 8.4 px): 149 → 164 found for 162, recall 0.907 → 1.000.
+- score1 (a gray family of 150 false dots): the gray of the dashed line and the label leaders, 130.9, 131.1, 131.1,
+  lies 39.9 units from the teal dots' 105, 151, 154, inside CLUSTER_TOL, so its color mask took every teal dot.
+  measureOpaque's own pixels now exclude those nearer one of `others`, and opaqueFamilies passes the translucent
+  families' measured level colors among the others. 166 of 168, no extra. Nearest-color membership also moved
+  engagement1: no family takes another color's dots any more, 54 → 47 found for 49, P 0.889 → 1.000, R 0.980 →
+  0.959 (mid-blue 19 → 15 dots, navy 13 → 10).
+- Two regressions on the way, both from a family seen through a translucent band: bench3 ANOVA's pink under the
+  lavender band (197, 106, 136) passed the sibling rule, and bench1 group-smoother-ci's red levels under the CI band
+  (197, 106, 135) passed the ordinary dot test once the levels' pixels stopped counting as its own; either way the
+  band was no longer divided out (ANOVA 204 → 203 in two families; group-smoother-ci 100 → 108 found, P 0.907).
+  An opaque cluster c' is now no family when c' − P = s·(c − page), s in (0.05, 0.95), within CLUSTER_ON_LINE_TOL,
+  for c a found family's color or a translucent level and P another cluster's color 20 units or more off the line
+  from the page to c (LAYER_MIN_OFF: on one line, as phase1's grays, every color is any other seen through a
+  third; the bands are 48 off, their mauves within 0.5–0.9 units of the relation).
+
+Results (full bench, diffed without times against the run before): the three images as above, nicest language and
+engagement1 as above, degradation1 within noise (data P 0.705 → 0.721, R 0.339 → 0.346); every other row identical.
+Regression tests for microplastics1, myeloid1 and score1 (skipped without bench-plos). In the app (check:page,
+dropped image, Find dots): microplastics1 24, myeloid1 18 (two families, r 13.8), score1 166; no console errors.

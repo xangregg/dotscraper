@@ -92,6 +92,15 @@ const DOT_MIN_COVERAGE_ANY = 0.1;
 // no dot is isolated (beeswarm-boxplot's gray: 30 strong, coverage 0.27; round glyphs are hollow and fail the fill)
 const DOT_MANY_STRONG = 10;
 const DOT_MIN_ISOLATED = 3;
+// A color whose filled centers lie at the radius of a family already found needs no strong arc: figures draw every
+// group with one marker size, and a small group can be all touching dots crossed by lines (myeloid1's teal: 9 dots
+// in pairs and a stack, gray pair lines reaching each, arcs at most 0.72; 5 filled centers at its radius, coverage
+// 0.64, radius 13.84 as the orange family's). It still needs DOT_MIN_STRONG centers of DOT_MIN_ARC and coverage.
+const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
+// A layer's color lies this far off the line from the page to the family's color, or "seen through it" says nothing:
+// on one line (phase1's grays, white to black) every color is any other seen through a third. The bands measured
+// 48 units off (bench3 ANOVA 206, 213, 231 and bench1 group-smoother-ci 205, 213, 232 against pink and red).
+const LAYER_MIN_OFF = 20; // 0–255 units
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
 const DOT_MIN_INTERIOR = 0.1; // share of a cluster's pixels with all 8 neighbors in the cluster
@@ -1361,9 +1370,15 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     others = others.filter(O => !isPage(O));
     const ringFills = opts.rings?.filter(r => !isPage(r.fill)) ?? null;
     const own = paged ? paged.mask : new Uint8Array(n);
+    // a pixel nearer another family's color is that family's, though within this color's tolerance too (score1: the
+    // teal dots, 39.9 units from the gray of a dashed line and label leaders, made the gray a family of 150 dots)
+    const nearer = p => {
+        const dOwn = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]);
+        return others.some(O => Math.hypot(data[4 * p] - O[0], data[4 * p + 1] - O[1], data[4 * p + 2] - O[2]) < dOwn);
+    };
     if (!paged) {
         for (let p = 0; p < n; p++)
-            own[p] = member(p, color) ? 1 : 0;
+            own[p] = member(p, color) && !nearer(p) ? 1 : 0;
     }
     // the reach is from the fill's thick parts: an antialiased edge between the outline's color and a lighter one
     // passes through the fill's color (phase1: every black edge, text's and other grays' outlines, had 82-gray
@@ -1990,6 +2005,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     });
     const { width, height, data } = image;
     let out = [];
+    const rejected = [];
     // a cluster between a family found already and that family's background, its outline or a page color is an
     // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family"). Between a fill and
     // its outline, only if it is mostly edge, as a rim is: other fills of an outlined scale sit there too (phase1:
@@ -2005,9 +2021,33 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
         return m > 0.05 && m < 0.95 && Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) <= CLUSTER_ON_LINE_TOL;
     }));
+    // translucent families' level colors are theirs (see measureOpaque's `others`)
+    const levelColors = translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color));
     // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and so
     // count as a background color; the dot test tells it from a panel.
-    for (const cl of colorClusters(image, backgrounds.slice(0, 1))) {
+    const clusters = colorClusters(image, backgrounds.slice(0, 1));
+    // A family's dots seen through a translucent layer of another color P (a band drawn over them) are no family of
+    // their own: c' − P = s·(c − page), with c a found family's color or a translucent family's level. Their dots
+    // share the family's radius by construction, and as a candidate they keep the band from being divided out
+    // (background.js). bench3 ANOVA: pink under a lavender band, 197, 106, 136; bench1 group-smoother-ci: the red
+    // levels under the CI band, 197, 106, 135, a family of 10 once the levels' pixels stopped counting as its own.
+    const page = backgrounds[0];
+    // (P is neither color, and off the family's line from the page: see LAYER_MIN_OFF)
+    const offLine = (v, w, ww) => {
+        const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
+        return { m, off: Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) };
+    };
+    const throughLayer = c => [...levelColors, ...out.map(g => g.seed)].some(F => clusters.some(({ color: P }) => {
+        if (near(P, F) || near(P, c))
+            return false;
+        const w = F.map((v, ch) => v - page[ch]);
+        const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+        if (offLine(P.map((x, ch) => x - page[ch]), w, ww).off < LAYER_MIN_OFF)
+            return false;
+        const { m, off } = offLine(c.map((x, ch) => x - P[ch]), w, ww);
+        return m > 0.05 && m < 0.95 && off <= CLUSTER_ON_LINE_TOL;
+    }));
+    for (const cl of clusters) {
         if (onTranslucent(cl.color) || isOutline(cl.color))
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
@@ -2034,11 +2074,11 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
                     interior++;
             }
         }
-        if (isBlend(cl.color, count ? interior / count : 0))
+        if (isBlend(cl.color, count ? interior / count : 0) || throughLayer(cl.color))
             continue;
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
-        let fam = measureOpaque(image, cl.color, backgrounds, [], tol);
+        let fam = measureOpaque(image, cl.color, backgrounds, levelColors, tol);
         // Outlined or stroked fills, in order: (1) a ring whose color is thin over the whole image is an outline that
         // shows its own color (JMP's 1.7 px outlines); (2) else a fill inside a stroke too thin to show its color, off
         // the line from the page to the fill (engagement1, cells1: it places colored fills better than the outline
@@ -2069,6 +2109,15 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         fam.interior = interior / count;
         if (isDotFamily(fam))
             out.push(fam);
+        else
+            rejected.push(plain);
+    }
+    // plain fills at a found family's radius (after the loop: clusters are taken largest first, so the sibling with
+    // strong arcs may come later); each needs its own centers, filled and seen over half their edge
+    const sibling = f => f.radius && out.some(g => !g.pageFill && Math.abs(f.radius - g.radius) <= SIBLING_RADIUS_TOL * g.radius) && !throughLayer(f.seed);
+    for (const f of rejected) {
+        if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE)
+            out.push(f);
     }
     const paged = pageFilledFamily(image, backgrounds, tol);
     if (paged)
@@ -2086,7 +2135,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const stroked = out.some(f => f.stroke);
     const final = out.map(f => {
         const rings = stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null;
-        const g = measureOpaque(image, f.seed, backgrounds, colors.filter(c => c !== f.seed), tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
+        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
@@ -2214,7 +2263,11 @@ export function estimateStyle(image, opts = {}) {
  * All dot families: translucent ones (levels along a color direction) first, then opaque ones (color clusters).
  */
 export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANCES) {
-    const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent);
+    // A translucent family's first level fills the insides of single dots, so it is thick. A first level that is
+    // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
+    // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
+    // dots as an opaque family).
+    const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent && !isThin(image, c.levels[0].color));
     for (const c of translucent)
         c.kind = 'translucent';
     const opaque = opaqueFamilies(image, backgrounds, translucent, tol);
