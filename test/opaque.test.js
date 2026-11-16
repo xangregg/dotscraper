@@ -10,9 +10,10 @@ import { matchDots } from '../src/core/metrics.js';
 import { readPng, readImage } from '../tools/png.mjs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { estimateFamilies } from '../src/core/families.js';
-import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
+import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 import { readTruthJson, truthFromExport, isDotsExport } from '../tools/truth-json.mjs';
-import { extractAll, groupRow } from '../tools/bench.mjs';
+import { extractAll, groupRow, laneRow } from '../tools/bench.mjs';
+import { detectAxes } from '../src/core/axes.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -148,6 +149,58 @@ test('outlined opaque dots: one family, fill and outline, measured at the outlin
     const m = matchDots(dots, fit.dots, 2);
     assert.equal(fit.dots.length, dots.length);
     assert.equal(m.recall, 1);
+});
+
+// White dots in black outlines on a white page (bench-nature hair1, tumour1), drawn in order so later dots hide
+// earlier ones, beside a bar outlined in black (its inside is enclosed page too, but larger than a dot) and small
+// rings like letters' counters.
+function pageFilledImage(dots) {
+    let im = solidImage(260, 160, [255, 255, 255]);
+    const black = [20, 20, 20];
+    const white = [255, 255, 255];
+    const disc = (x, y, color, radius) => {
+        const model = createDotModel(im, { color, alpha: 1, radius });
+        model.add(x, y);
+        im = model.image;
+    };
+    // the bar: a black rectangle with a white inside
+    for (let y = 60; y < 150; y++) {
+        for (let x = 200; x < 250; x++) {
+            const edge = y < 62 || x < 202 || x >= 248;
+            im.data.set(edge ? black : white, 3 * (y * 260 + x));
+        }
+    }
+    for (const [x, y] of [[20, 140], [32, 140], [44, 140], [56, 140]]) {
+        disc(x, y, black, 4.6);
+        disc(x, y, white, 3.4);
+    }
+    for (const d of dots) {
+        disc(d.x, d.y, black, 9.5);
+        disc(d.x, d.y, white, 8);
+    }
+    const rgba = toRgba(im);
+    return { ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) };
+}
+
+test('dots filled with the page color inside outlines: one family by their enclosed fills, fitted whole and hidden', () => {
+    const dots = [];
+    for (let i = 0; i < 6; i++)
+        dots.push({ x: 20 + i * 30, y: 25 });
+    dots.push({ x: 30, y: 75 }, { x: 44, y: 78 }, { x: 58, y: 75 }); // overlapping: the later dots on top
+    dots.push({ x: 120, y: 80 }, { x: 225, y: 100 }, { x: 225, y: 140 }); // two in the bar, one touching its edge
+    const image = pageFilledImage(dots);
+    const est = estimateStyle(image);
+    const k = est.candidates.findIndex(c => c.pageFill);
+    assert.ok(k >= 0, `a page-filled family among ${est.candidates.map(c => c.seed)}`);
+    const fam = est.candidates[k];
+    assert.deepEqual(fam.seed.map(Math.round), [255, 255, 255]);
+    // (read in a band with the outline's antialiased rims, so a little light)
+    assert.ok(Math.hypot(...fam.outline.map((v, ch) => v - 20)) <= 25, `outline ${fam.outline}`);
+    near(fam.radius, 9.5, 0.4, 'radius');
+    const { fit } = fitFamily(image, k, est.candidates);
+    const m = matchDots(dots, fit.dots, 1.5);
+    assert.equal(m.recall, 1, `missed ${JSON.stringify(m.missed.map(i => dots[i]))}`);
+    assert.equal(fit.dots.length, dots.length, `extra ${JSON.stringify(m.extra.map(j => fit.dots[j]))}`);
 });
 
 const benchDir = set => new URL(`../${set}/`, import.meta.url).pathname;
@@ -442,4 +495,33 @@ test('truth JSON: a dots export converts to truth, families and fills from its l
     const t = truthFromExport(csv, 'a.png', 'abc');
     assert.deepEqual(t.families, [{ family: 0, color: [50, 55, 99] }, { family: 1, color: [186, 184, 247] }]);
     assert.deepEqual(t.dots, [{ x: 197.403, y: 106.808, family: 0 }, { x: 253.5, y: 234, family: 1, fill: 1, fillSure: false }]);
+});
+
+const HAIR1 = 'hair1-10.1038-s41586-026-11098-y';
+const TUMOUR1 = 'tumour1-10.1038-s41586-026-11051-z';
+
+test('regression: hair1, white dots in black outlines on a white bar are a family, without letters or gaps between pink dots', { skip: !existsSync(`${NATURE}${HAIR1}.png`) && 'bench-nature hair1 absent' }, () => {
+    // before: no family (the page's color is no cluster); then 26 dots, 15 of them in letters' counters (P, B, D,
+    // the title's) and the gaps among the pink dots
+    const results = extractAll(readImage(`${NATURE}${HAIR1}.png`));
+    const white = results.filter(r => r.est.familyMeasure.pageFill);
+    assert.equal(white.length, 1);
+    const dots = white[0].fit.dots;
+    assert.equal(dots.length, 11, JSON.stringify(dots.map(d => [Math.round(d.x), Math.round(d.y)])));
+    // all in the PBS lane, between the title and the axis labels
+    assert.ok(dots.every(d => d.x > 470 && d.x < 570 && d.y > 400 && d.y < 1000), JSON.stringify(dots.map(d => [Math.round(d.x), Math.round(d.y)])));
+    // the pink family keeps its dots
+    assert.equal(results.find(r => !r.est.familyMeasure.pageFill).fit.dots.length, 16);
+});
+
+test('regression: tumour1, white dots in black outlines over gray and red bars are one family', { skip: !existsSync(`${NATURE}${TUMOUR1}.png`) && 'bench-nature tumour1 absent' }, () => {
+    // before: no family; then a light gray cluster near the page's color made a second, duplicate family
+    const image = readImage(`${NATURE}${TUMOUR1}.png`);
+    const results = extractAll(image);
+    assert.equal(results.length, 1);
+    assert.ok(results[0].est.familyMeasure.pageFill);
+    const px = truthPixelsByTicks(readTruthCsv(`${NATURE}${TUMOUR1}.csv`), detectAxes(image));
+    const centers = laneCentersFromDots(results[0].fit.dots.map(d => d.x), 8);
+    const r = laneRow(TUMOUR1, px.dots, centers, results, 0);
+    assert.ok(r.precision >= 0.9 && r.recall >= 0.85, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });

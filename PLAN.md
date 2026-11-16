@@ -1669,3 +1669,26 @@ Results: cells1 data truth scored, 73 for 72, P 0.959 R 0.972 (the hand truth gi
 P 0.875 R 0.483 (only the pink family: the white-filled dots aren't found); protrusion3 and tumour1 now pair their
 ticks and fail in detection instead (radius unknown; no family). Every other row identical (full bench, diffed
 without times).
+
+**Fills in the page's color** (2026-11-16). hair1's white PBS dots and every tumour1 dot are white in black
+outlines on a white page. The color clusters leave out the page's color, so no fill showed (tumour1: no family).
+- Each such dot's fill is a page region its outline encloses (not touching the image border). Round enclosed regions
+  of one size (within 10%, at least 3) are whole fills; hair1 has 11 at about 930 px² (35 × 35, fill share 0.76–0.78,
+  a disc's being 0.785), tumour1 about 30 at 207 px². The page color is tested within INK_TOL (15): bench2
+  stroked-dots' translucent fills, about 230 on white, passed the cluster tolerance (40) and replaced its family.
+- Enclosed regions up to 1.2 × a whole fill's area are fills, whole or partly hidden, when they lie in the disc of a
+  Hough center at the fill radius: a hidden dot's crescent shows an arc of its own edge. Without that test hair1 got
+  26 dots, 15 of them in letters' counters (P, B, D, the title's) and in the gaps among the pink dots, which are
+  bounded by arcs curving the other way.
+- The outline must be thin beside the fill (at most 0.4 × the fill radius): comment1's geometric font made a family of
+  11 counters (o, 0, d, a) whose stroke is 0.56 × the counter's radius; hair1's outlines are 0.19, tumour1's 0.27.
+- measureOpaque takes a page-colored fill with an outline as this kind (so the app's re-measure works too): coverage
+  1 on the fills and the outline next to them, the outline's mix with the page beyond, faint pixels beyond the reach
+  page (they read unknown at first, which broke isolated dots: tumour1's radius fell to 10.3 and the fit doubled 9
+  dots). The fit can't see a white fill on white, so it fits the outline's color (style.fitColor); the display
+  keeps the white fill. Another family's page-colored fill is no one's ring owner or "other color".
+
+Results: tumour1 no family → 41 for 44, P 0.976 R 0.909; hair1 gains its white family, 11 dots (one of the four zeros
+is hidden), the pink unchanged at 16. hair1's CSV has its lane codes swapped against its note (lane 1's 18 values
+are the pink DT dots), which the old lane-order bug had hidden, so its row scores 0.222 until the CSV is fixed. Every
+other row identical (full bench, without times).

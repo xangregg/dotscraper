@@ -337,7 +337,8 @@ export function createFit(input) {
     let style = input.style;
     const lambda = DOT_COST_PIXELS * huber(DOT_COST_STEP);
     // the fit renders along the color line only (one value per pixel); modelImage() renders RGB for display
-    const lineStyle = st => ({ ...st, project: line });
+    // (a fill in the page's color is fitted as its outline: style.fitColor)
+    const lineStyle = st => ({ ...st, color: st.fitColor ?? st.color, project: line });
     // outlined dots (style.layered): an ordered model over the per-pixel base input.base, in t units
     const makeModel = st => (st.layered
         ? createOutlineModel(input.base, width, height, { radius: st.radius, ring: st.ring, fillAlpha: st.layered.fillAlpha, ringT: st.layered.ringT, blur: st.blur })
@@ -345,7 +346,8 @@ export function createFit(input) {
     let model = makeModel(style);
     const opaque = style.alpha >= 1;
     const minVisible = opaque ? MIN_VISIBLE_OPAQUE : (style.layered ? MIN_VISIBLE_OUTLINE : 0);
-    const fillT = FILL_LEVEL * Math.hypot(B[0] - style.color[0], B[1] - style.color[1], B[2] - style.color[2]);
+    const fitColor = style.fitColor ?? style.color;
+    const fillT = FILL_LEVEL * Math.hypot(B[0] - fitColor[0], B[1] - fitColor[1], B[2] - fitColor[2]);
     const pos = new Map(); // id → { x, y }
     const pinned = new Set(); // ids placed by hand: refinement leaves them where they are
 

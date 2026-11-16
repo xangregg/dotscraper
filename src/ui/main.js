@@ -438,7 +438,7 @@ function displayImage() {
         const bg = solidImage(image.width, image.height, line.B);
         if (state.overlay === 'model')
             return rgbOverlay(renderModel(bg, fam.dots, style));
-        const modelT = style.layered && estimate.base ? layeredT(estimate.base, fam.dots, style, image) : renderDots(bg, fam.dots, { ...style, project: line }).data;
+        const modelT = style.layered && estimate.base ? layeredT(estimate.base, fam.dots, style, image) : renderDots(bg, fam.dots, { ...style, color: style.fitColor ?? style.color, project: line }).data;
         let imgT = estimate.fitT;
         if (!imgT) {
             imgT = new Float32Array(image.width * image.height);

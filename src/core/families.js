@@ -323,10 +323,12 @@ export function estimateFamilies(image, opts = {}) {
     const kept = withoutSpeckLevels(separated);
     // outlined opaque families are fitted by their rings (ringEstimate)
     const backgrounds = backgroundColors(work);
-    const fills = kept.filter(e => e.style).map(e => e.style.color);
+    // (a fill in the page's color is no other family's ring owner: it can't be told from the page)
+    const fills = kept.filter(e => e.style && !e.familyMeasure?.pageFill).map(e => e.style.color);
     // outlines only: a stroke too thin to show its own color is a ring the image barely resolves (engagement1, strokes
     // under a pixel wide: 54 dots for 49 by the union, 40 by rings)
-    const ringed = kept.map(e => (e.familyMeasure?.kind === 'opaque' && e.familyMeasure.outline && e.style
+    // (not a fill in the page's color: its ring image would read the whole page as fill)
+    const ringed = kept.map(e => (e.familyMeasure?.kind === 'opaque' && e.familyMeasure.outline && !e.familyMeasure.pageFill && e.style
         ? ringEstimate(work, e, fills.filter(c => c !== e.style.color), backgrounds)
         : e));
     return { image: work, layers, estimates: ringed };
