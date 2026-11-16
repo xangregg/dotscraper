@@ -1,8 +1,8 @@
 // Benchmark the extraction (PLAN.md §2.6): synthetic presets over several seeds, every image with truth placed by hand
-// in testgraphs/truth/ or bench-nature/truth/ (<name>.json, the app's Save truth in px, tools/truth-json.mjs; every
+// in testgraphs/truth/, bench-nature/truth/ or bench-plos/truth/ (<name>.json, the app's Save truth in px, tools/truth-json.mjs; every
 // family fitted, scored by truth family and fill), and every PNG and JPEG of a
 // truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/), and every test image with a
-// CSV of its own (testgraphs/<name>.csv and bench-nature/<name>.csv, mapped through the detected ticks; lane data
+// CSV of its own (testgraphs/<name>.csv, bench-nature/<name>.csv and bench-plos/<name>.csv, mapped through the detected ticks; lane data
 // scored by lane, "(J)" after a name when JPEG noise turned JPEG mode on). Prints precision, recall,
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
@@ -29,7 +29,7 @@ import { pixelHash } from '../src/core/image.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 // directories of images with a CSV each (data units, ticks in the header), mapped through the detected ticks
-const CSV_SETS = ['testgraphs', 'bench-nature'];
+const CSV_SETS = ['testgraphs', 'bench-nature', 'bench-plos'];
 const MATCH_TOL_RADII = 0.5;
 // Jittered truth (a test image's CSV with "with jitter"): the truth is each dot's cell, and a dot matches a cell
 // within this box. Measured on pathogen: x up to about ±1 year (12.2 px; dots reach 0.83 year left of the first

@@ -1692,3 +1692,38 @@ Results: tumour1 no family → 41 for 44, P 0.976 R 0.909; hair1 gains its white
 16. hair1's CSV had its lane codes swapped against its note, which the old lane-order bug had hidden; with the CSV
 fixed (2026-11-15) hair1 scores 27 for 29, P 1.000 R 0.931, RMSE 0.49 px: all 11 white PBS dots, 16 of 18 pink DT
 (one of three ties at 5.88 and one of four zeros missed). Every other row identical (full bench, without times).
+
+**bench-plos: first look** (2026-11-15). Ten PLOS ONE figures (CC BY) in bench-plos/, seven with hand truth
+(truth/<name>.json) and four with a source-data CSV. The bench and tools/results.mjs now include the set (`--set
+bench-plos`). The CSVs came without a `#` header; their tick values and scales were read off the images and added.
+adults1 lists only the x ticks 200–600: the panel letter C overlaps the 100 label, so that tick isn't detected.
+Placed through the detected ticks, grader1's CSV matches its 40 hand-truth dots at 0.55 px RMSE, and adults1's 138
+of 139 at 0.60 px; adults1's CSV has 142 rows (the figure says n = 142), 4 of them not within 4 px of a hand-truth
+dot (presumably behind others; not checked). Hand truth, with the code as of 06a5518:
+
+| Image | Truth | Found | P | R | What it shows |
+|---|---|---|---|---|---|
+| adults1 | 139 | 146 | 0.952 | 1.000 | opaque black; the 7 extras are in the dense cluster, and the CSV has 142 rows, so some may be coincident dots the hand truth lacks |
+| boxdots1 | 268 | 152 | 0.645 | 0.366 | small black dots (r 4.9) over red and green boxes, JPEG noise; most dots over the red box are missed |
+| grader1 | 40 | 46 | 0.870 | 1.000 | translucent green with a ring; the 6 extras are in overlaps |
+| microplastics1 | 24 | – | – | – | opaque black (0, 0, 0), crisp, r ≈ 11, many isolated, yet "no isolated whole dot" (read as α 0.81, color −2) |
+| myeloid1 | 18 | 9 | 1.000 | 0.500 | orange found; teal (20, 154, 155), stacked in one column under a black mean bar, is no family |
+| score1 | 168 | 316 | 0.528 | 0.994 | teal (α 0.72, white edge) takes 166 of 168; a second, gray family (131) from the label leaders and text adds 150 false dots |
+| score2 | 92 | 99 | 0.929 | 1.000 | viridis fills, darker outlines (the colormap path); a few dots fitted twice; 54 s |
+
+Data truth: adults1 142, found 146, P 0.945 R 0.972 (4 data dots missed); grader1 40, found 46, P 0.870
+R 1.000; droplet1 and landing1 find no family; microplastics1 has no CSV.
+
+Without hand truth: droplet1 (black outlines about 3 px around flat fills of a diverging scale, purple to white to red)
+and landing1 (translucent blue and orange dots over translucent violins of their own hue, gray paired lines) find no
+family; step1 finds the blue family's color (123, 168, 229, α 0.56) but no radius, and nothing for the hollow red
+circles.
+
+Hollow dots (step1): the forward model already draws them, a ring of its own opacity over a fill of opacity 0
+(render.js: `1 − α·m − ring.alpha·m_ring`), and the ring fit (outline.js, ringCenters) fits rings. What's missing is
+finding and measuring such a family: the scan starts from flat fill pixels, and a hollow ring has none. A ring
+family would be found from thin round strokes of one color (Hough on the distance to the stroke color, as pageFills
+validates its fills) and measured from isolated rings (radius, width, opacity; outline.js measureRing). Its inside
+must stay transparent, not the page's color as in pageFilledFamily, since step1's rings show the band and the blue
+dots through them. In reach, but step1 is a hard first case: rings about 6 px in radius and 1.5 px wide, blurred,
+JPEG-noisy, over a translucent band, a curve and another family.

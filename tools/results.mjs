@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 let OUT = join(ROOT, 'RESULTS.md');
-const SET_ORDER = ['synthetic', 'bench1', 'bench2', 'bench3', 'testgraphs', 'bench-nature'];
+const SET_ORDER = ['synthetic', 'bench1', 'bench2', 'bench3', 'testgraphs', 'bench-nature', 'bench-plos'];
 const SET_TITLES = {
     synthetic: 'Synthetic presets',
     bench1: 'bench1: JMP renderings, 100 dots',
@@ -23,6 +23,7 @@ const SET_TITLES = {
     bench3: 'bench3: JMP renderings, 204 dots as beeswarms',
     testgraphs: 'testgraphs: real figures (local only)',
     'bench-nature': 'bench-nature: Nature figures (local only)',
+    'bench-plos': 'bench-plos: PLOS ONE figures (CC BY)',
 };
 const TRUTH = { exact: 'exact', data: 'data', hand: 'by hand' };
 const MODE = { exact: 'exact', noisy: 'noisy (auto)', jpeg: 'JPEG' };
@@ -42,8 +43,9 @@ function reason(error) {
     return 'error';
 }
 
-// the image's name as shown: no .png (a JPEG keeps .jpg, beside its PNG in bench1–2), no DOI suffix (bench-nature)
-const shortName = image => image.replace(/\.png$/i, '').replace(/-10\.1038-.*?(\.jpe?g)?$/, '$1');
+// the image's name as shown: no .png (a JPEG keeps .jpg, beside its PNG in bench1–2), no DOI suffix (bench-nature,
+// bench-plos)
+const shortName = image => image.replace(/\.png$/i, '').replace(/-10\.(1038|1371)[-_:].*?(\.jpe?g)?$/, '$2');
 
 const key = (set, image, truth) => `${set}|${image}|${truth}`;
 
