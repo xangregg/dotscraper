@@ -329,3 +329,21 @@ for (const [set, lo, hi, precision, recall, rmse] of [['bench1', 97, 101, 0.99, 
         assert.ok(m.rmse <= rmse, `rmse ${m.rmse}`);
     });
 }
+
+const DROPLET1 = new URL('../bench-plos/droplet1-10.1371-journal.pone.0362653', import.meta.url).pathname;
+
+test('regression: droplet1, opaque black outlines around fills of a diverging scale', { skip: !existsSync(DROPLET1 + '.png') && 'bench-plos droplet1 absent' }, () => {
+    // before: no family. The rings, 0.93 in P at their cores, were masked as black text (αk measured 0.028); without
+    // the mask, a glyph at r 15 among the isolated rings and a free αk (1.26, a thin blurred ring for a sharp one)
+    // stacked 2–3 dots on single dots (68 found, P 0.60). Still missed: the two piles near the origin, whose rings
+    // merge into dark areas the openings read as under the dots.
+    const image = readImage(DROPLET1 + '.png');
+    const est = estimateFamilies(image).estimates[0];
+    assert.equal(est.scale, 'outline');
+    assert.equal(est.style.ring.alpha, 1, 'αk');
+    const truth = truthPixelsByTicks(readTruthCsv(DROPLET1 + '.csv'), detectAxes(image)).dots;
+    const fit = extractAll(image).flatMap(r => r.fit.dots);
+    const m = matchDots(truth, fit, est.style.radius / 2);
+    assert.ok(m.precision >= 0.85, `precision ${m.precision}, found ${fit.length}`);
+    assert.ok(m.recall >= 0.7, `recall ${m.recall}, found ${fit.length}`);
+});

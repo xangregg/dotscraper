@@ -51,8 +51,17 @@ const MASK_BG = 0.5;
 // Ink nearly black (text, ticks) is masked with what lies within MASK_INK_REACH of it: thin strokes don't survive
 // the openings, and letters like "o" and "e" look like rings (bench1 solid-graystroke: 81 phantom dots piled on
 // the title). Rings stay well below: one is about 0.34 in P, three crossing about 0.7.
+// Opaque black rings are as dark as text, and the mask takes them all (droplet1: 2 px black outlines, 0.93 in P at
+// their cores, αk measured 0.028). For fills that vary, when no ring shows with the mask and the isolated rings'
+// cores reach MASK_INK, they are read without it, text left to the plot bounds and the ring fit. Measured at
+// RING_PEAK_QUANTILE on the fill plane: translucent and gray rings 0.33–0.53, droplet1 0.97; Laser, primates2 and
+// tumour1 0.92–0.93, from glyphs that fit no ring.
 const MASK_INK = 0.8;
 const MASK_INK_REACH = 2; // px
+const RING_PEAK_QUANTILE = 0.9;
+// A black ring's fit error grows with its contrast: droplet1's rms is 0.052 at αk 1 on its clean rings, about 0.09
+// with two crowded ones, against pathogen's 0.024 at αk 0.39 (0.06 of it)
+const BLACK_RING_MAX_RMS = 0.1; // P units, at αk 1
 // Isolated rings, for the radius and style: connected components of A above ISO_LEVEL, square within ISO_SQUARE,
 // hollow (under ISO_FILL of their box), ISO_SIZE across
 const ISO_LEVEL = 0.12;
@@ -61,6 +70,7 @@ const ISO_FILL = 0.5;
 const ISO_SIZE = [6, 80]; // px
 const ISO_MIN = 3; // isolated rings needed
 const ISO_MAX = 12; // isolated rings used for the style
+const ISO_RADIUS_TOL = 0.2; // × the median radius, for the rings used for the style
 const STYLE_HALF = 4; // px beyond the radius in each style patch
 const MIN_RING_ALPHA = 0.1; // a ring fainter than this in P isn't an outline
 const MAX_RING_RMS = 0.06; // P units: the isolated rings must fit the annulus this well (pathogen: 0.024)
@@ -667,8 +677,25 @@ function isolatedRings(P, width, height) {
     }).map(c => ({ x: (c.x0 + c.x1 + 1) / 2, y: (c.y0 + c.y1 + 1) / 2, r: (c.x1 - c.x0 + c.y1 - c.y0 + 2) / 4 }));
 }
 
-// A for one ring at (cx, cy) in a patch: an annulus of opacity 1, blurred; least-squares α against the image's A
-function ringPatchError(A, width, height, cx, cy, st) {
+// how dark the isolated rings' cores are: the RING_PEAK_QUANTILE of P over their ink (pixels above ISO_LEVEL in
+// their boxes; a ring's antialiased sides are most of it)
+function ringPeak(P, width, height, rings) {
+    const v = [];
+    for (const c of rings) {
+        for (let y = Math.max(0, Math.floor(c.y - c.r)); y < Math.min(height, Math.ceil(c.y + c.r)); y++) {
+            for (let x = Math.max(0, Math.floor(c.x - c.r)); x < Math.min(width, Math.ceil(c.x + c.r)); x++) {
+                if (P[y * width + x] >= ISO_LEVEL)
+                    v.push(P[y * width + x]);
+            }
+        }
+    }
+    v.sort((a, b) => a - b);
+    return v.length ? v[Math.floor(RING_PEAK_QUANTILE * (v.length - 1))] : 0;
+}
+
+// A for one ring at (cx, cy) in a patch: an annulus of opacity 1, blurred; least-squares α against the image's A, or
+// the error at a given α
+function ringPatchError(A, width, height, cx, cy, st, fixedAlpha = null) {
     const half = Math.ceil(st.r + STYLE_HALF);
     const x0 = Math.round(cx) - half;
     const y0 = Math.round(cy) - half;
@@ -693,17 +720,19 @@ function ringPatchError(A, width, height, cx, cy, st) {
             count++;
         }
     }
+    if (fixedAlpha !== null)
+        return { sse: saa - 2 * fixedAlpha * num + fixedAlpha * fixedAlpha * den, alpha: fixedAlpha, count };
     const alpha = den > 0 ? num / den : 0;
     return { sse: saa - alpha * num, alpha, count };
 }
 
 /**
  * The ring's style from isolated rings in A: radius, inner over radius, blur and αk, by coordinate descent on the
- * squared error over their patches, each center refined too.
+ * squared error over their patches, each center refined too. With `fixedAlpha`, αk is that and the rest is fitted.
  *
  * @returns {{radius: number, inner: number, blur: number, alpha: number, rms: number, rings: number}}
  */
-function measureRing(A, width, height, rings) {
+function measureRing(A, width, height, rings, fixedAlpha = null) {
     const r0 = rings.map(c => c.r).sort((a, b) => a - b)[rings.length >> 1];
     let st = { r: r0, inner: Math.max(0.5, (r0 - 1.5) / r0), blur: 0.5 };
     let centers = rings.map(c => ({ x: c.x, y: c.y }));
@@ -712,7 +741,7 @@ function measureRing(A, width, height, rings) {
         let count = 0;
         const alphas = [];
         for (const c of centers) {
-            const e = ringPatchError(A, width, height, c.x, c.y, st);
+            const e = ringPatchError(A, width, height, c.x, c.y, st, fixedAlpha);
             if (!e)
                 continue;
             sse += e.sse;
@@ -728,11 +757,11 @@ function measureRing(A, width, height, rings) {
                 let improved = true;
                 while (improved) {
                     improved = false;
-                    const e0 = ringPatchError(A, width, height, x, y, st);
+                    const e0 = ringPatchError(A, width, height, x, y, st, fixedAlpha);
                     if (!e0)
                         return { x, y };
                     for (const [dx, dy] of [[step, 0], [-step, 0], [0, step], [0, -step]]) {
-                        const e = ringPatchError(A, width, height, x + dx, y + dy, st);
+                        const e = ringPatchError(A, width, height, x + dx, y + dy, st, fixedAlpha);
                         if (e && e.sse < e0.sse - 1e-9) {
                             x += dx;
                             y += dy;
@@ -867,7 +896,8 @@ export function findOutlines(image, B) {
     const plane = fillPlane(image, B);
     if (!plane)
         return null;
-    const found = outlinesInP(planeValue(image, B, plane.n), image.width, image.height);
+    // black rings around one fill color are the opaque families' (hair1: pink and page-filled dots in black outlines)
+    const found = outlinesInP(planeValue(image, B, plane.n), image.width, image.height, null, { blackRings: !plane.oneColor });
     return found && { plane, ...found };
 }
 
@@ -931,32 +961,44 @@ export function relativeDarkness(image) {
  * @param {number} height
  * @param {Uint8Array} [unknown]  1 where P can't be read (one family's rings: other families' fills and their rings,
  *   ink beyond the outline's reach); masked in A and D
+ * @param {object} [opts]
+ * @param {boolean} [opts.blackRings]  when no ring shows with dark ink masked, try opaque black rings (MASK_INK)
  */
-export function outlinesInP(P, width, height, unknown = null) {
+export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     const rings = isolatedRings(P, width, height);
     if (rings.length < ISO_MIN)
         return null;
     const r0 = rings.map(c => c.r).sort((a, b) => a - b)[rings.length >> 1];
     const under = underRings(P, width, height, r0);
-    const ink = new Uint8Array(P.length);
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            if (P[y * width + x] < MASK_INK)
-                continue;
-            for (let yy = Math.max(0, y - MASK_INK_REACH); yy <= Math.min(height - 1, y + MASK_INK_REACH); yy++) {
-                for (let xx = Math.max(0, x - MASK_INK_REACH); xx <= Math.min(width - 1, x + MASK_INK_REACH); xx++)
-                    ink[yy * width + xx] = 1;
+    // the most ring-like of the isolated components, of about one size (droplet1: a glyph at r 15 beside rings of
+    // 9.75–10.5)
+    const used = rings.slice().sort((a, b) => Math.abs(a.r - r0) - Math.abs(b.r - r0)).slice(0, ISO_MAX)
+        .filter(c => Math.abs(c.r - r0) <= ISO_RADIUS_TOL * r0);
+    const read = maskInk => {
+        const ink = new Uint8Array(P.length);
+        for (let y = 0; y < height && maskInk; y++) {
+            for (let x = 0; x < width; x++) {
+                if (P[y * width + x] < MASK_INK)
+                    continue;
+                for (let yy = Math.max(0, y - MASK_INK_REACH); yy <= Math.min(height - 1, y + MASK_INK_REACH); yy++) {
+                    for (let xx = Math.max(0, x - MASK_INK_REACH); xx <= Math.min(width - 1, x + MASK_INK_REACH); xx++)
+                        ink[yy * width + xx] = 1;
+                }
             }
         }
-    }
-    const A = new Float32Array(P.length);
-    for (let p = 0; p < P.length; p++)
-        A[p] = under[p] > MASK_BG || ink[p] || unknown?.[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
-    // the most ring-like of the isolated components
-    const used = rings.slice().sort((a, b) => Math.abs(a.r - r0) - Math.abs(b.r - r0)).slice(0, ISO_MAX);
-    const ring = measureRing(A, width, height, used);
-    if (!(ring.alpha >= MIN_RING_ALPHA) || ring.rms > MAX_RING_RMS || ring.rings < ISO_MIN)
+        const A = new Float32Array(P.length);
+        for (let p = 0; p < P.length; p++)
+            A[p] = under[p] > MASK_BG || ink[p] || unknown?.[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
+        // (unmasked, the rings are opaque black: αk fitted freely went to 1.26, a thin blurred annulus standing in
+        // for a sharp one, and the fit stacked dots to make up the difference)
+        const ring = measureRing(A, width, height, used, maskInk ? null : 1);
+        const fits = ring.rms <= (maskInk ? MAX_RING_RMS : BLACK_RING_MAX_RMS);
+        return ring.alpha >= MIN_RING_ALPHA && fits && ring.rings >= ISO_MIN ? { A, ring } : null;
+    };
+    const found = read(true) ?? (opts.blackRings && ringPeak(P, width, height, used) >= MASK_INK ? read(false) : null);
+    if (!found)
         return null;
+    const { A, ring } = found;
     const D = new Float32Array(P.length);
     const weight = new Uint8Array(P.length);
     for (let p = 0; p < P.length; p++) {

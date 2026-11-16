@@ -1806,3 +1806,27 @@ families, 112 + 91 dots in 2.4 s; no console errors.
 
 Results (full bench, diffed against the run before): boxdots1 and violin-beeswarm as above; every other row
 identical apart from times. Regression tests in test/axes.test.js and test/opaque.test.js.
+
+**bench-plos droplet1: opaque black rings around a diverging scale** (2026-11-16)
+
+- No family: the fills (purple to white to red) lie in a plane through the page, so the outline path (findOutlines)
+  ran, and found 9 isolated rings, but the ink mask, meant for black text (MASK_INK 0.8 in P), took the rings too:
+  their cores are 0.93 in P, and αk came out 0.028. Rings measured so far were translucent or gray: the 90th
+  percentile of P over the isolated rings' ink is 0.33–0.53 on the fill plane (pathogen 0.40), droplet1 0.97.
+- When no ring shows with the mask, the fills vary (the plane isn't one color) and the isolated rings' cores reach
+  MASK_INK, the rings are now read without the mask; text is left to the plot bounds and the ring fit.
+  - The style first came out radius 9, αk 1.26, rms 0.11 (over MAX_RING_RMS 0.06): one "isolated ring" was a glyph
+    below the axis at r 15 beside rings of 9.75–10.5, and a free αk let a thin blurred annulus stand in for a sharp
+    one. The rings used for the style are now within 20% of the median radius (ISO_RADIUS_TOL), and black rings
+    are fitted with αk fixed at 1 (radius 9.0, inner 0.78, blur 0.5, rms 0.096, against BLACK_RING_MAX_RMS 0.1:
+    the clean rings 0.052, two crowded ones more). With αk clamped instead, the fit stacked 2–3 dots on single
+    dots to darken the model's faint ring: 68 found, P 0.603.
+  - Not for one fill color: hair1's pink and page-filled dots in black outlines took the retry as one outlined
+    family (82 found for 29); the opaque families read them better. Laser, primates2 and tumour1 reach 0.92–0.93
+    from glyphs, which fit no ring, so they are unchanged.
+- droplet1: no family → 46 found for 57 (data truth), P 0.891, R 0.719, RMSE 0.64 px. The misses are the two piles
+  near the origin (about 12 and 3 dots nearly coincident), whose rings merge into dark areas that the openings
+  (underRings) keep as lines and that are masked; 5 extras beside pairs.
+
+Results (full bench, diffed against the run before): droplet1 as above; every other row identical apart from times
+(hair1 checked again after the one-color rule). Regression test in test/outline.test.js.
