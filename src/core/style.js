@@ -101,6 +101,11 @@ const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
 // on one line (phase1's grays, white to black) every color is any other seen through a third. The bands measured
 // 48 units off (bench3 ANOVA 206, 213, 231 and bench1 group-smoother-ci 205, 213, 232 against pink and red).
 const LAYER_MIN_OFF = 20; // 0–255 units
+// A translucent "family" whose levels are all stacks of two other families' dots is their overlaps (bench2
+// group-large, α 0.33: red over blue and blue over red as two purple families with no isolated dot). Measured: the
+// blends' levels within 1.3 of a stack, the real families' 86 or more away.
+const BLEND_TOL = 12; // 0–255 units
+const BLEND_DEPTH = 4; // dots in a stack
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
 const DOT_MIN_INTERIOR = 0.1; // share of a cluster's pixels with all 8 neighbors in the cluster
@@ -2270,12 +2275,33 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent && !isThin(image, c.levels[0].color));
     for (const c of translucent)
         c.kind = 'translucent';
+    dropBlends(translucent, B);
     const opaque = opaqueFamilies(image, backgrounds, translucent, tol);
     // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
     const real = translucent.filter(t => !t.levels.some(L => rims.some(c => Math.hypot(...c.map((v, ch) => v - L.color[ch])) <= CLUSTER_TOL)));
     return [...real, ...opaque];
+}
+
+// Removes, in place, translucent candidates whose every measured level is a stack of up to BLEND_DEPTH dots of two
+// or more larger candidates kept before them, composited in sRGB over the page. O(families^BLEND_DEPTH · levels).
+function dropBlends(translucent, B) {
+    const over = (f, under) => under.map((v, ch) => f.fit.alpha * f.fit.c[ch] + (1 - f.fit.alpha) * v);
+    const kept = [];
+    for (const X of [...translucent]) {
+        let stacks = [{ color: B, used: new Set() }];
+        const mixed = [];
+        for (let d = 0; d < BLEND_DEPTH && kept.length >= 2; d++) {
+            stacks = stacks.flatMap(s => kept.map(f => ({ color: over(f, s.color), used: new Set([...s.used, f]) })));
+            mixed.push(...stacks.filter(s => s.used.size >= 2).map(s => s.color));
+        }
+        const blend = mixed.length && X.levels.filter(L => !L.inferred).every(L => mixed.some(c => Math.hypot(...c.map((v, ch) => v - L.color[ch])) <= BLEND_TOL));
+        if (blend)
+            translucent.splice(translucent.indexOf(X), 1);
+        else
+            kept.push(X);
+    }
 }
 
 // Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline, the

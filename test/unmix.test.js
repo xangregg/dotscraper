@@ -105,3 +105,15 @@ test('regression: bench2 group finds all 204, overlapping stacks of both colors 
     assert.equal(found.length, 204);
     assert.equal(m.recall, 1);
 });
+
+test('regression: overlaps of two translucent families aren’t families of their own (bench2 group-large)', { skip: !existsSync(BENCH2 + 'group-large.png') && 'bench2 absent' }, () => {
+    // before: red over blue and blue over red (α 0.33) read as two purple families with no radius, and unmixing
+    // gave them the overlaps: red fitted 70 dots for 113, blue 39 for 91
+    const truth = truthPixels(readTruthCsv(BENCH2 + 'data.csv')).dots;
+    const results = extractAll(readImage(BENCH2 + 'group-large.png'));
+    assert.equal(results.length, 2);
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, 1);
+    assert.ok(Math.abs(found.length - truth.length) <= 2, `${found.length} found for ${truth.length}`);
+    assert.ok(m.recall >= 0.98, `recall ${m.recall}`);
+});

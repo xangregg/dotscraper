@@ -1759,3 +1759,19 @@ Results (full bench, diffed without times against the run before): the three ima
 engagement1 as above, degradation1 within noise (data P 0.705 → 0.721, R 0.339 → 0.346); every other row identical.
 Regression tests for microplastics1, myeloid1 and score1 (skipped without bench-plos). In the app (check:page,
 dropped image, Find dots): microplastics1 24, myeloid1 18 (two families, r 13.8), score1 166; no console errors.
+
+**bench2 group-large: overlaps read as families** (2026-11-16)
+
+- At α 0.33 the red–blue overlaps cover many flat pixels, and two of them became translucent "families" of their own
+  with no isolated dot and no radius: blue over red's level 1 (181, 160, 213) and red over blue's (202, 154, 193).
+  Unmixing then gave them the overlap pixels, so the true families' images lost their stacks: red fitted 70 dots
+  (65 matched) for 113, blue 39 for 91.
+- A translucent candidate is now dropped when every measured level is within BLEND_TOL (12) of a stack of up to
+  BLEND_DEPTH (4) dots of two or more larger candidates already kept, composited in sRGB over the page (dropBlends
+  in findCandidates). Measured: the purple levels within 0.4–1.3 of a stack, the real families' 86–102 away; bench1
+  group-large, bench2 group and group-smoother-ci have no such candidates.
+- group-large: radius unknown → 203 of 204 found, P 1.000, R 0.995, RMSE 0.24 px (red 112 of 113, blue 91 of 91).
+
+Results (full bench, diffed against the run before): group-large as above; every other row identical apart from
+times. Regression test in test/unmix.test.js (skipped without bench2). In the app (dropped image, Find dots): two
+families, 112 + 91 dots in 2.4 s; no console errors.
