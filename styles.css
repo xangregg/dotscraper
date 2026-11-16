@@ -58,11 +58,27 @@ body {
 
 header {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 28px;
     padding: 8px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+}
+
+/* the toolbar rows take the rest of the width; below about 560 px they wrap under the name */
+.bars {
+    display: flex;
+    flex: 1 1 560px;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tagline {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-2);
 }
 
 /* a toolbar row: its left and right sides pushed apart; on a narrow screen the right side wraps to a line of its own */
