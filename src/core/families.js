@@ -10,10 +10,13 @@ import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
 import { findOutlines, findHueOutlines, fillFamilies, outlinesInP } from './outline.js';
 import { backgroundColors } from './axes.js';
+import { opening } from './layers.js';
 
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
 const DEFAULT_RADIUS = 5; // px, for the region test when no family has a radius yet
+const REGION_INK_TOL = 15; // 0–255 units (RGB distance) from a region's color, for its solidity (JPEG noise)
+const REGION_MIN_SOLID = 0.5; // share of a region's pixels an opening by the dots' radius keeps
 // The hue-outline reading (outline.js findHueOutlines, after colormap.js finds opaque fills on a scale) sees outlines
 // darker than each fill; dots of a few discrete fills in one dark stroke look like that too (engagement1: five blues
 // read as a scale fitted by rings found 22 of 49). Families
@@ -302,11 +305,13 @@ export function estimateFamilies(image, opts = {}) {
     const radius = first.style?.radius ?? first.candidates.find(c => c.radius)?.radius ?? DEFAULT_RADIUS;
     const layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
     const overlays = layers.regions.filter(r => r.mode === 'over');
-    let work = image;
-    if (overlays.length) {
-        work = removeOverlays(image, B, layers);
-        first = estimateStyle(work, { jpeg });
-    }
+    // Opaque dots over a shaded region are read against its color, as against the page; otherwise the region is
+    // other ink and the mask around it takes the dots' edges (boxdots1: black dots over a red box, recall 0.74)
+    const under = layers.regions.filter(r => r.mode === 'under' && solidRegion(image, r.color, radius)).map(r => r.color);
+    const regions = under.length && first.candidates.some(c => c.kind === 'opaque') ? under : undefined;
+    const work = overlays.length ? removeOverlays(image, B, layers) : image;
+    if (overlays.length || regions)
+        first = estimateStyle(work, { jpeg, regions });
     const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
     const merged = mergeAcrossRegions(work, B, first.candidates, layers.regions, first.flat, tol);
     if (merged)
@@ -332,6 +337,23 @@ export function estimateFamilies(image, opts = {}) {
         ? ringEstimate(work, e, fills.filter(c => c !== e.style.color), backgrounds)
         : e));
     return { image: work, layers, estimates: ringed };
+}
+
+// A region is solid when most of its pixels survive an opening by a dot's radius; a "region" of dots doesn't, and as
+// a background it would hide them (engagement1's cyan and delta1's black dots, families not found, read as regions:
+// 47 → 40 and 23 → 15 found). Measured: boxes, bands and the page 0.71–0.99, regions of dots or outlines 0.00–0.06.
+function solidRegion(image, color, radius) {
+    const { width, height, data } = image;
+    const mask = new Uint8Array(width * height);
+    let all = 0;
+    for (let p = 0; p < mask.length; p++) {
+        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= REGION_INK_TOL ? 1 : 0;
+        all += mask[p];
+    }
+    let kept = 0;
+    for (const v of opening(mask, width, height, radius))
+        kept += v;
+    return all > 0 && kept >= REGION_MIN_SOLID * all;
 }
 
 // A translucent family's radius is known only now: one far smaller than the others is text's antialiased grays

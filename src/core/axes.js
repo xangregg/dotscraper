@@ -28,6 +28,14 @@ const TICK_MAX_WIDTH_THICKNESSES = 3; // a tick is at most this many axis-line t
 const TICK_LINE_CLEARANCE = 2; // px: a tick within this of a perpendicular line may be that line (an axis corner)
 const TICK_MINORITY_RATIO = 0.5; // ticks on the side with fewer than this × the other side's count are dropped
 const CORNER_SPACING_TOL = 0.03; // × spacing: a line at the axis's end this close to the ticks' progression is a tick
+// A tick is a straight stroke, about as long at its sides as at its middle; a dot touching a line is rounded, longest
+// in the middle (boxdots1: dots along a box's edge, 4 of 14 and 11 of 22 px, made it an x axis whose "labels" were
+// dots). Measured, the median over an axis's labeled ticks: 0.8–1.0 on every real axis (step1's 5 px ticks 0.8).
+const TICK_MIN_STRAIGHTNESS = 0.6; // shortest ÷ longest stroke across a tick's width
+// A tick label lies just beyond its tick in plain view of the axis; "labels" beyond other ink are marks inside the plot
+// (boxdots1: dots above a filled box read as labels of its lower edge, 0.62 and 0.74 of the way to them inked by the
+// fill). Measured, the median over an axis's labels: 0.00 on every real axis, single labels up to 0.84.
+const LABEL_PATH_MAX_INK = 0.5; // share of pixels between the axis and a label, across the label's extent
 // How far beyond a tick to look for its label, as a fraction of the image dimension across the axis. y labels are
 // horizontal text that grows with its digits: at 8% of the width dog-ages-actual-size's "100" lost its "1".
 const LABEL_SEARCH_FRACTION = { h: 0.08, v: 0.15 };
@@ -65,9 +73,11 @@ const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of
 /**
  * @typedef {object} Tick
  * @property {number} pos     px, center along the axis
- * @property {number} length  px
+ * @property {number} length  px, the longest stroke across the tick's width
+ * @property {number} [shortest]  px, the shortest (a straight tick's is about its length)
  * @property {'before'|'after'} side  'before' = above (x axis) or left (y axis)
  * @property {number[]|null} label  [x0, y0, x1, y1) box of the label's ink, or null
+ * @property {number} [labelPath]  0–1, share of ink between the axis and the label
  * @property {'tick'|'grid'} source
  */
 
@@ -267,7 +277,7 @@ export function findTicks(image, ink, axis, lines) {
                 if (core < DARK_LUMINANCE) {
                     const pos = wpos / w;
                     const onLine = perpendicular.some(l => Math.abs(l.pos - pos) <= l.thickness / 2 + TICK_LINE_CLEARANCE);
-                    ticks.push({ pos, length: Math.max(...len.slice(a, b)), side, label: null, source: 'tick', onLine });
+                    ticks.push({ pos, length: Math.max(...len.slice(a, b)), shortest: Math.min(...len.slice(a, b)), side, label: null, source: 'tick', onLine });
                 }
             }
             a = b;
@@ -422,12 +432,15 @@ export function findLabels(image, backgrounds, axis, ticks) {
     const own = labelsOnSide(image, backgrounds, axis, ticks, tickSide, tickLen);
     const other = labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0, OTHER_SIDE_MAX_WIDTH);
     const far = other.size >= OTHER_SIDE_MIN_LABELS && other.size > own.size;
-    for (const [t, b] of far ? other : own)
-        t.label = b;
+    for (const [t, { box, path }] of far ? other : own) {
+        t.label = box;
+        t.labelPath = path;
+    }
 }
 
-// tick → label box for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without them),
-// and no wider along the axis than `maxWidth` spacings
+// tick → { box, path } for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without
+// them), and no wider along the axis than `maxWidth` spacings: the label's box and the share of ink between the axis
+// and it
 function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth = Infinity) {
     const { width, height } = image;
     const h = axis.dir === 'h';
@@ -445,6 +458,21 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth
     // Tick labels form a column (y) or row (x) at a consistent gap from the ticks; axis titles and other text are
     // farther out. Keep words whose gap is within half a label height of the smallest gap.
     const gapOf = b => (h ? (side === 'after' ? b[1] - edge : edge - b[3]) : (side === 'after' ? b[0] - edge : edge - b[2]));
+    // share of ink between the axis (beyond reachFrom) and a word, across the word's extent along the axis
+    const pathInk = b => {
+        const [a0w, a1w] = h ? [b[0], b[2]] : [b[1], b[3]];
+        const [n0, n1] = side === 'after' ? [Math.ceil(edge), h ? b[1] : b[0]] : [h ? b[3] : b[2], Math.floor(edge)];
+        let all = 0;
+        let ink = 0;
+        for (let a = a0w; a < a1w; a++) {
+            for (let c = n0; c < n1; c++) {
+                all++;
+                if (isInk(image.data, 4 * (h ? c * width + a : a * width + c), backgrounds))
+                    ink++;
+            }
+        }
+        return all ? ink / all : 0;
+    };
     const assigned = [];
     for (const b of mergeWords(inkComponents(image, backgrounds, rect).map(c => c.box))) {
         const mid = h ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2;
@@ -456,7 +484,7 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth
                 best = t;
         }
         if (best)
-            assigned.push({ b, tick: best, gap: gapOf(b) });
+            assigned.push({ b, tick: best, gap: gapOf(b), path: pathInk(b) });
     }
     if (!assigned.length)
         return labels;
@@ -464,8 +492,10 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth
     const heights = assigned.map(a => a.b[3] - a.b[1]).sort((p, q) => p - q);
     const tol = Math.max(LABEL_COLUMN_MIN_TOL, 0.5 * heights[Math.floor(heights.length / 2)]);
     for (const a of assigned) {
-        if (a.gap <= minGap + tol)
-            labels.set(a.tick, union(labels.get(a.tick), a.b));
+        if (a.gap <= minGap + tol) {
+            const was = labels.get(a.tick);
+            labels.set(a.tick, { box: union(was?.box, a.b), path: Math.max(was?.path ?? 0, a.path) });
+        }
     }
     return labels;
 }
@@ -526,13 +556,25 @@ export function detectAxes(image) {
     const backgrounds = backgroundColors(image);
     const ink = grayInk(image, backgrounds);
     const lines = findLines(image, ink);
+    const median = v => {
+        const r = [...v].sort((a, b) => a - b);
+        return (r[(r.length - 1) >> 1] + r[r.length >> 1]) / 2;
+    };
+    // labeled ticks drawn as strokes (a corner tick, on a line, has none) are straight, and their labels are in
+    // plain view of the axis
+    const axisLike = ticks => {
+        const strokes = ticks.filter(t => t.length > 0);
+        return (!strokes.length || median(strokes.map(t => t.shortest / t.length)) >= TICK_MIN_STRAIGHTNESS)
+            && median(ticks.map(t => t.labelPath)) <= LABEL_PATH_MAX_INK;
+    };
     const pick = dir => {
         const candidates = lines.filter(l => l.dir === dir && l.dark).map(line => ({ line, ticks: findTicks(image, ink, line, lines) }));
         candidates.sort((a, b) => (b.ticks.length - a.ticks.length) || (dir === 'h' ? b.line.pos - a.line.pos : a.line.pos - b.line.pos));
         let best = null;
         for (const c of candidates) {
             findLabels(image, backgrounds, c.line, c.ticks);
-            if (c.ticks.filter(t => t.label).length >= AXIS_MIN_LABELED_TICKS) {
+            const labeled = c.ticks.filter(t => t.label);
+            if (labeled.length >= AXIS_MIN_LABELED_TICKS && axisLike(labeled)) {
                 best = { ...c, ticks: c.ticks.filter(t => !t.onLine || t.label) };
                 break;
             }

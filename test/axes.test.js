@@ -225,3 +225,15 @@ test('regression: cells1, the "0" tick hidden by the bars\' baseline is found an
     assert.equal(labeled.length, 4, JSON.stringify(ax.y.ticks.map(t => [t.pos, !!t.label])));
     near(labeled[3].pos, 1031.8, 0.5, '0 tick');
 });
+
+const PLOS = new URL('../bench-plos/', import.meta.url).pathname;
+const BOXDOTS1 = 'boxdots1-10.1371-journal.pone.0361404.png';
+
+test('regression: boxdots1, a filled box\'s edges with dots along them are no x axis', { skip: !existsSync(PLOS + BOXDOTS1) && 'bench-plos boxdots1 absent' }, () => {
+    // before: the green box's lower edge (y 618.5) was the x axis, its "ticks" dots touching it (4 of 14 px at their
+    // sides) and its "labels" dots; without that rule its other edge (y 640.3), whose dot "labels" lie beyond the
+    // box's fill. The plot's top was set there and every dot above it masked. The figure's tick labels are cropped.
+    const ax = detectAxes(readPng(PLOS + BOXDOTS1));
+    assert.equal(ax.x, null, `x axis at ${ax.x?.line?.pos}`);
+    assert.deepEqual(plotBounds(ax), { left: null, right: null, top: null, bottom: null });
+});

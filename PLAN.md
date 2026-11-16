@@ -1775,3 +1775,34 @@ dropped image, Find dots): microplastics1 24, myeloid1 18 (two families, r 13.8)
 Results (full bench, diffed against the run before): group-large as above; every other row identical apart from
 times. Regression test in test/unmix.test.js (skipped without bench2). In the app (dropped image, Find dots): two
 families, 112 + 91 dots in 2.4 s; no console errors.
+
+**bench-plos boxdots1: a box edge as the x axis, gray box lines, dots over the red box** (2026-11-16)
+
+- The figure's tick labels are cropped, so its frame (bottom at y 683, two ticks) has none, and the green box's lower
+  edge (y 618.5, x 341–555) became the x axis: dots touching it were its "ticks" and dots its "labels". plotBounds put
+  the plot's top there, and every dot above it was masked: 152 found for 268, recall 0.366.
+  - A tick is a straight stroke: its shortest stroke across its width is 0.8–1.0 of its longest on every real axis
+    (median over the labeled ticks; step1's 5 px ticks 0.8), while dots touching the edge were 4 of 14 and 11 of 22
+    px (TICK_MIN_STRAIGHTNESS 0.6). One real tick in nicest language is 0.3 (a dot on it), hence the median.
+  - That left the box's upper line (y 640.3; its "ticks" 0.71) with dots above the box as labels. A label lies in
+    plain view of the axis: the ink between them, across the label, is 0.00 (median) on every real axis and 0.62
+    and 0.74 for these, through the box's fill (LABEL_PATH_MAX_INK 0.5; single real labels reach 0.84).
+  - Every other image's axes are unchanged; boxdots1 has none. Without them: 332 found, P 0.675, R 0.836.
+- The gray box outlines and median lines (52, 4–5 px wide) lie on the line from the page to the black dots and read
+  as 81% covered; they border the masked box fills, so the thin-mark test (opening with other ink) kept them, and
+  the fit put 64 dots along them. A cluster rejected as a blend of a family and the page but with interior pixels
+  (BLEND_INK_MIN_INTERIOR 0.05; rims are 0.00 everywhere, the gray 0.18) is ink: the final measure takes it as one
+  of the others, unless it is within CLUSTER_TOL of a background or a family's color (the near-page 236 cluster;
+  bench2 gradient-opaque's neighboring shade). 232 found, P 0.858, R 0.743. It also applies to violin-beeswarm's
+  violin fill (182, 187, 224, interior 0.62): 734 → 712 found for 702, P 0.956 → 0.985, R 1.000 → 0.999.
+- The misses were over the red box (228, 24, 73), found as a region under the dots but read as other ink by the
+  opaque measure, so the mask took the dots' edges. Region colors under opaque dots are now backgrounds for
+  findCandidates (estimateStyle `regions`), when solid: an opening by the dots' radius keeps half the region's pixels
+  (REGION_MIN_SOLID; boxes, bands and the page 0.71–0.99). engagement1's cyan and delta1's black dots, families not
+  found, read as regions too (0.00), and as backgrounds they lost 7 and 8 dots; phase1's black outlines (0.06) left
+  no family at all.
+- boxdots1: 152 → 275 found for 268, P 0.645 → 0.938, R 0.366 → 0.963. Extras: 7 on the bold "4d", about 10 along
+  the red box's dark edges.
+
+Results (full bench, diffed against the run before): boxdots1 and violin-beeswarm as above; every other row
+identical apart from times. Regression tests in test/axes.test.js and test/opaque.test.js.

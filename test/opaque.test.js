@@ -546,6 +546,7 @@ const plosSkip = name => !existsSync(`${PLOS}truth/${name}.json`) && `bench-plos
 const MICROPLASTICS1 = 'microplastics1-10.1371-journal.pone.0362569';
 const MYELOID1 = 'myeloid1-10.1371-journal.pone.0362747';
 const SCORE1 = 'score1-10.1371_journal.pone.0361996';
+const BOXDOTS1 = 'boxdots1-10.1371-journal.pone.0361404';
 
 test('regression: microplastics1, a thin gray border bar is no translucent level of the black dots', { skip: plosSkip(MICROPLASTICS1) }, () => {
     // before: "The dot radius is unknown": the 3 px bar at 48 and the black dots read as levels 1 and 3 of one
@@ -572,4 +573,14 @@ test('regression: score1, teal dots near a gray line\'s color are not the gray\'
     assert.equal(results.length, 1);
     assert.equal(m.extra.length, 0);
     assert.ok(m.recall >= 0.98, `recall ${m.recall}, found ${found.length}`);
+});
+
+test('regression: boxdots1, black dots over a red box and beside gray box outlines', { skip: plosSkip(BOXDOTS1) }, () => {
+    // before: 152 for 268 (recall 0.37). A box edge read as the x axis masked the plot above it; then the gray box
+    // outlines and median lines (52, read as 81% covered by black) took 64 false dots, and the dots over the red box,
+    // read as other ink, lost their edges to the mask (recall 0.74)
+    const { results, found, m } = plos(BOXDOTS1);
+    assert.equal(results.length, 1);
+    assert.ok(m.recall >= 0.95, `recall ${m.recall}, found ${found.length}`);
+    assert.ok(m.precision >= 0.92, `precision ${m.precision}, found ${found.length}`);
 });

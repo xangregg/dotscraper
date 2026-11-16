@@ -110,6 +110,11 @@ const BLEND_DEPTH = 4; // dots in a stack
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
 const DOT_MIN_INTERIOR = 0.1; // share of a cluster's pixels with all 8 neighbors in the cluster
 const BLEND_OUTLINE_MAX_INTERIOR = 0.3; // a cluster between a fill and its outline with more interior is a family
+// A cluster between a family and the page with interior pixels is ink drawn in that color, not a dot's antialiased rim
+// (1–2 px wide, interior 0.00 on every bench image): boxdots1's gray box outlines and median lines at 52, 4–5 px
+// wide (interior 0.18), read as 81% covered by the black dots, took 64 false dots along them; violin-beeswarm's
+// violin fill (182, 187, 224, interior 0.62) under the blue dots, 734 → 712 found for 702.
+const BLEND_INK_MIN_INTERIOR = 0.05; // share of the cluster's pixels
 const DOT_FILL_RADII = 0.75; // × r: the disc that must be filled around a Hough center …
 const DOT_MIN_FILL = 0.85; // … to this fraction
 // distance-transform peaks underestimate the radius where dots touch or overlap; the upper quartile of the peaks,
@@ -2011,6 +2016,8 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const { width, height, data } = image;
     let out = [];
     const rejected = [];
+    // ink in a blend of a family's color and the page (BLEND_INK_MIN_INTERIOR): other ink for the final measure
+    const blendInk = [];
     // a cluster between a family found already and that family's background, its outline or a page color is an
     // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family"). Between a fill and
     // its outline, only if it is mostly edge, as a rim is: other fills of an outlined scale sit there too (phase1:
@@ -2079,7 +2086,13 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
                     interior++;
             }
         }
-        if (isBlend(cl.color, count ? interior / count : 0) || throughLayer(cl.color))
+        if (isBlend(cl.color, count ? interior / count : 0)) {
+            // (not near the page or a family's color: those pixels are the page's, or the family's own shading)
+            if (count && interior / count >= BLEND_INK_MIN_INTERIOR && ![...backgrounds, ...out.map(f => f.seed)].some(P => near(P, c)))
+                blendInk.push(c);
+            continue;
+        }
+        if (throughLayer(cl.color))
             continue;
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
@@ -2140,7 +2153,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const stroked = out.some(f => f.stroke);
     const final = out.map(f => {
         const rings = stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null;
-        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
+        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
@@ -2197,6 +2210,8 @@ function median(a) {
  * @param {number} [opts.family]    index into the candidates, instead of a seed
  * @param {boolean} [opts.jpeg]     the image is JPEG-compressed: noise-tolerant thresholds (JPEG_TOLERANCES); candidates
  *   passed in must have been found with the same setting
+ * @param {number[][]} [opts.regions]  0–255, colors of shaded regions under the dots (background.js), which opaque
+ *   dots are read against as against the page
  * @returns {object}  { background, candidates, family, style, D, isolated, edge, notes }
  *   style: { color, alpha, levels, radius, blur } ready for render.js; radius and blur are null when no isolated
  *   dot was found. notes: human-readable caveats for display.
@@ -2207,7 +2222,7 @@ export function estimateStyle(image, opts = {}) {
     const B = background.color;
     const tol = opts.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
     const flat = flatMask(image, tol);
-    const backgrounds = backgroundColors(image);
+    const backgrounds = [...backgroundColors(image), ...(opts.regions ?? [])];
     // candidates are the slow part (seconds on large images): reuse them when estimating another family
     const candidates = opts.candidates ?? findCandidates(image, B, flat, backgrounds, tol);
     let fam;
