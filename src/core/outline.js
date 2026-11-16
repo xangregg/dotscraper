@@ -878,6 +878,24 @@ function measureFillAlpha(A, width, height, cands, ring) {
     low.sort((u, v) => u - v);
     return { fillAlpha: Math.min(1, Math.max(0, 1 - low[low.length >> 1])), pairs, measured: true };
 }
+// Hollow rings (ggplot's shape 1, R's pch 1): a stroke of one color with nothing inside, drawn over bands and other
+// dots (step1: red rings r 6.4, 1.75 px wide, about 0.31 of white's distance at their cores, some under a band that
+// lets 60% through). The fill around each pixel (localFill) minus the pixel is a ring's darkening, along one
+// direction from any background; thin ink of other colors (text, lines, other dots' rims) points elsewhere and is
+// unknown. The directions with HOLLOW_MIN_PIXELS of thin ink are tried, each by outlinesInP.
+const HOLLOW_MIN_INK = 40; // 0–255 units below the local fill, for the direction histogram
+const HOLLOW_DIR_BIN = 6; // degrees
+const HOLLOW_MIN_PIXELS = 300; // thin ink pixels in one direction (step1's rings: about 3000)
+const HOLLOW_MAX_DIRS = 4;
+const HOLLOW_SAME_DIR = Math.cos(3 * HOLLOW_DIR_BIN * Math.PI / 180); // directions closer than this are one
+const HOLLOW_OFF_ABS = 10; // 0–255 units off the ring's direction, or …
+const HOLLOW_OFF_REL = 0.3; // … this × the darkening along it, and the pixel is other ink
+// A hollow ring's inside is what is outside it (a filled outlined dot's isn't): the median over the isolated rings
+// of the distance between their insides' and surroundings' mean colors (step1: page and band alike)
+const HOLLOW_INSIDE_TOL = 12; // 0–255 units
+const HOLLOW_INSIDE_MARGIN = 1.5; // px clear of the ring, inside and out
+const HOLLOW_OUTSIDE_WIDTH = 2; // px of surroundings
+
 const RING_SAMPLES_PAIR = 45; // × 4 samples along a ring
 const PAIR_MARGIN = 1.5; // px clear of the other dots' rims
 const PAIR_MIN_INSIDE = 8;
@@ -902,6 +920,105 @@ export function findOutlines(image, B) {
 }
 
 /**
+ * Families of hollow rings, one per direction of thin ink that shows rings of one style whose insides match their
+ * surroundings. Each is as findOutlines returns, with fillAlpha 0 and `hollow`: the direction of its darkening and
+ * the color its rings show at αk on the page. O(pixels · (OPEN_DIRECTIONS · CLOSE_LEN + directions · ring work)).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} B  the page, 0–255
+ * @param {number[][]} known  unit directions from the page of colors already some family's (fills, outlines)
+ * @returns {object[]}
+ */
+export function findHollowRings(image, B, known = []) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const F = localFill(image);
+    const v = new Float32Array(3 * n);
+    const bins = new Map();
+    for (let p = 0; p < n; p++) {
+        const a = F[0][p] - data[4 * p];
+        const b = F[1][p] - data[4 * p + 1];
+        const c = F[2][p] - data[4 * p + 2];
+        v[3 * p] = a;
+        v[3 * p + 1] = b;
+        v[3 * p + 2] = c;
+        const m = Math.hypot(a, b, c);
+        if (m < HOLLOW_MIN_INK)
+            continue;
+        const key = Math.floor(Math.acos(c / m) * 180 / Math.PI / HOLLOW_DIR_BIN) * 1000 + Math.floor((Math.atan2(b, a) * 180 / Math.PI + 360) % 360 / HOLLOW_DIR_BIN);
+        const bin = bins.get(key) ?? { count: 0, sum: [0, 0, 0] };
+        bin.count++;
+        bin.sum[0] += a / m;
+        bin.sum[1] += b / m;
+        bin.sum[2] += c / m;
+        bins.set(key, bin);
+    }
+    const dirs = [];
+    const cos = (u, w) => u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
+    for (const bin of [...bins.values()].sort((x, y) => y.count - x.count)) {
+        if (bin.count < HOLLOW_MIN_PIXELS || dirs.length >= HOLLOW_MAX_DIRS)
+            break;
+        const l = Math.hypot(...bin.sum);
+        const u = bin.sum.map(x => x / l);
+        if (![...dirs, ...known].some(w => cos(u, w) > HOLLOW_SAME_DIR))
+            dirs.push(u);
+    }
+    const out = [];
+    for (const u of dirs.filter(d => !known.some(w => cos(d, w) > HOLLOW_SAME_DIR))) {
+        const P = new Float32Array(n);
+        const unknown = new Uint8Array(n);
+        for (let p = 0; p < n; p++) {
+            const a = v[3 * p];
+            const b = v[3 * p + 1];
+            const c = v[3 * p + 2];
+            const t = a * u[0] + b * u[1] + c * u[2];
+            if (Math.hypot(a - t * u[0], b - t * u[1], c - t * u[2]) > Math.max(HOLLOW_OFF_ABS, HOLLOW_OFF_REL * Math.abs(t)))
+                unknown[p] = 1;
+            else
+                P[p] = Math.max(0, t) / WHITE_LENGTH;
+        }
+        const found = outlinesInP(P, width, height, unknown);
+        if (!found || !hollowInside(image, found.isolated, found.ring))
+            continue;
+        const color = B.map((x, ch) => Math.round(Math.min(255, Math.max(0, x - u[ch] * found.ring.alpha * WHITE_LENGTH))));
+        out.push({ ...found, plane: null, fillAlpha: 0, fillAlphaMeasured: false, hollow: { dir: u, color } });
+    }
+    return out;
+}
+
+// whether the isolated rings' insides match their surroundings (HOLLOW_INSIDE_TOL)
+function hollowInside(image, rings, ring) {
+    const { width, height, data } = image;
+    const rIn = ring.inner * ring.radius - HOLLOW_INSIDE_MARGIN;
+    const r0 = ring.radius + HOLLOW_INSIDE_MARGIN;
+    const r1 = r0 + HOLLOW_OUTSIDE_WIDTH;
+    if (rIn <= 0)
+        return false;
+    const d = [];
+    for (const c of rings) {
+        const inside = [0, 0, 0, 0];
+        const outside = [0, 0, 0, 0];
+        for (let y = Math.max(0, Math.floor(c.y - r1)); y < Math.min(height, Math.ceil(c.y + r1)); y++) {
+            for (let x = Math.max(0, Math.floor(c.x - r1)); x < Math.min(width, Math.ceil(c.x + r1)); x++) {
+                const e = Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y);
+                const acc = e <= rIn ? inside : e >= r0 && e <= r1 ? outside : null;
+                if (!acc)
+                    continue;
+                const p = 4 * (y * width + x);
+                acc[0] += data[p];
+                acc[1] += data[p + 1];
+                acc[2] += data[p + 2];
+                acc[3]++;
+            }
+        }
+        if (inside[3] && outside[3])
+            d.push(Math.hypot(...[0, 1, 2].map(ch => inside[ch] / inside[3] - outside[ch] / outside[3])));
+    }
+    d.sort((a, b) => a - b);
+    return d.length > 0 && d[d.length >> 1] <= HOLLOW_INSIDE_TOL;
+}
+
+/**
  * Outlined dots whose outlines are a darker shade of each dot's own fill (JMP's outlined markers on a color scale:
  * fill 238, 218, 145 → ring 229, 199, 89; 189, 90, 78 → 146, 68, 58), if the image has them. Their fills needn't
  * lie in a plane, and a ring's distance off any plane depends on its fill, so P is read against the local fill
@@ -917,21 +1034,37 @@ export function findHueOutlines(image) {
 }
 
 /**
- * How much darker each pixel is than the fill around it: |F − X| over |white|, the RGB distance from the fill, F per
- * channel the largest of linear closings in OPEN_DIRECTIONS directions with a CLOSE_LEN segment. A closing fills
- * dark structures narrower than its segment (rings) and keeps edges between areas, whatever their colors. On bench1–2
- * gradient-opaque-stroke's isolated dots a ring is 85–101 units from its fill, from dark red to pale yellow, so the
- * distance reads every ring alike, about 0.21; relative to the fill (|F − X| / |F|) it read 0.27–0.61, and the
- * darkest fills' rings, stronger than the fitted αk, drew second dots stacked on the first.
- * O(pixels · OPEN_DIRECTIONS · CLOSE_LEN).
+ * How much darker each pixel is than the fill around it: |F − X| over |white|, the RGB distance from the fill
+ * (localFill). On bench1–2 gradient-opaque-stroke's isolated dots a ring is 85–101 units from its fill, from dark red
+ * to pale yellow, so the distance reads every ring alike, about 0.21; relative to the fill (|F − X| / |F|) it read
+ * 0.27–0.61, and the darkest fills' rings, stronger than the fitted αk, drew second dots stacked on the first.
  *
  * @param {import('./image.js').RgbaImage} image
  * @returns {Float32Array}  0 for fills, 1 for black on white
  */
 export function relativeDarkness(image) {
+    const { data } = image;
+    const F = localFill(image);
+    const out = new Float32Array(F[0].length);
+    for (let p = 0; p < out.length; p++) {
+        const d = Math.hypot(...[0, 1, 2].map(ch => Math.max(0, F[ch][p] - data[4 * p + ch])));
+        out[p] = Math.min(1, d / WHITE_LENGTH);
+    }
+    return out;
+}
+
+/**
+ * The fill around each pixel, per channel: the largest of linear closings in OPEN_DIRECTIONS directions with a
+ * CLOSE_LEN segment. A closing fills dark structures narrower than its segment (rings, thin lines) and keeps edges
+ * between areas, whatever their colors. O(pixels · OPEN_DIRECTIONS · CLOSE_LEN).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @returns {Float32Array[]}  three planes, 0–255
+ */
+export function localFill(image) {
     const { width, height, data } = image;
     const n = width * height;
-    const F = [0, 1, 2].map(ch => {
+    return [0, 1, 2].map(ch => {
         // closing(X) = −opening(−X)
         const neg = new Float32Array(n);
         for (let p = 0; p < n; p++)
@@ -944,12 +1077,6 @@ export function relativeDarkness(image) {
         }
         return fill;
     });
-    const out = new Float32Array(n);
-    for (let p = 0; p < n; p++) {
-        const d = Math.hypot(...[0, 1, 2].map(ch => Math.max(0, F[ch][p] - data[4 * p + ch])));
-        out[p] = Math.min(1, d / WHITE_LENGTH);
-    }
-    return out;
 }
 
 /**

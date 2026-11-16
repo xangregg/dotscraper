@@ -1830,3 +1830,87 @@ identical apart from times. Regression tests in test/axes.test.js and test/opaqu
 
 Results (full bench, diffed against the run before): droplet1 as above; every other row identical apart from times
 (hair1 checked again after the one-color rule). Regression test in test/outline.test.js.
+
+**bench-plos step1: the blue dots under a band of their own hue** (2026-11-16). No truth yet, so nothing is scored.
+
+- The blue family (translucent, α 0.56) had no radius: its levels were the CI band (181, 207, 240, 4800 flat pixels)
+  and the dots (149, 185, 234, 820). Solving a dot over the band (124, 168, 229) gives the dots' color 95, 149, 223
+  at α 0.66 and the band the same hue at α 0.46: on the family's line but no level of it, so every dot read as
+  count 2 and none as a whole one.
+- withoutBand (style.js findCandidates): when a translucent candidate shows no lone dot, it is measured again
+  without its first level's flat pixels; if that gives lone dots (DOT_MIN_ISOLATED) and, at their radius, the first
+  level's color is a solid region (solidRegion), the level is a band, recorded on the candidate. With exact colors
+  the image's JPEG noise leaves no lone dot either way; with noisy matching: levels 149, 185, 234 / 113, 161, 225 /
+  96, 150, 224, α 0.634, color 89, 145, 221, 15 lone dots, r 5.43.
+- solidRegion moved to style.js, REGION_MIN_SOLID 0.5 → 0.3: the band keeps 0.52 (every dot's antialiased rim
+  passes through its color); boxes and the page 0.71–0.99, regions of dots 0.00–0.06.
+- The band then read as partial coverage and the fit tiled it with false dots (194). regionColors no longer takes a
+  family's band for the family's color, so it is a region under the dots (on the family's line, "under" and "over"
+  predict the same colors; the tie goes to under): 133 dots.
+- The app and bench analyze a JPEG-noisy PNG as a JPEG when that finds more families with a radius (was: with a
+  style); with exact colors step1's family had a style and no radius, so noisy matching was never tried.
+- In the app: one family, α 0.63, r 5.4, 133 dots, 89 flagged (77 hidden: under the dark curve, the red band's
+  dashes and the masked hollow rings); unverified without truth. The hollow red rings are no family yet (see the
+  hollow-dots note above).
+
+Results (full bench, diffed against the run before): every row identical. Regression test in test/opaque.test.js.
+
+**Hollow rings, first family (step1)** (2026-11-16). No truth yet, so nothing is scored.
+
+- step1's red rings: r about 6.4, a 1.5–2 px stroke at about 0.31 of white's distance at its core, (232, 167, 153) on
+  the page. Under the red band each ring's darkening is 0.61, 0.59, 0.60 of the page's per channel: the band is a
+  layer over them letting 60% through. Where the bands overlap the color fits the blue band over the red one (blue
+  band 46% opaque): ggplot drew the points, then the red ribbon, then the blue.
+- outline.js findHollowRings: localFill (split out of relativeDarkness, unchanged) gives the fill around each pixel;
+  fill minus pixel is thin ink's darkening. Its directions with at least 300 pixels of 40 units or more (up to 4,
+  6° bins) are tried, skipping the found families' colors' directions from the page (hair1's black outlines,
+  step1's blue rims). Along a direction u, P = darkening·u / white's distance, and a pixel off u by more than
+  max(10, 0.3 × along) is unknown (text, the curve, the dashed line, the blue dots' rims). outlinesInP on that P:
+  12 isolated rings, r 6.38, inner 0.73, αk 0.37, rms 0.016. A family only when the isolated rings' insides match
+  their surroundings (median distance ≤ 12 units; a filled outlined dot's inside is its fill): fill α 0, and fit.js
+  reads no fill for such dots. The direction histogram on step1: gray 19 000 px (text), red 3000, blue 600.
+- families.js: hollow families are added after the others (and are the only ones when no other family shows),
+  fitted by their rings in drawing order as outlined dots are; the app calls them "hollow rings" in the ring color.
+- step1: 41 rings, every one on a real ring by eye. Missed: rings under the red band (60% of their ink, and the
+  band is read as a region under the dots: the band-over-band area votes "under", 1388 to 248), and rings crossing
+  blue dots, whose pixels are unknown in P. Undoing the two bands in drawing order would recover the first.
+- Cost: localFill on every image analyzed, about 0.55 µs per pixel; the full bench 1200 → 1311 s. Every bench row
+  identical: no other image gets a hollow family.
+
+**step1: two bands over the points, divided out in order** (2026-11-16). Truth by hand: 100 blue dots, 75 rings.
+
+- Before: 174 found (133 blue, 41 rings), P 0.655, R 0.651; blue P 0.549 (the bands' overlap tiled), rings R 0.547.
+- The image's flat colors fit one drawing order: points, then the red band (s 0.65: a blue dot under it, 168, 144,
+  165, is 237, 190, 179 + 0.65·(dot − white) per channel), then the blue band over both (overlap 169, 165, 191 = blue
+  band + 0.65·(red band − white); a dot under both 124, 135, 181 = overlap + 0.65²·(dot − white)). The blue dots are
+  44, 118, 212 at α 0.50, the blue band's own color: what read as their "level 2" (112, 161, 226) is a dot under the
+  blue band.
+- background.js: stacked regions. For each ordered pair of region colors, flat pixels on B₂ᵗᵒᵖ + s·(B₂ᵇᵒᵗᵗᵒᵐ − B)
+  within STACK_TOL 4, a 1000-pixel peak in s, and an overlap color 15 units or more from B and every region color
+  (kite1 and cells1: near-white pairs made "stacks" whose overlap was the page again): the upper band is a layer
+  with that s whatever the dots' votes (a band in their own hue can't be told by them), and the overlap is a region
+  of its own (base B, s the product; or the lower band's color, if that is under the dots), so its pixels don't vote
+  for the lower band (red: 1388 "under" to 248 before, 2 to 226 after).
+- Region seeds are the regions' bodies, pixels within 10 units of a region color that survive an opening by 1 px:
+  a dot's rim passes through a band's color and, as a seed, took the dot's middle for the band. (2 px removed bench3
+  ANOVA's band where it shows between packed dots: 204 → 202. A closed outline instead of nearest seeds was tried
+  and dropped: under JPEG noise it left parts of the bands.)
+- style.js findLevels: a first level whose color is thin over the image is dropped (with the bands divided out, the
+  bands' edges and the dots' rims at 206, 222, 246 came ahead of the dots' own color, which the step ratio then put
+  beyond the sequence). findCandidates: a translucent candidate without a lone dot whose first level is a solid
+  region at the other families' radius is a band, dropped (the red band with 2 flat pixels of a ring's core as a
+  weak second level).
+- jpeg.js restoreChroma: the guided filter's windows are weighted by how well their chroma-on-luma line fits, and a
+  pixel keeps its own chroma where they fit badly (three colors meet: a blue dot touching a red ring went from 148,
+  187, 236 to 178, 178, 204, off the family's line). GUIDE_RES_SCALE 800: at 100, beeswarm-boxplot's red was no
+  family; at 400–600, bench1 group-smoother.jpg's blue had no lone dot. At 800 it is worth 3 blue dots and 3 rings on
+  step1 and is neutral on the bench's JPEGs.
+- step1: 128 found for 175, P 0.992, R 0.726 (blue 73 of 100, rings 55 of 75 in the per-family match).
+  Misses: dots and rings under the dark curve and the dashed line (masked), blue dots touching rings, and dots on
+  the bands' edges, which the nearest-seed labels split.
+
+Results (full bench, diffed against the last commit): step1 new; bench2 smoother-ci.jpg 187 → 195 found (P 0.995,
+R 0.951), bench1 smoother-ci.jpg 97 → 98; bench2 group-smoother-ci 205 → 203 (P 0.985 → 0.995); bench2 smoother-ci
+203 → 201 (R 0.995 → 0.985: two dots on the band's edge, the body seeds); bench2 gradient-dots.jpg 196 → 195 (P 0.995
+→ 1.000); beeswarm-boxplot 682 → 687 (R 0.917 → 0.920); the rest identical or within 0.1 px RMSE. Tests: a synthetic
+two-band overlay in test/background.test.js and step1 against its truth in test/opaque.test.js.

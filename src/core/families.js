@@ -4,19 +4,16 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { estimateStyle, measureFamily, backgroundColor, flatMask, familyRings, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO } from './style.js';
+import { estimateStyle, measureFamily, backgroundColor, flatMask, familyRings, solidRegion, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
-import { findOutlines, findHueOutlines, fillFamilies, outlinesInP } from './outline.js';
+import { findOutlines, findHueOutlines, fillFamilies, outlinesInP, findHollowRings } from './outline.js';
 import { backgroundColors } from './axes.js';
-import { opening } from './layers.js';
 
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
 const DEFAULT_RADIUS = 5; // px, for the region test when no family has a radius yet
-const REGION_INK_TOL = 15; // 0–255 units (RGB distance) from a region's color, for its solidity (JPEG noise)
-const REGION_MIN_SOLID = 0.5; // share of a region's pixels an opening by the dots' radius keeps
 // The hue-outline reading (outline.js findHueOutlines, after colormap.js finds opaque fills on a scale) sees outlines
 // darker than each fill; dots of a few discrete fills in one dark stroke look like that too (engagement1: five blues
 // read as a scale fitted by rings found 22 of 49). Families
@@ -34,7 +31,7 @@ const MERGE_Q = [0.05, 0.95]; // a plausible 1 − α
 
 // a candidate's full color and α, as background.js wants them
 function candidateStyle(c) {
-    return c.kind === 'opaque' ? { color: c.seed, alpha: 1 } : { color: c.fit.c, alpha: c.fit.alpha };
+    return c.kind === 'opaque' ? { color: c.seed, alpha: 1 } : { color: c.fit.c, alpha: c.fit.alpha, ...(c.band ? { band: c.band } : {}) };
 }
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -200,6 +197,26 @@ function ringEstimate(image, est, others, backgrounds) {
     };
 }
 
+// Hollow-ring families (outline.findHollowRings), fitted by their rings in drawing order as outlined dots are, with
+// nothing inside. `colors`: the found families' colors, whose darkening directions are theirs.
+function hollowEstimates(image, background, colors) {
+    const B = background.color;
+    const known = colors.map(c => sub(B, c)).filter(d => Math.hypot(...d) > 0).map(d => d.map(x => x / Math.hypot(...d)));
+    return findHollowRings(image, B, known).map(found => {
+        const est = outlinedEstimate(image, background, found);
+        const { ring, hollow } = found;
+        est.style.color = hollow.color;
+        est.candidates[0].hollow = true;
+        // (the fit sees the ring ink in gray, as for other outlined dots)
+        est.style.fitColor = [0, 0, 0];
+        est.notes = [
+            `Hollow rings (${hollow.color.join(', ')} at their darkest on the page): each pixel is read as how much darker it is than what is around it, in the rings' own color, so other ink drops out, and the rings are fitted in drawing order, nothing inside them.`,
+            `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, darker than what is under it by ${Math.round(100 * ring.alpha)}% of white's distance from black (the median of ${found.isolated.length} isolated rings).`,
+        ];
+        return est;
+    });
+}
+
 // the estimate from outline.findOutlines or findHueOutlines
 function outlinedEstimate(image, background, found) {
     const { width, height } = image;
@@ -299,8 +316,10 @@ export function estimateFamilies(image, opts = {}) {
     if (scaled && !first)
         return { image, layers: null, estimates: [scaled] };
     first ??= estimateStyle(image, { jpeg });
-    if (!first.candidates.length)
-        return { image, layers: null, estimates: [{ ...first, image }] };
+    if (!first.candidates.length) {
+        const hollow = hollowEstimates(image, first.background, []);
+        return { image, layers: null, estimates: hollow.length ? hollow : [{ ...first, image }] };
+    }
     const B = first.background.color;
     const radius = first.style?.radius ?? first.candidates.find(c => c.radius)?.radius ?? DEFAULT_RADIUS;
     const layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
@@ -321,7 +340,10 @@ export function estimateFamilies(image, opts = {}) {
         estimates.push(estimateStyle(work, { family: k, candidates: first.candidates, jpeg }));
     const separated = unmixEstimates(work, estimates, tol, layers);
     if (overlays.length) {
-        const note = overlays.map(r => `A translucent layer of color ${r.color.map(Math.round).join(', ')} covers part of the plot, letting ${Math.round(100 * r.s)}% of what's under it through; it was divided out before finding dots.`);
+        const rgb = c => c.map(Math.round).join(', ');
+        const note = overlays.map(r => (r.stack
+            ? `Where the layer of color ${rgb(layers.regions[r.stack[0]].color)} lies over that of ${rgb(layers.regions[r.stack[1]].color)} (${rgb(r.color)}), both were divided out, in that order.`
+            : `A translucent layer of color ${rgb(r.color)} covers part of the plot, letting ${Math.round(100 * r.s)}% of what's under it through${r.stackedOver !== undefined ? `, and lies over the layer of ${rgb(layers.regions[r.stackedOver].color)}` : ''}; it was divided out before finding dots.`));
         for (const e of separated)
             e.notes = [...e.notes, ...note];
     }
@@ -336,24 +358,9 @@ export function estimateFamilies(image, opts = {}) {
     const ringed = kept.map(e => (e.familyMeasure?.kind === 'opaque' && e.familyMeasure.outline && !e.familyMeasure.pageFill && e.style
         ? ringEstimate(work, e, fills.filter(c => c !== e.style.color), backgrounds)
         : e));
-    return { image: work, layers, estimates: ringed };
-}
-
-// A region is solid when most of its pixels survive an opening by a dot's radius; a "region" of dots doesn't, and as
-// a background it would hide them (engagement1's cyan and delta1's black dots, families not found, read as regions:
-// 47 → 40 and 23 → 15 found). Measured: boxes, bands and the page 0.71–0.99, regions of dots or outlines 0.00–0.06.
-function solidRegion(image, color, radius) {
-    const { width, height, data } = image;
-    const mask = new Uint8Array(width * height);
-    let all = 0;
-    for (let p = 0; p < mask.length; p++) {
-        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= REGION_INK_TOL ? 1 : 0;
-        all += mask[p];
-    }
-    let kept = 0;
-    for (const v of opening(mask, width, height, radius))
-        kept += v;
-    return all > 0 && kept >= REGION_MIN_SOLID * all;
+    // hollow rings of a color no family found has (its fill, outline or stroke)
+    const known = ringed.filter(e => e.style).flatMap(e => [e.style.color, e.familyMeasure?.outline, e.familyMeasure?.stroke].filter(Boolean));
+    return { image: work, layers, estimates: [...ringed, ...hollowEstimates(work, first.background, known)] };
 }
 
 // A translucent family's radius is known only now: one far smaller than the others is text's antialiased grays

@@ -11,6 +11,7 @@
 
 const GUIDE_RADIUS = 4; // px: window half-width; covers a dot's edge and some background at r 5–13
 const GUIDE_EPS = 4; // (0–255 units)²: regularization; luma variance below this counts as flat
+const GUIDE_RES_SCALE = 800; // (0–255 units)²: a window's chroma variance its line leaves, at which it counts half
 
 // JPEG noise (jpegNoise): background pixels a few px from any mark that aren't exactly the background color
 const NOISE_NEAR = 12; // 0–255 units, max channel: a pixel this close to the background is background-ish …
@@ -72,30 +73,50 @@ function boxMean(src, width, height, r) {
     return out;
 }
 
-/** Guided filter of p with guide I: per-window least squares p ≈ a·I + b, coefficients averaged. */
+/**
+ * Guided filter of p with guide I: per-window least squares p ≈ a·I + b, coefficients averaged, each window weighted
+ * by how well its line fits (1 / (1 + residual variance / GUIDE_RES_SCALE)). Where the windows covering a pixel fit
+ * badly, three colors meet and chroma isn't a function of luma there: the pixel keeps its own value in proportion
+ * (step1: a blue dot touching a red ring, 148, 187, 236, was pulled to 178, 178, 204, off its family's line; at
+ * GUIDE_RES_SCALE 800, 170, 181, 211). Two-color windows fit less than exactly in a real JPEG, so the scale trades
+ * restoration at rims (bench1 medium-dots, rms within 1.5 px of r 5.6: 11.1 raw, 5.4 unweighted and at 800, 6.1 at
+ * 100) against keeping such pixels. Smaller scales cost elsewhere: at 100 beeswarm-boxplot's packed red dots, among
+ * gray and white, kept their fringes and were no family; at 400–600 bench1 group-smoother.jpg's blue lost its lone
+ * dots (radius unknown). step1 at 800 against unweighted: 73 blue dots of 100 against 70, 55 rings of 75 against 52.
+ */
 function guidedFilter(I, p, width, height, r, eps) {
     const n = width * height;
     const meanI = boxMean(I, width, height, r);
     const meanP = boxMean(p, width, height, r);
     const ip = new Float32Array(n);
     const ii = new Float32Array(n);
+    const pp = new Float32Array(n);
     for (let i = 0; i < n; i++) {
         ip[i] = I[i] * p[i];
         ii[i] = I[i] * I[i];
+        pp[i] = p[i] * p[i];
     }
     const meanIP = boxMean(ip, width, height, r);
     const meanII = boxMean(ii, width, height, r);
-    const a = new Float32Array(n);
-    const b = new Float32Array(n);
+    const meanPP = boxMean(pp, width, height, r);
+    const wa = new Float32Array(n);
+    const wb = new Float32Array(n);
+    const w = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-        a[i] = (meanIP[i] - meanI[i] * meanP[i]) / (meanII[i] - meanI[i] * meanI[i] + eps);
-        b[i] = meanP[i] - a[i] * meanI[i];
+        const cov = meanIP[i] - meanI[i] * meanP[i];
+        const a = cov / (meanII[i] - meanI[i] * meanI[i] + eps);
+        const b = meanP[i] - a * meanI[i];
+        const residual = Math.max(0, meanPP[i] - meanP[i] * meanP[i] - a * cov);
+        w[i] = 1 / (1 + residual / GUIDE_RES_SCALE);
+        wa[i] = w[i] * a;
+        wb[i] = w[i] * b;
     }
-    const meanA = boxMean(a, width, height, r);
-    const meanB = boxMean(b, width, height, r);
+    const meanW = boxMean(w, width, height, r);
+    const meanWA = boxMean(wa, width, height, r);
+    const meanWB = boxMean(wb, width, height, r);
     const q = new Float32Array(n);
     for (let i = 0; i < n; i++)
-        q[i] = meanA[i] * I[i] + meanB[i];
+        q[i] = meanWA[i] * I[i] + meanWB[i] + (1 - meanW[i]) * p[i];
     return q;
 }
 

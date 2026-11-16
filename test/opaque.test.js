@@ -584,3 +584,21 @@ test('regression: boxdots1, black dots over a red box and beside gray box outlin
     assert.ok(m.recall >= 0.95, `recall ${m.recall}, found ${found.length}`);
     assert.ok(m.precision >= 0.92, `precision ${m.precision}, found ${found.length}`);
 });
+
+const STEP1 = 'step1-10.1371-journal.pone.0360641';
+
+test('regression: step1, blue dots and hollow red rings under two bands, one over the other', { skip: plosSkip(STEP1) }, () => {
+    // before: the blue CI band (in the dots' own hue) was the blue family's level 1, the radius unknown; then, the
+    // band read as a region under the dots and the red one too (their overlap voted "under"), 133 blue dots for 100
+    // (P 0.55) and 41 hollow rings for 75. The bands are layers, red then blue over the points: divided out in order,
+    // the blue family is α 0.50, and the rings under the red band show.
+    const { results, found, m } = plos(STEP1);
+    assert.equal(results.length, 2);
+    const [blue, rings] = results;
+    assert.ok(Math.abs(blue.est.style.alpha - 0.5) <= 0.05, `alpha ${blue.est.style.alpha}`);
+    assert.ok(Math.abs(blue.est.style.radius - 5.4) <= 0.3, `radius ${blue.est.style.radius}`);
+    assert.equal(rings.est.style.layered.fillAlpha, 0, 'hollow');
+    assert.ok(Math.abs(rings.est.style.radius - 6.4) <= 0.3, `ring radius ${rings.est.style.radius}`);
+    assert.ok(m.precision >= 0.95, `precision ${m.precision}, found ${found.length}`);
+    assert.ok(m.recall >= 0.7, `recall ${m.recall}, found ${found.length}`);
+});

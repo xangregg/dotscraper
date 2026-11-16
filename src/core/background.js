@@ -13,6 +13,7 @@ import { nearestTransform, opening } from './layers.js';
 
 const REGION_MIN_PIXELS = 1500; // flat pixels of one color for a region (bench3's ANOVA band: two boxes of about 2600)
 const REGION_COLOR_TOL = 3; // 0–255 units (RGB distance): a pixel this close to a region's color is that color
+const BAND_COLOR_TOL = 6; // 0–255 units (RGB distance) from a family's band (its first level's color as measured)
 const ON_LINE_REL = 0.2; // a color within this × its distance along a family's line is that family's
 const ON_LINE_ABS = 4; // 0–255 units
 const MODE_MIN_T = 15; // 0–255 units: region pixels at least this far from B₂ show a dot's offset
@@ -21,6 +22,19 @@ const MODE_MIN_VOTES = 50; // flat dot pixels in the region needed to decide (fi
 // A region is an area, not a stroke: its pixels must hold discs this many dot radii across. dog-ages' black curve
 // and text (52 000 flat pixels after upscaling) are strokes.
 const REGION_OPEN_RADII = 0.75;
+// Two bands drawn one over the other overlap in a color of their own: the upper band's B₂ plus s times the lower's
+// offset from B (step1: the blue band, 181, 207, 240, over the red, 237, 190, 179: 169, 165, 191 = blue + 0.65·(red −
+// B) in each channel, 2482 flat pixels; the other order fits no channel). The upper band is then a layer over
+// everything, with that s, whatever the dots' votes say (a band in the dots' own hue can't be told by them), and the
+// overlap is a region of its own, so its pixels don't vote for the lower band (step1's red band: 1388 "under" to 248,
+// most from the overlap).
+const REGION_RIM_OPENING = 1; // px: thinner runs of a region's color are rims, not the region (bench3 ANOVA: its
+                              // band shows between packed dots in slivers that 2 px removed)
+const REGION_SEED_TOL = 10; // 0–255 units from a region's color, for its seeds (JPEG noise: step1's band 4–8 off)
+const STACK_TOL = 4; // 0–255 units off the line from the upper band along the lower's offset
+const STACK_MIN_PIXELS = 1000; // flat pixels at one s
+const STACK_S_RANGE = [0.05, 0.95];
+const STACK_MIN_SEPARATION = 15; // 0–255 units from B and every region color
 const S_BIN = 0.02; // histogram bin for the overlay's s
 const S_MAX = 0.95; // an "overlay" that keeps more than this of what's under it isn't one (nicest language's white
                     // page read as one with s = 1)
@@ -49,7 +63,8 @@ function unit(v) {
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B
- * @param {{color: number[], alpha: number}[]} families  full color and α (1 for opaque)
+ * @param {{color: number[], alpha: number, band?: number[]}[]} families  full color and α (1 for opaque); band: a
+ *   region color in a translucent family's own hue
  * @param {Uint8Array} flat  style.flatMask
  * @param {number} radius  px, the dots' radius
  * @returns {number[][]}
@@ -64,9 +79,12 @@ export function regionColors(image, B, families, flat, radius) {
         counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     const dirs = families.map(f => unit(sub(f.color, B)));
+    // (a band in a translucent family's own hue lies on its line but is no level of it: style.js withoutBand)
     const isFamily = c => families.some((f, k) => {
         if (Math.hypot(...sub(c, f.color)) <= REGION_COLOR_TOL * 3)
             return true;
+        if (f.band && Math.hypot(...sub(c, f.band)) <= BAND_COLOR_TOL)
+            return false;
         if (f.alpha >= 1)
             return false;
         const { t, perp } = offLine(sub(c, B), dirs[k]);
@@ -105,8 +123,10 @@ export function regionColors(image, B, families, flat, radius) {
  * @param {{color: number[], alpha: number}[]} families
  * @param {Uint8Array} flat
  * @param {number} radius  px, the dots' radius
- * @returns {{regions: {color: number[], mode: 'over'|'under'|'unknown', s: number|null, pixels: number}[],
- *            label: Uint8Array}}  label: 0 the main background, k the region k − 1
+ * @returns {{regions: {color: number[], mode: 'over'|'under'|'unknown', s: number|null, pixels: number,
+ *            base?: number[], stack?: number[], stackedOver?: number}[], label: Uint8Array}}  label: 0 the main
+ *   background, k the region k − 1; an overlap of two bands (stack: the upper's and lower's indices) comes after the
+ *   region colors, with the base its pixels are undone to
  */
 export function backgroundRegions(image, B, families, flat, radius) {
     const { width, height, data } = image;
@@ -115,15 +135,39 @@ export function backgroundRegions(image, B, families, flat, radius) {
     const label = new Uint8Array(n);
     if (!colors.length)
         return { regions: [], label };
-    // seeds: pixels of the background or a region color; every pixel takes its nearest seed's region
-    const all = [B, ...colors];
+    const stacks = stackedRegions(image, B, colors, flat);
+    // seeds: pixels of the background or a region color; every pixel takes its nearest seed's region. Region seeds
+    // are the regions' bodies: a dot's antialiased rim passes through a band's color, and as seeds its rim pixels
+    // took the dot's middle for the band (step1: a dot beside the blue band, 149, 185, 234, divided out to 178,
+    // 178, 204, off its family's line and masked); JPEG noise puts a band's pixels 4–8 units off its color.
+    const all = [B, ...colors, ...stacks.map(st => st.color)];
     const seedOf = new Int8Array(n).fill(-1);
     const seeds = new Uint8Array(n);
+    const near = new Int8Array(n).fill(-1);
+    const inRegion = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
         const c = [data[4 * p], data[4 * p + 1], data[4 * p + 2]];
-        const k = all.findIndex(b => Math.hypot(...sub(c, b)) <= REGION_COLOR_TOL);
-        if (k >= 0) {
-            seedOf[p] = k;
+        if (Math.hypot(...sub(c, B)) <= REGION_COLOR_TOL) {
+            seedOf[p] = 0;
+            seeds[p] = 1;
+            continue;
+        }
+        let best = -1;
+        let bestD = REGION_SEED_TOL;
+        for (let k = 1; k < all.length; k++) {
+            const d = Math.hypot(...sub(c, all[k]));
+            if (d <= bestD) {
+                best = k;
+                bestD = d;
+            }
+        }
+        near[p] = best;
+        inRegion[p] = best > 0 ? 1 : 0;
+    }
+    const body = opening(inRegion, width, height, REGION_RIM_OPENING);
+    for (let p = 0; p < n; p++) {
+        if (body[p]) {
+            seedOf[p] = near[p];
             seeds[p] = 1;
         }
     }
@@ -131,7 +175,65 @@ export function backgroundRegions(image, B, families, flat, radius) {
     for (let p = 0; p < n; p++)
         label[p] = nearest[p] >= 0 ? seedOf[nearest[p]] : 0;
     const regions = colors.map((c, i) => regionMode(image, B, c, families, flat, label, i + 1));
+    for (const st of stacks) {
+        regions[st.top] = { ...regions[st.top], mode: 'over', s: st.s, stackedOver: st.bottom };
+        const low = regions[st.bottom];
+        // under both: what is under the lower band too if it is a layer, else the lower band with the dots over it
+        regions.push(low.mode === 'over'
+            ? { color: st.color, mode: 'over', s: st.s * low.s, base: B, pixels: 0, stack: [st.top, st.bottom] }
+            : { color: st.color, mode: 'over', s: st.s, base: low.color, pixels: 0, stack: [st.top, st.bottom] });
+    }
+    for (let p = 0; p < n; p++) {
+        if (label[p] > colors.length)
+            regions[label[p] - 1].pixels++;
+    }
     return { regions, label };
+}
+
+// Pairs of region colors where one band lies over the other: flat pixels on B₂ᵗᵒᵖ + s·(B₂ᵇᵒᵗᵗᵒᵐ − B), a
+// STACK_MIN_PIXELS peak in s. O(regions² · pixels).
+function stackedRegions(image, B, colors, flat) {
+    const { data } = image;
+    const out = [];
+    colors.forEach((top, i) => colors.forEach((bottom, j) => {
+        if (i === j || out.some(st => st.top === j && st.bottom === i))
+            return;
+        const d = sub(bottom, B);
+        const dd = dot(d, d);
+        const hist = new Map();
+        for (let p = 0; p < flat.length; p++) {
+            if (!flat[p])
+                continue;
+            const e = sub([data[4 * p], data[4 * p + 1], data[4 * p + 2]], top);
+            const sp = dot(e, d) / dd;
+            if (sp <= STACK_S_RANGE[0] || sp >= STACK_S_RANGE[1] || Math.hypot(e[0] - sp * d[0], e[1] - sp * d[1], e[2] - sp * d[2]) > STACK_TOL)
+                continue;
+            const bin = Math.round(sp / S_BIN);
+            const h = hist.get(bin) ?? { count: 0, sum: [0, 0, 0] };
+            h.count++;
+            h.sum[0] += data[4 * p];
+            h.sum[1] += data[4 * p + 1];
+            h.sum[2] += data[4 * p + 2];
+            hist.set(bin, h);
+        }
+        // the peak, with its neighbors (a noisy s straddles bins)
+        let best = null;
+        for (const [bin, h] of hist) {
+            const count = h.count + (hist.get(bin - 1)?.count ?? 0) + (hist.get(bin + 1)?.count ?? 0);
+            if (!best || count > best.count)
+                best = { bin, count };
+        }
+        if (!best || best.count < STACK_MIN_PIXELS)
+            return;
+        const h = hist.get(best.bin);
+        const color = h.sum.map(v => v / h.count);
+        // an overlap is a color of its own (kite1: its page and a white region made a "stack" whose overlap was the
+        // page again, at s 0.13)
+        if ([B, ...colors].some(c => Math.hypot(...sub(c, color)) < STACK_MIN_SEPARATION))
+            return;
+        out.push({ top: i, bottom: j, color, s: dot(sub(color, top), d) / dd });
+    }));
+    return out;
 }
 
 // over or under, from the flat pixels inside the region that a dot shows in: which direction their offsets from B₂
@@ -200,7 +302,8 @@ function regionMode(image, B, B2, families, flat, label, k) {
 }
 
 /**
- * The image with overlays removed: inside a region drawn over the dots, U = B + (I − B₂) / s. Pixels on the
+ * The image with overlays removed: inside a region drawn over the dots, U = B + (I − B₂) / s (an overlap of two bands:
+ * its base, B or the lower band's color, for B). Pixels on the
  * region's edge are only partly under the layer, and inverting them as if wholly under it overshoots (bench1
  * smoother-ci: slivers where the band's edge crosses a dot became (255, 214, 118), an "opaque family" that took
  * every orange dot a second time), so they are left as they are, for the masks.
@@ -223,8 +326,9 @@ export function removeOverlays(image, B, layers) {
             || (p >= width && label[p - width] !== label[p]) || (p + width < label.length && label[p + width] !== label[p]);
         if (edge)
             continue;
+        const base = r.base ?? B;
         for (let ch = 0; ch < 3; ch++)
-            out[4 * p + ch] = Math.round(B[ch] + (data[4 * p + ch] - r.color[ch]) / r.s);
+            out[4 * p + ch] = Math.round(base[ch] + (data[4 * p + ch] - r.color[ch]) / r.s);
     }
     return { width, height, data: out };
 }

@@ -196,7 +196,8 @@ function colorOf(k) {
         return null;
     if (f.picked)
         return f.picked;
-    if (f.estimate.scale)
+    // (hollow rings are one color, though fitted as outlined dots are)
+    if (f.estimate.scale && !f.estimate.candidates[0]?.hollow)
         return null;
     return f.estimate.familyMeasure?.seed ?? f.estimate.style?.color ?? null;
 }
@@ -217,7 +218,7 @@ function familyKind(k) {
     let kind;
     if (est.scale === 'outline') {
         const c = est.candidates[0];
-        kind = `outlined, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`;
+        kind = c.hollow ? 'hollow rings' : `outlined, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`;
     }
     else if (est.scale === 'opaque') {
         kind = 'colored by a scale, opaque';
@@ -469,9 +470,10 @@ function analyze({ auto = false } = {}) {
     // A PNG made from a JPEG (a screenshot of a web figure) fails the exact-color tests; when the image has JPEG noise
     // and noisy color matching finds more families (all of them, when none showed with exact colors), analyze it as
     // a JPEG. Only on loading: the box is the user's after. Not whenever the noise shows: restoring chroma cost
-    // pathogen precision (0.972 → 0.637), which worked as is.
+    // pathogen precision (0.972 → 0.637), which worked as is. A family counts once it has a radius: without one it
+    // can't be fitted (step1: the blue dots, radius unknown with exact colors, 5.4 px with noisy matching).
     if (auto && !state.jpeg && state.noise.likely) {
-        const found = est => est.estimates.filter(e => e.style).length;
+        const found = est => est.estimates.filter(e => e.style?.radius).length;
         const exact = found(prepared);
         const noisy = estimateFamilies(restoreChroma(state.image), { jpeg: true });
         if (found(noisy) > exact) {
@@ -479,7 +481,7 @@ function analyze({ auto = false } = {}) {
             prepared = noisy;
             const note = exact
                 ? `Noisy color matching found more dot families than exact colors (${found(noisy)} against ${exact}), and the image has JPEG-like noise (${noiseText()}), so it was turned on.`
-                : `No dot family showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
+                : `No dot family with a radius showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
             for (const e of prepared.estimates)
                 e.notes = [note, ...e.notes];
         }
@@ -492,7 +494,7 @@ function analyze({ auto = false } = {}) {
     state.dilate = null;
     selectFamily(0);
     $('analysis-time').textContent = `families ${Math.round(t1 - t0)} ms`;
-    setStatus(auto && state.jpegAuto ? 'No dot family with exact colors: noisy color matching turned on (JPEG-like noise).' : '');
+    setStatus(auto && state.jpegAuto ? 'No dot family with a radius from exact colors: noisy color matching turned on (JPEG-like noise).' : '');
     // what Find dots needs, if anything, outranks the note (the family notes keep it)
     renderFitControls();
 }
@@ -635,6 +637,7 @@ function renderStylePanel() {
     }
     const c0 = est.candidates[0];
     const scaleText = est.scale !== 'outline' ? 'varies by dot (color scale)'
+        : c0?.hollow ? `${style?.color.join(', ')} at the rings' darkest, nothing inside (rings fitted)`
         : c0?.oneColor ? 'one fill color, projected out (rings fitted)'
         : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale; rings fitted)';
     $('style-c').textContent = !style ? '–' : est.scale ? scaleText : style.color.map(v => v.toFixed(1)).join(', ');

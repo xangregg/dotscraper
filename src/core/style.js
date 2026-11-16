@@ -105,6 +105,12 @@ const LAYER_MIN_OFF = 20; // 0–255 units
 // group-large, α 0.33: red over blue and blue over red as two purple families with no isolated dot). Measured: the
 // blends' levels within 1.3 of a stack, the real families' 86 or more away.
 const BLEND_TOL = 12; // 0–255 units
+// A region is solid when much of its color survives an opening by a dot's radius; a "region" of dots doesn't
+// (solidRegion). Measured: boxes, bands and the page 0.71–0.99; step1's blue band 0.52, every blue dot's antialiased
+// rim passing through its color; regions made of dots or outlines 0.00–0.06 (engagement1's cyan, delta1's black,
+// phase1's outlines).
+const REGION_INK_TOL = 15; // 0–255 units (RGB distance) from a region's color (JPEG noise)
+const REGION_MIN_SOLID = 0.3; // share of the region's color an opening by the dots' radius keeps
 const BLEND_DEPTH = 4; // dots in a stack
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
@@ -404,6 +410,12 @@ export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
         }
         return { t: b * LEVEL_BIN, color: sum.map(s => s / count), count };
     });
+    // A first level fills single dots' interiors, so it is thick; one that is only lines is the rims of the next
+    // level's dots or other thin ink in their hue (step1 with its bands divided out: their edges, left as they were,
+    // and the dots' rims at 206, 222, 246, 94 flat pixels, ahead of the dots' own 149, 185, 233, 374, which the step
+    // ratio then put beyond the sequence)
+    while (found.length > 1 && isThin(image, found[0].color))
+        found.shift();
     let nSeq = found.length;
     for (let i = 1; i < found.length; i++) {
         const prevStep = found[i - 1].t - (i > 1 ? found[i - 2].t : 0);
@@ -2287,7 +2299,16 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
     // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
     // dots as an opaque family).
-    const translucent = familyCandidates(image, B, flat, tol).filter(c => c.translucent && !isThin(image, c.levels[0].color));
+    const measured = familyCandidates(image, B, flat, tol).filter(c => c.translucent && !isThin(image, c.levels[0].color))
+        .map(c => withoutBand(image, B, flat, c, tol));
+    // A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with
+    // a few pixels of other ink on its line for a weak second level (step1: the red band, 9359 flat pixels, and 2 at
+    // a red ring's core); dropped, it is a region (background.js)
+    const lone = measured.map(c => lonelyDots(image, c, tol));
+    const radii = lone.filter(l => l.length >= DOT_MIN_ISOLATED).map(l => median(l.map(d => d.r)));
+    const translucent = radii.length
+        ? measured.filter((c, i) => lone[i].length || !solidRegion(image, c.levels[0].color, Math.max(...radii)))
+        : measured;
     for (const c of translucent)
         c.kind = 'translucent';
     dropBlends(translucent, B);
@@ -2297,6 +2318,59 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
     const real = translucent.filter(t => !t.levels.some(L => rims.some(c => Math.hypot(...c.map((v, ch) => v - L.color[ch])) <= CLUSTER_TOL)));
     return [...real, ...opaque];
+}
+
+/**
+ * Whether pixels of `color` form a solid region rather than dots: REGION_MIN_SOLID of them survive an opening by the
+ * dots' radius. O(pixels · radius).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} color  0–255
+ * @param {number} radius  px, the dots'
+ * @returns {boolean}
+ */
+export function solidRegion(image, color, radius) {
+    const { width, height, data } = image;
+    const mask = new Uint8Array(width * height);
+    let all = 0;
+    for (let p = 0; p < mask.length; p++) {
+        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= REGION_INK_TOL ? 1 : 0;
+        all += mask[p];
+    }
+    let kept = 0;
+    for (const v of opening(mask, width, height, radius))
+        kept += v;
+    return all > 0 && kept >= REGION_MIN_SOLID * all;
+}
+
+// A translucent candidate's first level can be a band in the family's own hue under or over the dots (step1: the
+// blue CI band, 181, 207, 240 at α 0.46 of the dots' color, 4800 flat pixels against the lone dots' 820, read as level
+// 1 with the dots as level 2, so no dot was a whole one, count 1, and the radius was unknown). When no lone dot shows,
+// the family is measured again without that level's pixels; it is a band if that gives lone dots and their radius
+// shows the level's color as a solid region. The band is then a region of its own (background.js).
+function withoutBand(image, B, flat, c, tol) {
+    if (c.levels.length < 2 || lonelyDots(image, c, tol).length)
+        return c;
+    const L1 = c.levels[0].color;
+    const { data } = image;
+    const rest = flat.slice();
+    for (let p = 0; p < rest.length; p++) {
+        if (Math.hypot(data[4 * p] - L1[0], data[4 * p + 1] - L1[1], data[4 * p + 2] - L1[2]) <= tol.minLevelT)
+            rest[p] = 0;
+    }
+    const alt = measureFamily(image, B, c.levels[1].color, rest, tol);
+    if (!alt.translucent || !alt.levels.length)
+        return c;
+    const lone = lonelyDots(image, alt, tol);
+    if (lone.length < DOT_MIN_ISOLATED || !solidRegion(image, L1, median(lone.map(d => d.r))))
+        return c;
+    return { ...alt, band: L1 };
+}
+
+// isolated whole dots under a translucent candidate's levels
+function lonelyDots(image, c, tol) {
+    const D = countImage(c.proj, c.line, levelTable(c.line.B, c.levels, c.fit), tol);
+    return isolatedDots(D, image.width, image.height, tol);
 }
 
 // Removes, in place, translucent candidates whose every measured level is a stack of up to BLEND_DEPTH dots of two

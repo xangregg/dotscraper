@@ -711,9 +711,12 @@ export function createFit(input) {
     // (1 − αf)·(what is under it) + αf·f: f = f0 + (t − t̂) / αf, the median over those pixels. Interior:
     // FILL_FIT_INSET px inside the fill, clear of every ring. Returns whether f changed.
     function fitFill(id) {
+        const aF = style.layered.fillAlpha;
+        // a hollow dot has no fill to read
+        if (!aF)
+            return false;
         const p = pos.get(id);
         const z = model.zOf(id);
-        const aF = style.layered.fillAlpha;
         const f0 = model.fillOf(id);
         const rIn = model.fillRadius - FILL_FIT_INSET;
         const above = near(p.x, p.y, 2 * style.radius).filter(o => o !== id && model.zOf(o) > z).map(o => pos.get(o));

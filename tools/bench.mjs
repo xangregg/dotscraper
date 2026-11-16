@@ -85,13 +85,13 @@ export function extractAll(image, jpeg = false) {
     if (jpeg)
         image = restoreChroma(image);
     let { estimates } = estimateFamilies(image, { jpeg });
-    // as the app does: a PNG with JPEG noise is analyzed as a JPEG when that finds more families (all of them, when
-    // none shows with exact colors)
+    // as the app does: a PNG with JPEG noise is analyzed as a JPEG when that finds more families with a radius (all
+    // of them, when none shows with exact colors)
     let jpegAuto = false;
     if (!jpeg && jpegNoise(source).likely) {
         const restored = restoreChroma(source);
         const noisy = estimateFamilies(restored, { jpeg: true }).estimates;
-        const found = es => es.filter(e => e.style).length;
+        const found = es => es.filter(e => e.style?.radius).length;
         if (found(noisy) > found(estimates)) {
             jpegAuto = true;
             image = restored;

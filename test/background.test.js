@@ -107,3 +107,43 @@ test('a thick stroke is not a region (dog-ages: its black curve and text)', () =
     // strokes 6 px wide: narrower than the opening's disc (1.5 dot radii across)
     assert.equal(backgroundRegions(drawn, WHITE, [ORANGE], flatMask(drawn), ORANGE.radius).regions.length, 0);
 });
+
+test('two bands drawn over the dots, one over the other: the upper is a layer by their overlap, which is divided out to the dots on white', () => {
+    // red band, then blue band over it, both over the dots (step1's ribbons); the overlap is a color of its own
+    const bands = [{ rect: [30, 0, 130, 80], color: [220, 60, 40], alpha: 0.4 }, { rect: [90, 0, 180, 80], color: [40, 110, 210], alpha: 0.35 }];
+    const model = createDotModel(solidImage(W, H, WHITE), ORANGE);
+    model.addAll(dots());
+    const clean = quantize(model.image);
+    const im = model.image;
+    for (const { rect, color, alpha } of bands) {
+        for (let y = rect[1]; y < rect[3]; y++) {
+            for (let x = rect[0]; x < rect[2]; x++) {
+                for (let ch = 0; ch < 3; ch++)
+                    im.data[3 * (y * W + x) + ch] = color[ch] * alpha + im.data[3 * (y * W + x) + ch] * (1 - alpha);
+            }
+        }
+    }
+    const drawn = quantize(im);
+    const layers = backgroundRegions(drawn, WHITE, [ORANGE], flatMask(drawn), ORANGE.radius);
+    const red = layers.regions.findIndex(r => r.color[0] > 200 && !r.stack);
+    const blue = layers.regions.findIndex(r => r.color[2] > 200 && r.color[0] < 200 && !r.stack);
+    assert.ok(red >= 0 && blue >= 0, JSON.stringify(layers.regions.map(r => r.color)));
+    assert.equal(layers.regions[blue].mode, 'over');
+    near(layers.regions[blue].s, 0.65, 0.03, 'blue band s (from the overlap)');
+    assert.equal(layers.regions[blue].stackedOver, red);
+    const overlap = layers.regions.find(r => r.stack);
+    assert.ok(overlap, 'the overlap is a region');
+    assert.deepEqual(overlap.stack, [blue, red]);
+    near(overlap.s, 0.6 * 0.65, 0.03, 'overlap s');
+    const fixed = removeOverlays(drawn, WHITE, layers);
+    // inside the overlap the dots look as they would on white (x 92–112: the dots at x 102, wholly inside it; the
+    // ones at x 124 straddle the red band's edge at 130 and are split along it, as background.js says)
+    let worst = 0;
+    for (let y = 2; y < H - 2; y++) {
+        for (let x = 92; x < 112; x++) {
+            for (let ch = 0; ch < 3; ch++)
+                worst = Math.max(worst, Math.abs(fixed.data[4 * (y * W + x) + ch] - clean.data[4 * (y * W + x) + ch]));
+        }
+    }
+    assert.ok(worst <= 6, `largest difference inside the overlap ${worst}`);
+});

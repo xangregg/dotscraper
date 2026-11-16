@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { pixelCoverage } from '../src/core/render.js';
-import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness } from '../src/core/outline.js';
+import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness, findHollowRings } from '../src/core/outline.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
 import { createRng } from '../src/core/rng.js';
@@ -346,4 +346,27 @@ test('regression: droplet1, opaque black outlines around fills of a diverging sc
     const m = matchDots(truth, fit, est.style.radius / 2);
     assert.ok(m.precision >= 0.85, `precision ${m.precision}, found ${fit.length}`);
     assert.ok(m.recall >= 0.7, `recall ${m.recall}, found ${fit.length}`);
+});
+
+const HOLLOW_RED = [200, 60, 40];
+
+test('findHollowRings: red rings with nothing inside, over gridlines and beside a black "o", are one hollow family', () => {
+    const dots = scene();
+    const image = outlinedImage(dots, { ringColor: HOLLOW_RED, fillAlpha: 0, glyph: { x: 330, y: 220 } });
+    const found = findHollowRings(image, WHITE);
+    assert.equal(found.length, 1);
+    const [f] = found;
+    assert.equal(f.fillAlpha, 0);
+    assert.ok(Math.abs(f.ring.radius - RADIUS) <= 0.5, `radius ${f.ring.radius}`);
+    // the darkening's direction is the ring color's from white
+    const d = WHITE.map((v, ch) => v - HOLLOW_RED[ch]);
+    const cos = d.reduce((s, v, ch) => s + v * f.hollow.dir[ch], 0) / Math.hypot(...d);
+    assert.ok(cos > 0.99, `direction ${f.hollow.dir}`);
+    // a known family's color is skipped
+    assert.equal(findHollowRings(image, WHITE, [d.map(v => v / Math.hypot(...d))]).length, 0);
+});
+
+test('findHollowRings: outlined dots with fills are not hollow', () => {
+    const image = outlinedImage(scene(), { ringColor: HOLLOW_RED, fillAlpha: 1 });
+    assert.equal(findHollowRings(image, WHITE).length, 0);
 });
