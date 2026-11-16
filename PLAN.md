@@ -1688,7 +1688,7 @@ outlines on a white page. The color clusters leave out the page's color, so no f
   dots). The fit can't see a white fill on white, so it fits the outline's color (style.fitColor); the display
   keeps the white fill. Another family's page-colored fill is no one's ring owner or "other color".
 
-Results: tumour1 no family → 41 for 44, P 0.976 R 0.909; hair1 gains its white family, 11 dots (one of the four zeros
-is hidden), the pink unchanged at 16. hair1's CSV has its lane codes swapped against its note (lane 1's 18 values
-are the pink DT dots), which the old lane-order bug had hidden, so its row scores 0.222 until the CSV is fixed. Every
-other row identical (full bench, without times).
+Results: tumour1 no family → 41 for 44, P 0.976 R 0.909; hair1 gains its white family, 11 dots, the pink unchanged at
+16. hair1's CSV had its lane codes swapped against its note, which the old lane-order bug had hidden; with the CSV
+fixed (2026-11-15) hair1 scores 27 for 29, P 1.000 R 0.931, RMSE 0.49 px: all 11 white PBS dots, 16 of 18 pink DT
+(one of three ties at 5.88 and one of four zeros missed). Every other row identical (full bench, without times).

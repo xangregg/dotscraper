@@ -149,7 +149,7 @@ bench-nature: Nature figures (local only)
 | escape1-18-20 | data | exact | 38 | 38 | 1.000 | 1.000 | 0 | 0.07 | 3 | 8.5 | 1.7 |  |
 | escape2-94-51 | data | exact | 145 | 143 | 1.000 | 0.986 | -2 | 0.20 | 29 | 8.4 | 2.5 |  |
 | fanc2 | data | exact | 52 | 50 | 1.000 | 0.962 | -2 | 0.04 | 8 | 15.1 | 5.0 | Overlaps drawn in one flat black. |
-| hair1 | data | exact | 29 | 27 | 0.222 | 0.207 | -2 | 0.03 | 0 | 19.1 | 8.1 | White dots in black outlines (page-filled family, 11 of 12; one zero hidden) and 16 pink. The CSV's lane codes are swapped against its note (lane 1's values are the pink DT dots), so the scores are wrong; by eye both families are right. |
+| hair1 | data | exact | 29 | 27 | 1.000 | 0.931 | -2 | 0.49 | 0 | 19.1 | 8.0 | White dots in black outlines (page-filled family): all 11 PBS. Pink DT: 16 of 18, missing one of three ties at 5.88 and one of four zeros. |
 | hair2 | data | exact | 18 | 10 | 0.900 | 0.500 | -8 | 0.64 | 2 | 30.6 | 5.8 | Pink in black outlines found; the white fills are the page's color and aren't. |
 | hair3 | data | exact | 34 | 29 | 0.966 | 0.824 | -5 | 0.93 | 1 | 28.3 | 28.9 | Pink in black strokes found; the gray dots in black strokes aren't. |
 | kite1 | by hand | | | **radius unknown** | | | | | | | | Teal family has no radius (a light band in its hue?); pink is found. |

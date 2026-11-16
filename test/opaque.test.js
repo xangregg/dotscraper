@@ -503,7 +503,8 @@ const TUMOUR1 = 'tumour1-10.1038-s41586-026-11051-z';
 test('regression: hair1, white dots in black outlines on a white bar are a family, without letters or gaps between pink dots', { skip: !existsSync(`${NATURE}${HAIR1}.png`) && 'bench-nature hair1 absent' }, () => {
     // before: no family (the page's color is no cluster); then 26 dots, 15 of them in letters' counters (P, B, D,
     // the title's) and the gaps among the pink dots
-    const results = extractAll(readImage(`${NATURE}${HAIR1}.png`));
+    const image = readImage(`${NATURE}${HAIR1}.png`);
+    const results = extractAll(image);
     const white = results.filter(r => r.est.familyMeasure.pageFill);
     assert.equal(white.length, 1);
     const dots = white[0].fit.dots;
@@ -512,6 +513,11 @@ test('regression: hair1, white dots in black outlines on a white bar are a famil
     assert.ok(dots.every(d => d.x > 470 && d.x < 570 && d.y > 400 && d.y < 1000), JSON.stringify(dots.map(d => [Math.round(d.x), Math.round(d.y)])));
     // the pink family keeps its dots
     assert.equal(results.find(r => !r.est.familyMeasure.pageFill).fit.dots.length, 16);
+    // against the data (lane 1 PBS, 11 dots; lane 2 DT, 18): measured P 1.000, R 0.931
+    const px = truthPixelsByTicks(readTruthCsv(`${NATURE}${HAIR1}.csv`), detectAxes(image));
+    const centers = laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), 2);
+    const r = laneRow(HAIR1, px.dots, centers, results, 0);
+    assert.ok(r.precision >= 0.95 && r.recall >= 0.9, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
 test('regression: tumour1, white dots in black outlines over gray and red bars are one family', { skip: !existsSync(`${NATURE}${TUMOUR1}.png`) && 'bench-nature tumour1 absent' }, () => {
