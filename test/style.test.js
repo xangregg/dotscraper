@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { estimateStyle, fitGeometric } from '../src/core/style.js';
+import { estimateStyle, fitGeometric, shapeRadius, siblingRadius } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readPng } from '../tools/png.mjs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
@@ -183,4 +183,78 @@ test('a gray label on the line to opaque black dots is no level 1: the dots are 
     const est = estimateStyle(toRgba(im));
     assert.equal(est.familyMeasure?.kind, 'opaque', est.notes.join(' '));
     near(est.style.radius, 7, 0.5, 'radius');
+});
+
+// Translucent dots over a box plot's box drawn in their own hue, darker than one dot (protrusion2: the green box read
+// as level 2, 6 units from the dots' own level 2). sRGB compositing, as JMP's.
+function dotsOverBox(boxAlpha) {
+    const W = 360;
+    const H = 260;
+    const fam = { color: [133, 216, 179], alpha: 0.29, radius: 12 };
+    const bg = solidImage(W, H, [255, 255, 255]);
+    const box = fam.color.map(v => 255 + boxAlpha * (v - 255));
+    for (let y = 40; y < 220; y++) {
+        for (let x = 200; x < 300; x++)
+            bg.data.set(box, 3 * (y * W + x));
+    }
+    const dots = [];
+    // lone dots, and overlapping pairs that show level 2 on the page
+    for (let k = 0; k < 6; k++)
+        dots.push({ x: 30 + 28 * k, y: 30 }, { x: 30 + 28 * k, y: 100 + 4 * k }, { x: 30 + 28 * k + 12, y: 108 + 4 * k });
+    for (let k = 0; k < 7; k++)
+        dots.push({ x: 222 + 9 * (k % 4), y: 60 + 24 * k }, { x: 268 - 7 * (k % 3), y: 70 + 22 * k });
+    const model = createDotModel(bg, fam);
+    model.addAll(dots);
+    return { image: toRgba(model.image), box, fam };
+}
+
+test('a box under translucent dots in their own hue is a band, not one of their levels', () => {
+    const { image, box } = dotsOverBox(0.45);
+    const est = estimateStyle(image);
+    const fam = est.familyMeasure;
+    const dist = c => Math.hypot(...c.map((v, ch) => v - box[ch]));
+    assert.ok(fam.band && dist(fam.band) <= 3, `band ${fam.band}`);
+    assert.ok(fam.box, 'marked a box');
+    assert.ok(fam.levels.every(L => dist(L.color) > 3), `levels ${fam.levels.map(L => L.color.map(Math.round))}`);
+    // (one dot over the box, 181, 231, 209, lies on the line near level 3, 177, and joins the geometric fit: α 0.35)
+    near(est.style.alpha, 0.29, 0.07, 'α');
+    near(est.style.radius, 12, 0.5, 'radius');
+});
+
+// count image of discs of radius r at count 1, antialiased, with a NaN line two pixels wide through every center
+function cutDiscs(W, H, centers, r) {
+    const D = new Float32Array(W * H);
+    for (const c of centers) {
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const v = Math.min(1, Math.max(0, r + 0.5 - Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y)));
+                D[y * W + x] = Math.max(D[y * W + x], v);
+            }
+        }
+    }
+    for (const c of centers) {
+        for (let x = 0; x < W; x++) {
+            D[Math.floor(c.y) * W + x] = NaN;
+            D[(Math.floor(c.y) - 1) * W + x] = NaN;
+        }
+    }
+    return D;
+}
+
+test('shapeRadius: dots cut through their centers by a masked line are whole dots, not halves', () => {
+    // protrusion1: every dot on a whisker; the distance transform read 9.5–10 for 19.5, and Hough never scanned 19.5
+    const centers = [40, 110, 180, 250].map(x => ({ x, y: 40 }));
+    const D = cutDiscs(300, 80, centers, 19.5);
+    const s = shapeRadius(D, 300, 80);
+    assert.ok(s, 'a radius');
+    // (the scan keeps the largest radius at which most centers show: these discs show at 18–21 alike)
+    assert.ok(s.radius >= 18 && s.radius <= 21.5, `radius ${s.radius}, not half of 19.5`);
+});
+
+test('siblingRadius: another family\'s radius when its dots show at it, none when they don\'t', () => {
+    const centers = [40, 110, 180, 250].map(x => ({ x, y: 40 }));
+    const D = cutDiscs(300, 80, centers, 15);
+    const s = siblingRadius(D, 300, 80, [10, 15, 21]);
+    assert.equal(s?.radius, 15);
+    assert.equal(siblingRadius(D, 300, 80, [8, 25]), null);
 });

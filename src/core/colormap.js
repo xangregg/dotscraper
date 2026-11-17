@@ -49,6 +49,11 @@ const MIN_POINTS = 8;
 // while one family's color with JPEG noise around it is one point and a fringe (beeswarm-boxplot: gray, 97% of the
 // votes, with 15 noise points of 5–27 votes reaching a spread of 0.23)
 const MAX_POINT_SHARE = 0.5;
+// … nor do a few: discrete families in a few hues chain through the mixes of their rims with lines crossing them
+// (protrusion1: green and lavender dots on gray whiskers, 0.92 of the votes in 3 points, linked by points of 5–89
+// votes; scales: 0.23–0.36, bench2 group-graystroke 0.48)
+const FEW_POINTS = 3;
+const MAX_FEW_SHARE = 0.7;
 // α from the ratios of flat pixels: a histogram peak at 1 (one dot, by construction) and one at 2 − α
 const RATIO_BIN = 0.01;
 const RATIO_SMOOTH = 1.5; // bins, sd
@@ -285,7 +290,9 @@ export function findColormap(image, B, flat, tol) {
     points = scale.points;
     const spread = scale.spread;
     const votes = points.reduce((t, q) => t + q.votes, 0);
-    if (points.length < MIN_POINTS || spread < MIN_SPREAD || Math.max(...points.map(q => q.votes)) > MAX_POINT_SHARE * votes)
+    const top = points.map(q => q.votes).sort((a, b) => b - a).slice(0, FEW_POINTS).reduce((t, v) => t + v, 0);
+    if (points.length < MIN_POINTS || spread < MIN_SPREAD || Math.max(...points.map(q => q.votes)) > MAX_POINT_SHARE * votes
+        || top > MAX_FEW_SHARE * votes)
         return null;
     const ratios = [];
     for (let p = 0; p < n; p++) {

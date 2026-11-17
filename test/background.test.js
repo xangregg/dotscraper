@@ -147,3 +147,27 @@ test('two bands drawn over the dots, one over the other: the upper is a layer by
     }
     assert.ok(worst <= 6, `largest difference inside the overlap ${worst}`);
 });
+
+test('a box under the dots holds its rectangle where a dot as wide as it is tall hides its pieces', () => {
+    // protrusion1: boxes 37 px tall, dots 39 px across; pixels in such a dot nearer the page above or below than the
+    // box's pieces beside it were read against the page
+    const W = 300;
+    const H = 120;
+    const fam = { color: [119, 214, 167], alpha: 0.155, radius: 19.5 };
+    const box = [210, 241, 226];
+    const bg = solidImage(W, H, WHITE);
+    for (let y = 42; y < 79; y++) {
+        for (let x = 40; x < 260; x++)
+            bg.data.set(box, 3 * (y * W + x));
+    }
+    const model = createDotModel(bg, fam);
+    model.addAll([{ x: 150, y: 60.5 }, { x: 20, y: 20 }, { x: 280, y: 100 }]);
+    const image = toRgba(model.image);
+    const { regions, label } = backgroundRegions(image, WHITE, [{ ...fam, band: box, box: true }], flatMask(image), fam.radius);
+    assert.equal(regions.length, 1);
+    // inside the dot at the box's top and bottom rows, and outside the box above and below the dot
+    for (const [x, y] of [[150, 43], [150, 77], [140, 44]])
+        assert.equal(label[y * W + x], 1, `(${x}, ${y}) in the box`);
+    for (const [x, y] of [[150, 41], [150, 79]])
+        assert.equal(label[y * W + x], 0, `(${x}, ${y}) outside`);
+});

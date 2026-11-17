@@ -5,8 +5,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { readImage } from '../tools/png.mjs';
-import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
-import { extractAll, groupRow, laneRow } from '../tools/bench.mjs';
+import { readTruthCsv, truthPixels, truthPixelsByTicks, laneCentersFromDots } from '../tools/truth-csv.mjs';
+import { extractAll, groupRow, laneRow, jitterRow } from '../tools/bench.mjs';
+import { detectAxes } from '../src/core/axes.js';
+import { findColormap } from '../src/core/colormap.js';
+import { backgroundColor, flatMask, EXACT_TOLERANCES } from '../src/core/style.js';
 import { estimateFamilies } from '../src/core/families.js';
 
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
@@ -74,4 +77,51 @@ test('regression: outlined dots (bench1 stroked-dots): a ring is measured and ev
     assert.ok(mean.every(v => v > -0.5 && v < -0.35), `offset ${mean}`);
     const scatter = Math.sqrt(off.reduce((sum, o) => sum + (o[0] - mean[0]) ** 2 + (o[1] - mean[1]) ** 2, 0) / off.length);
     assert.ok(scatter < 0.1, `scatter ${scatter}`);
+});
+
+// Nature figures: translucent dots over box plots' boxes in their own hue (local only, skipped when absent)
+const NATURE = dir('bench-nature');
+const protrusion = k => `protrusion${k}-10.1038-s41586-026-11063-9`;
+const natureAbsent = name => !existsSync(NATURE + name + '.png') && `bench-nature ${name} absent`;
+
+// scored as the bench scores data-unit truth: through the detected ticks, jittered x matched in a box
+function natureRow(name) {
+    const image = readImage(NATURE + name + '.png');
+    const px = truthPixelsByTicks(readTruthCsv(NATURE + name + '.csv'), detectAxes(image));
+    const results = extractAll(image);
+    if (px.lanesFromDots)
+        px.laneCenters = laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), new Set(px.dots.map(d => d.lane)).size);
+    return px.laneCenters ? laneRow(name, px.dots, px.laneCenters, results, 0)
+        : px.jitter ? jitterRow(name, px.dots, results, 0) : groupRow(name, px.dots, results, 0);
+}
+
+test('regression: protrusion3, the box read as the dots\' level 2 and the dots over it as 1.56 dots', { skip: natureAbsent(protrusion(3)) }, () => {
+    // before: 114 found for 50, 89 of them in the box; dots over the box are read against levels measured there
+    const r = natureRow(protrusion(3));
+    assert.ok(r.precision >= 0.95 && r.recall >= 0.95, `P ${r.precision} R ${r.recall} (${r.found} found)`);
+});
+
+test('regression: protrusion2, both boxes read as levels, and orange dots with no whole one', { skip: natureAbsent(protrusion(2)) }, () => {
+    // before: radius unknown; the orange family takes the green's radius (its dots all touch a whisker or the box)
+    const { estimates, layers } = estimateFamilies(readImage(NATURE + protrusion(2) + '.png'));
+    assert.equal(estimates.length, 2);
+    assert.ok(estimates.every(e => Math.abs(e.style.radius - 30.1) < 0.5), `radii ${estimates.map(e => e.style.radius)}`);
+    assert.deepEqual(layers.regions.map(r => r.mode), ['under', 'under']);
+    const r = natureRow(protrusion(2));
+    assert.ok(r.precision >= 0.95 && r.recall >= 0.85, `P ${r.precision} R ${r.recall} (${r.found} found)`);
+});
+
+test('regression: protrusion1, four hues on whiskers are no color scale, and each has its box', { skip: natureAbsent(protrusion(1)) }, () => {
+    // before: a continuous scale (green and lavender chained through their rims' mixes with the gray whiskers) with
+    // no radius; then each family's dots read as a band over its box (overBand), and every dot, halved by a whisker,
+    // gave half the radius
+    const image = readImage(NATURE + protrusion(1) + '.png');
+    const B = backgroundColor(image).color;
+    assert.equal(findColormap(image, B, flatMask(image), EXACT_TOLERANCES), null);
+    const { estimates } = estimateFamilies(image);
+    assert.equal(estimates.length, 4);
+    for (const e of estimates) {
+        assert.ok(e.familyMeasure.box, `${e.style.color.map(Math.round)} has its box`);
+        assert.ok(e.style.radius > 17.5 && e.style.radius < 21, `radius ${e.style.radius}`);
+    }
 });

@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
-import { unmixFamilies, familyImage } from '../src/core/unmix.js';
+import { unmixFamilies, familyImage, regionLevels } from '../src/core/unmix.js';
+import { flatMask } from '../src/core/style.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
 import { extractAll } from '../tools/bench.mjs';
@@ -116,4 +117,35 @@ test('regression: overlaps of two translucent families aren’t families of thei
     const m = matchDots(truth, found, 1);
     assert.ok(Math.abs(found.length - truth.length) <= 2, `${found.length} found for ${truth.length}`);
     assert.ok(m.recall >= 0.98, `recall ${m.recall}`);
+});
+
+test('regionLevels: a family\'s levels over a box are measured there, where the sRGB model misses them', () => {
+    // protrusion3's colors, painted flat by overlap count: the box 150, 183, 149, one dot over it 116, 163, 122 and
+    // two 96, 153, 107. With c and α from the page, one dot over the box predicts 128, 167, 127, which read as 1.56
+    // dots and was masked. Two dots on the page beside the box, 142, 178, 142, lie 12 units from it, and pixels of
+    // theirs labeled the box's must not be taken for its first level.
+    const W = 300;
+    const H = 200;
+    const R = 15;
+    const page = [[255, 255, 255], [190, 208, 187], [142, 178, 142]];
+    const boxed = [[150, 183, 149], [116, 163, 122], [96, 153, 107]];
+    const inBox = (x, y) => x >= 100 && x < 280 && y >= 20 && y < 180;
+    const dots = [{ x: 140, y: 60 }, { x: 220, y: 60 }, { x: 140, y: 130 }, { x: 160, y: 140 }, { x: 230, y: 140 }, { x: 245, y: 130 },
+        { x: 40, y: 60 }, { x: 95, y: 100 }, { x: 110, y: 105 }];
+    const data = new Uint8ClampedArray(4 * W * H);
+    const index = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const n = Math.min(2, dots.filter(d => Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y) <= R).length);
+            data.set([...(inBox(x, y) ? boxed : page)[n], 255], 4 * (y * W + x));
+            // the region's label reaches a few pixels past the box, as nearest seeds give it
+            index[y * W + x] = x >= 95 && x < 285 && y >= 15 && y < 185 ? 1 : 0;
+        }
+    }
+    const image = { width: W, height: H, data };
+    const levels = regionLevels(image, flatMask(image), index, 1, boxed[0], { color: [99, 146, 96], alpha: 0.424 });
+    const dist = c => Math.hypot(...c.map((v, ch) => v - boxed[0][ch]));
+    assert.equal(levels.ts.length, 2);
+    near(levels.ts[0], dist(boxed[1]), 1, 'one dot');
+    near(levels.ts[1], dist(boxed[2]), 1, 'two dots');
 });

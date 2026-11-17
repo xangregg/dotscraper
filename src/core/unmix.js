@@ -20,7 +20,7 @@
 // were such stacks within 4 px; they were found once flat pixels had to be whole counts (FLAT_MAX_FRACTION), which
 // masks the stacks' fractional plateaus. Why that let the fit place them wasn't examined.
 
-import { countImage, flatMask, projectOnLine, isolatedDots, edgeBlur, shapeRadius, EXACT_TOLERANCES, NO_ISOLATED_NOTE } from './style.js';
+import { countImage, flatMask, projectOnLine, colorLine, findLevels, isolatedDots, edgeBlur, shapeRadius, EXACT_TOLERANCES, NO_ISOLATED_NOTE } from './style.js';
 
 const PAIR_MAX_RESIDUAL = 6; // 0–255 units (RGB distance): a pair explains a pixel this well or not at all
 const ONE_FAMILY_PERP_REL = 0.2; // a pixel this close to a family's line (perp / t) …
@@ -33,6 +33,14 @@ const WEIGHT_SLACK = 0.03; // weights may fall this far outside [0, 1] (rounding
 // changed nothing on the bench.)
 const FLAT_MAX_FRACTION = 0.3; // dots
 const MIN_T = 1e-3;
+// A family's dots over a box under them are read against levels measured there (regionLevels): renderers that
+// don't composite in sRGB put a dot over a box in its own hue far from c + (B₂ − c)(1 − α) (protrusion3: 116, 163,
+// 122 against 128, 167, 127 predicted, which read as 1.56 dots and was masked as fractional). The first level is the
+// commonest flat color in the region within this many predicted steps of the prediction, with at least this many pixels.
+const REGION_SEED_STEPS = 0.5;
+const REGION_SEED_MIN_PIXELS = 50;
+const REGION_MIN_LEVEL_SHARE = 0.5; // of the first level's distance from B₂: nearer colors aren't read as levels
+const MAX_EXTRA_COUNT = 20; // dots beyond the deepest measured level, where the steps run out
 
 function dot(a, b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -52,8 +60,10 @@ function fractional(T, q) {
  * @param {{color: number[], alpha: number}[]} families  translucent families: full color c (0–255), α (0–1)
  * @param {Uint8Array} [flat]  1 where the pixel's neighborhood is flat (style.flatMask); a flat pixel on one family's
  *   line must be a whole number of its dots
- * @param {{colors: number[][], index: Uint8Array}} [under]  a background that varies under the dots: pixel p's is
- *   colors[index[p]] (background.js, regions under the dots); default B everywhere
+ * @param {{colors: number[][], index: Uint8Array, levels?: ({unit: number[], ts: number[]}|null)[][]}} [under]  a
+ *   background that varies under the dots: pixel p's is colors[index[p]] (background.js, regions under the dots);
+ *   default B everywhere. levels[k][j]: family j's levels measured over colors[k] (regionLevels), read instead of
+ *   the geometric model there
  * @returns {{T: Float32Array[], mixed: Uint8Array}}  T per family (1 where it has no dot); mixed = 1 where a pair
  *   explained the pixel, 2 where nothing did (the pixel is left to each family's mask)
  */
@@ -65,10 +75,11 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
     const mixed = new Uint8Array(n);
     const q = families.map(f => 1 - f.alpha);
     // each family's offset from each background, and the pair normal equations, precomputed per background
-    const geometry = Bk => {
+    const geometry = (Bk, i) => {
         const dirs = families.map(f => f.color.map((v, ch) => v - Bk[ch])); // c − B_k
         const span = dirs.map(d => Math.hypot(...d));
-        const unit = dirs.map((d, k) => d.map(v => v / span[k]));
+        const measured = families.map((f, k) => under?.levels?.[i]?.[k] ?? null);
+        const unit = dirs.map((d, k) => measured[k]?.unit ?? d.map(v => v / span[k]));
         const pairs = [];
         for (let a = 0; a < F; a++) {
             for (let b = a + 1; b < F; b++) {
@@ -80,12 +91,12 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
                     pairs.push({ a, b, aa, bb, ab, det });
             }
         }
-        return { Bk, dirs, span, unit, pairs };
+        return { Bk, dirs, span, unit, measured, pairs };
     };
     const geometries = (under?.colors ?? [B]).map(geometry);
     const e = [0, 0, 0];
     for (let p = 0; p < n; p++) {
-        const { Bk, dirs, span, unit, pairs } = geometries[under ? under.index[p] : 0];
+        const { Bk, dirs, span, unit, measured, pairs } = geometries[under ? under.index[p] : 0];
         e[0] = data[4 * p] - Bk[0];
         e[1] = data[4 * p + 1] - Bk[1];
         e[2] = data[4 * p + 2] - Bk[2];
@@ -106,7 +117,8 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
             }
         }
         if (best >= 0) {
-            const Tb = Math.max(0, 1 - dot(e, unit[best]) / span[best]);
+            const m = measured[best];
+            const Tb = m ? q[best] ** countAt(dot(e, unit[best]), m.ts, q[best]) : Math.max(0, 1 - dot(e, unit[best]) / span[best]);
             if (flat && flat[p] && fractional(Tb, q[best]) > FLAT_MAX_FRACTION) {
                 mixed[p] = 2;
                 continue;
@@ -152,6 +164,71 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
         mixed[p] = 1;
     }
     return { T, mixed };
+}
+
+/**
+ * A family's levels over a region under the dots, measured: the commonest flat color of the region near where one dot
+ * over it should be (REGION_SEED_STEPS), then levels along the line from B₂ through it. Null when none shows.
+ * O(pixels).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {Uint8Array} flat  style.flatMask
+ * @param {Uint8Array} index  each pixel's background index (unmixFamilies' under.index)
+ * @param {number} k  the region's index
+ * @param {number[]} B2  its color, 0–255
+ * @param {{color: number[], alpha: number}} family  full color (0–255) and α (0–1)
+ * @returns {{unit: number[], ts: number[]}|null}  the direction from B₂ and each level's distance along it (0–255
+ *   units)
+ */
+export function regionLevels(image, flat, index, k, B2, family) {
+    const { data } = image;
+    const pred = family.color.map((v, ch) => v + (B2[ch] - v) * (1 - family.alpha));
+    const step = Math.hypot(...pred.map((v, ch) => v - B2[ch]));
+    const own = new Uint8Array(flat.length);
+    const counts = new Map();
+    for (let p = 0; p < flat.length; p++) {
+        if (!flat[p] || index[p] !== k)
+            continue;
+        own[p] = 1;
+        if (Math.hypot(data[4 * p] - pred[0], data[4 * p + 1] - pred[1], data[4 * p + 2] - pred[2]) > REGION_SEED_STEPS * step)
+            continue;
+        const key = (data[4 * p] << 16) | (data[4 * p + 1] << 8) | data[4 * p + 2];
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const best = [...counts].sort((a, b) => b[1] - a[1])[0];
+    if (!best || best[1] < REGION_SEED_MIN_PIXELS)
+        return null;
+    const seed = [best[0] >> 16, (best[0] >> 8) & 255, best[0] & 255];
+    const line = colorLine(B2, seed);
+    const proj = projectOnLine(image, line);
+    // other colors near B₂ are no dot over it (protrusion3: two dots on the page, 142, 178, 142, 12 units from the box,
+    // in the region where dots cross its edge, read as level 1 at a quarter of the seed's distance)
+    const seedT = Math.hypot(...seed.map((v, ch) => v - B2[ch]));
+    for (let p = 0; p < own.length; p++) {
+        if (proj.t[p] < REGION_MIN_LEVEL_SHARE * seedT)
+            own[p] = 0;
+    }
+    const { levels } = findLevels(image, proj, own);
+    if (!levels.length)
+        return null;
+    return {
+        unit: line.u.map(v => -v),
+        ts: levels.map(L => L.color.reduce((t, v, ch) => t + (B2[ch] - v) * line.u[ch], 0)),
+    };
+}
+
+// overlap count at distance t from B₂ along measured levels ts: linear between levels, then steps shrinking by q
+function countAt(t, ts, q) {
+    if (t <= ts[0])
+        return Math.max(0, t / ts[0]);
+    for (let i = 1; i < ts.length; i++) {
+        if (t <= ts[i])
+            return i + (t - ts[i - 1]) / (ts[i] - ts[i - 1]);
+    }
+    const m = ts.length;
+    const last = m > 1 ? ts[m - 1] - ts[m - 2] : ts[0];
+    const left = 1 - (t - ts[m - 1]) * (1 - q) / (last * q);
+    return m + (left > MIN_T ? Math.log(left) / Math.log(q) : MAX_EXTRA_COUNT);
 }
 
 /**
@@ -210,6 +287,12 @@ export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers 
         under = { colors: [B, ...layers.regions.map(r => r.color)], index };
     }
     const flat = estimates[translucent[0]].flat ?? flatMask(image, tol);
+    if (under) {
+        // (boxes only: over landing1's violins, which the sRGB model reads, measured levels gave 87 found for 70, not 75)
+        under.levels = under.colors.map((Bk, k) => (layers.regions[k - 1]?.mode === 'under' && layers.regions[k - 1].box
+            ? translucent.map(j => regionLevels(image, flat, under.index, k, Bk, estimates[j].style))
+            : null));
+    }
     const { T, mixed } = unmixFamilies(image, B, translucent.map(k => estimates[k].style), flat, under);
     const others = translucent.length - 1;
     const notes = [];
@@ -217,7 +300,9 @@ export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers 
         notes.push(`Overlaps with the other ${others === 1 ? 'translucent family are' : `${others} translucent families are`} separated pixel by pixel; the counts shown are this family’s alone.`);
     for (const i of underRegions) {
         const c = layers.regions[i].color.map(Math.round).join(', ');
-        notes.push(`A region of color ${c} lies under the dots; dots there are read against it.`);
+        notes.push(layers.regions[i].box
+            ? `A box of color ${c} lies under the dots; dots over it are read against the levels they show there.`
+            : `A region of color ${c} lies under the dots; dots there are read against it.`);
     }
     return estimates.map((e, k) => {
         const j = translucent.indexOf(k);

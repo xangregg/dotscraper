@@ -4,7 +4,7 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { estimateStyle, measureFamily, backgroundColor, flatMask, familyRings, solidRegion, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO } from './style.js';
+import { estimateStyle, measureFamily, backgroundColor, flatMask, familyRings, solidRegion, siblingRadius, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO, NO_ISOLATED_NOTE } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
@@ -31,7 +31,7 @@ const MERGE_Q = [0.05, 0.95]; // a plausible 1 − α
 
 // a candidate's full color and α, as background.js wants them
 function candidateStyle(c) {
-    return c.kind === 'opaque' ? { color: c.seed, alpha: 1 } : { color: c.fit.c, alpha: c.fit.alpha, ...(c.band ? { band: c.band } : {}) };
+    return c.kind === 'opaque' ? { color: c.seed, alpha: 1 } : { color: c.fit.c, alpha: c.fit.alpha, ...(c.band ? { band: c.band, box: !!c.box } : {}) };
 }
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -358,7 +358,7 @@ export function estimateFamilies(image, opts = {}) {
         for (const e of separated)
             e.notes = [...e.notes, ...note];
     }
-    const kept = withoutSpeckLevels(separated);
+    const kept = withoutSpeckLevels(withSiblingRadii(work, separated));
     // outlined opaque families are fitted by their rings (ringEstimate)
     const backgrounds = backgroundColors(work);
     // (a fill in the page's color is no other family's ring owner: it can't be told from the page)
@@ -372,6 +372,20 @@ export function estimateFamilies(image, opts = {}) {
     // hollow rings of a color no family found has (its fill, outline or stroke)
     const known = ringed.filter(e => e.style).flatMap(e => [e.style.color, e.familyMeasure?.outline, e.familyMeasure?.stroke].filter(Boolean));
     return { image: work, layers, estimates: [...ringed, ...hollowEstimates(work, first.background, known)] };
+}
+
+// A translucent family with no radius of its own takes another's when its dots show at it (style.js siblingRadius).
+function withSiblingRadii(image, estimates) {
+    const radii = estimates.map(e => e.style?.radius).filter(r => r > 0);
+    return estimates.map(e => {
+        if (e.familyMeasure?.kind !== 'translucent' || !e.style || e.style.radius || !e.D)
+            return e;
+        const sib = siblingRadius(e.D, image.width, image.height, radii);
+        if (!sib)
+            return e;
+        const note = `No isolated whole dot: the radius, ${sib.radius.toFixed(1)} px, is another family's, at which ${sib.centers} of these dots show half their edge or more; the blur is read from the dots' boundaries. Check it against a few dots.`;
+        return { ...e, style: { ...e.style, radius: sib.radius, blur: sib.blur }, notes: [...e.notes.filter(n => n !== NO_ISOLATED_NOTE), note] };
+    });
 }
 
 // A translucent family's radius is known only now: one far smaller than the others is text's antialiased grays

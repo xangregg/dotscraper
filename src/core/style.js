@@ -113,6 +113,20 @@ const OVER_BAND_Q = [0.05, 0.95]; // 1 − α for a family's dots over a band of
 const REGION_INK_TOL = 15; // 0–255 units (RGB distance) from a region's color (JPEG noise)
 const REGION_MIN_SOLID = 0.3; // share of the region's color an opening by the dots' radius keeps
 const BLEND_DEPTH = 4; // dots in a stack
+// A box under the dots (boxBand): straight boundary runs of BOX_RUN_RADII dot radii hold BOX_MIN_STRAIGHT of its
+// boundary. Measured on every translucent candidate's levels on the bench: dots' levels 0 (a few grays at radius under
+// 4, axis text: up to 0.063); boxes 0.145–0.274 (protrusion1–3), and score2's colorbar 0.124.
+const BOX_RUN_RADII = 2; // × the dots' radius
+const BOX_MIN_STRAIGHT = 0.08;
+const BOX_COLOR_TOL = 3; // 0–255 units (RGB distance) from the box's color
+// Before any radius is known (beyondBox), a box is told from the dots by comparison: straighter than the first level
+// by this factor in runs of BEYOND_BOX_RUN (protrusion1: 3.5–4.0; landing1's violins, a band under the dots, are the
+// straighter, 0.155 to 0.000)
+const BEYOND_BOX_RUN = 20; // px
+const BEYOND_BOX_RATIO = 2;
+// A box is an area, not strokes (landing1: black axes, box outlines and text beyond a gray of their antialiasing are
+// straight too): solidRegion at this radius (measured: the protrusion boxes keep 0.92–0.99, the black 0.000)
+const BOX_MIN_HALF_WIDTH = 4; // px
 // Text looks like dots to a Hough vote (round glyphs, and every gray of its antialiasing is a color cluster), but
 // it is strokes: mostly edge pixels, and the inside of an "o" is empty.
 const DOT_MIN_INTERIOR = 0.1; // share of a cluster's pixels with all 8 neighbors in the cluster
@@ -752,8 +766,15 @@ function countAssignments(k, missing) {
     return out;
 }
 
-/** Connected components (4-neighbor) of pixels with D > 0.5. */
-function components(D, width, height) {
+/**
+ * Connected components (4-neighbor) of pixels with D > 0.5.
+ *
+ * @param {ArrayLike<number>} D
+ * @param {number} width
+ * @param {number} height
+ * @returns {number[][]}  each component's pixel indices
+ */
+export function components(D, width, height) {
     const label = new Int32Array(D.length).fill(-1);
     const comps = [];
     const stack = [];
@@ -1091,21 +1112,24 @@ function ringBackground(image, mask) {
  * centers.
  */
 function radiusFromDistance(D, width, height) {
-    const inside = new Uint8Array(D.length);
+    // distance to the nearest pixel known to be outside the family, at the family's pixels: a masked line across a
+    // dot isn't its edge (protrusion1: every dot on a whisker read as two halves, 9.5–10 for 19.5)
+    const outside = new Uint8Array(D.length);
     for (let p = 0; p < D.length; p++)
-        inside[p] = D[p] > 0.5 ? 0 : 1; // distance to the nearest pixel outside the family
-    const d2 = distanceTransform(inside, width, height);
+        outside[p] = D[p] > 0.5 || Number.isNaN(D[p]) ? 0 : 1;
+    const d2 = distanceTransform(outside, width, height);
     const peaks = [];
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
             const p = y * width + x;
             const v = d2[p];
-            if (v < DOT_MIN_RADIUS * DOT_MIN_RADIUS || v === Infinity)
+            if (!(D[p] > 0.5) || v < DOT_MIN_RADIUS * DOT_MIN_RADIUS || v === Infinity)
                 continue;
             let isMax = true;
             for (let dy = -1; dy <= 1 && isMax; dy++) {
                 for (let dx = -1; dx <= 1; dx++) {
-                    if ((dx || dy) && d2[p + dy * width + dx] > v) {
+                    // (a masked pixel is no peak, nor does it hide one: a line through a dot's center)
+                    if ((dx || dy) && d2[p + dy * width + dx] > v && D[p + dy * width + dx] > 0.5) {
                         isMax = false;
                         break;
                     }
@@ -1116,6 +1140,42 @@ function radiusFromDistance(D, width, height) {
         }
     }
     return peaks.length ? quantile(peaks, DT_RADIUS_QUANTILE) + DT_RADIUS_OFFSET : null;
+}
+
+// The number of Hough centers with DOT_MIN_ARC of their edge seen at a radius, on the count clamped to one dot.
+function edgeCenters(D, width, height) {
+    const C = new Float32Array(D.length);
+    const weight = new Uint8Array(D.length);
+    for (let p = 0; p < D.length; p++) {
+        weight[p] = Number.isNaN(D[p]) ? 0 : 1;
+        C[p] = weight[p] ? Math.min(1, D[p]) : 0;
+    }
+    const grad = houghGradient(C, weight, width, height);
+    return r => houghCenters(C, weight, width, height, r, grad).filter(c => c.arc >= DOT_MIN_ARC).length;
+}
+
+/**
+ * Another family's radius for a translucent family with no whole isolated dot, when its own dots show at that
+ * radius: figures draw every group with one marker size, and a small group can have every dot crossed by a whisker
+ * or touching its box (protrusion2's orange: 3 centers with half their edge seen at the green's 30.1 px, none at 25
+ * or 35). The same test as an opaque family's sibling (DOT_MIN_STRONG centers of DOT_MIN_ARC); the blur is read
+ * from the dots' boundaries. Null when no radius shows them.
+ *
+ * @param {Float32Array} D  overlap count, NaN where unknown
+ * @param {number} width
+ * @param {number} height
+ * @param {number[]} radii  px, the other families'
+ * @returns {{radius: number, blur: number, centers: number}|null}  px
+ */
+export function siblingRadius(D, width, height, radii) {
+    if (!radii.length)
+        return null;
+    const centersAt = edgeCenters(D, width, height);
+    const best = radii.map(radius => ({ radius, centers: centersAt(radius) })).sort((a, b) => b.centers - a.centers)[0];
+    if (best.centers < DOT_MIN_STRONG)
+        return null;
+    const edge = boundaryBlur(D, width, height);
+    return { ...best, blur: Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)) };
 }
 
 /**
@@ -1135,14 +1195,7 @@ export function shapeRadius(D, width, height) {
     const r0 = radiusFromDistance(D, width, height);
     if (!r0)
         return null;
-    const C = new Float32Array(D.length);
-    const weight = new Uint8Array(D.length);
-    for (let p = 0; p < D.length; p++) {
-        weight[p] = Number.isNaN(D[p]) ? 0 : 1;
-        C[p] = weight[p] ? Math.min(1, D[p]) : 0;
-    }
-    const grad = houghGradient(C, weight, width, height);
-    const centersAt = r => houghCenters(C, weight, width, height, r, grad).filter(c => c.arc >= DOT_MIN_ARC).length;
+    const centersAt = edgeCenters(D, width, height);
     const scan = [];
     for (let r = r0; r <= RADIUS_SCAN_MAX * r0; r += RADIUS_SCAN_STEP)
         scan.push({ r, n: centersAt(r) });
@@ -2511,7 +2564,7 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     // A candidate whose level 2 lies outside its level 1 is no family (levelsNest); its colors stay other ink for the
     // opaque families, as when it was dropped later as text (engagement1: black text and the blues' strokes; without
     // them the blues' fit gave 55 dots for 49, P 0.873)
-    const nesting = familyCandidates(image, B, flat, tol).map(c => overBand(image, B, c) ?? c)
+    const nesting = familyCandidates(image, B, flat, tol).map(c => beyondBox(image, B, flat, c, tol) ?? overBand(image, B, c) ?? c)
         .filter(c => c.translucent && !isThin(image, c.levels[0].color))
         .map(c => withoutBand(image, B, flat, c, tol));
     const measured = nesting.filter(c => levelsNest(image, c, flat));
@@ -2521,9 +2574,17 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     // a red ring's core); dropped, it is a region (background.js)
     const lone = measured.map(c => lonelyDots(image, c, tol));
     const radii = lone.filter(l => l.length >= DOT_MIN_ISOLATED).map(l => median(l.map(d => d.r)));
-    const translucent = radii.length
+    const kept = radii.length
         ? measured.filter((c, i) => lone[i].length || !solidRegion(image, c.levels[0].color, Math.max(...radii)))
         : measured;
+    // a box under the dots in their hue, read as a level (boxBand), at the family's own lone dots' radius or else
+    // the other families', or none
+    const anyLone = lone.flat();
+    const translucent = kept.map(c => {
+        const own = lone[measured.indexOf(c)];
+        const radius = own.length ? median(own.map(d => d.r)) : anyLone.length ? median(anyLone.map(d => d.r)) : null;
+        return boxBand(image, B, flat, c, radius, tol);
+    });
     for (const c of translucent)
         c.kind = 'translucent';
     dropBlends(translucent, B);
@@ -2643,6 +2704,97 @@ function levelsNest(image, c, flat) {
     const pieces = components(in2, width, height).filter(cp => cp.length >= NEST_MIN_PIECE_AREA);
     const near = pieces.filter(cp => cp.some(p => to1[p] <= NEST_REACH * NEST_REACH)).length;
     return pieces.length < NEST_MIN_PIECES || near >= NEST_MIN_SHARE * pieces.length;
+}
+
+// A box plot's box drawn under its dots in their own hue is a flat color on the family's line, where a deeper level
+// or a color beyond the levels is expected (protrusion2: the green box, 198, 237, 219, as level 2 beside the dots' own
+// 193, 235, 216, and the orange box as level 3; protrusion3's as level 2). A level's boundary is arcs of the dots'
+// radius, and no straight run of it is longer than a dot's diameter; a box's edges are (straightShare). The family
+// is measured again without the box's pixels, and the box is a region under the dots (background.js). When no second
+// level shows without it (protrusion3: two dots on the page, 142, 178, 142, lie 8 units off the line to the first
+// level, past PERP_TOL), the levels stay as they were, the box's color standing in for level 2's.
+function boxBand(image, B, flat, c, radius, tol) {
+    if (c.band)
+        return c;
+    // with no radius known (protrusion1: every dot on a whisker), by comparison with level 1, as in beyondBox
+    const firstShare = radius ? 0 : straightShare(image, c.levels[0].color, BEYOND_BOX_RUN);
+    const isBox = color => {
+        const share = straightShare(image, color, radius ? BOX_RUN_RADII * radius : BEYOND_BOX_RUN);
+        return share >= BOX_MIN_STRAIGHT && share >= BEYOND_BOX_RATIO * firstShare;
+    };
+    const box = [...c.levels.slice(1), ...c.beyond].find(L => !L.inferred && isBox(L.color) && solidRegion(image, L.color, BOX_MIN_HALF_WIDTH));
+    if (!box)
+        return c;
+    const band = box.color;
+    const alt = measureWithout(image, B, flat, c.levels[0].color, band, tol);
+    return alt.translucent && alt.levels.length >= 2 ? { ...alt, band, box: true } : { ...c, band, box: true };
+}
+
+// A candidate with one level whose next color is a box under the dots, not a dot (protrusion1: very light dots, α
+// about 0.1–0.2, whose boxes, 6 units past level 2, took its peak, and whose step ratio then ended the sequence at
+// level 1). Its two-level reading as dots over a band of their hue (overBand) fits as well with the roles swapped,
+// so shape decides: the box is the straighter (BEYOND_BOX_RATIO). The family is measured again without the box's
+// pixels, as in boxBand. Null when that isn't so.
+function beyondBox(image, B, flat, c, tol) {
+    if (c.levels.length !== 1 || !c.beyond.length)
+        return null;
+    const box = c.beyond[0].color;
+    const boxShare = straightShare(image, box, BEYOND_BOX_RUN);
+    if (boxShare < BOX_MIN_STRAIGHT || boxShare < BEYOND_BOX_RATIO * straightShare(image, c.levels[0].color, BEYOND_BOX_RUN)
+        || !solidRegion(image, box, BOX_MIN_HALF_WIDTH))
+        return null;
+    const alt = measureWithout(image, B, flat, c.levels[0].color, box, tol);
+    return alt.translucent && alt.levels.length >= 2 ? { ...alt, band: box, box: true } : null;
+}
+
+// a family measured from seed with the pixels of one color (a box's) taken out of the flat mask
+function measureWithout(image, B, flat, seed, color, tol) {
+    const { data } = image;
+    const rest = flat.slice();
+    for (let p = 0; p < rest.length; p++) {
+        if (Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= BOX_COLOR_TOL)
+            rest[p] = 0;
+    }
+    return measureFamily(image, B, seed, rest, tol);
+}
+
+// The share of the boundary of a color's pixels (within BOX_COLOR_TOL) in straight horizontal or vertical runs of at
+// least minRun px. O(pixels).
+function straightShare(image, color, minRun) {
+    const { width, height, data } = image;
+    const m = new Uint8Array(width * height);
+    for (let p = 0; p < m.length; p++)
+        m[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= BOX_COLOR_TOL ? 1 : 0;
+    let edge = 0;
+    let straight = 0;
+    // boundary pixels facing up, down, left and right, in runs along rows (up, down) or columns (left, right)
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const rows = dy !== 0;
+        const outer = rows ? height : width;
+        const inner = rows ? width : height;
+        for (let a = 0; a < outer; a++) {
+            let run = 0;
+            for (let b = 0; b <= inner; b++) {
+                let on = false;
+                if (b < inner) {
+                    const x = rows ? b : a;
+                    const y = rows ? a : b;
+                    const X = x + dx;
+                    const Y = y + dy;
+                    on = m[y * width + x] === 1 && (X < 0 || Y < 0 || X >= width || Y >= height || !m[Y * width + X]);
+                }
+                if (on) {
+                    run++;
+                    edge++;
+                    continue;
+                }
+                if (run >= minRun)
+                    straight += run;
+                run = 0;
+            }
+        }
+    }
+    return edge ? straight / edge : 0;
 }
 
 // isolated whole dots under a translucent candidate's levels

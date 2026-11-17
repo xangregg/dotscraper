@@ -10,6 +10,7 @@
 // so a dot inside a band is in the band, and a dot across its edge is split along it.
 
 import { nearestTransform, opening } from './layers.js';
+import { components } from './style.js';
 
 const REGION_MIN_PIXELS = 1500; // flat pixels of one color for a region (bench3's ANOVA band: two boxes of about 2600)
 const REGION_COLOR_TOL = 3; // 0–255 units (RGB distance): a pixel this close to a region's color is that color
@@ -35,6 +36,16 @@ const STACK_TOL = 4; // 0–255 units off the line from the upper band along the
 const STACK_MIN_PIXELS = 1000; // flat pixels at one s
 const STACK_S_RANGE = [0.05, 0.95];
 const STACK_MIN_SEPARATION = 15; // 0–255 units from B and every region color
+// A box under the dots (style.js boxBand) holds its rectangle whatever seed is nearer: a dot as wide as the box is
+// tall split it, and pixels in the dot nearer the page above or below than the box's pieces beside it were read
+// against the page (protrusion1: boxes 37 px tall, dots 39 px across). Outside it, nearest seeds decide as before
+// (a box can be hidden in part: protrusion2's lower half, under a stack). Pieces of its color that share their extent across one axis
+// (within RECT_TOL) and lie within RECT_MAX_GAP times that extent of each other along the other are one box; one
+// inside another's rectangle is part of it.
+const RECT_TOL = 2; // px
+const RECT_MAX_GAP = 3; // × the shared extent
+const RECT_MIN_PIXELS = 10; // pieces smaller than this are ignored
+const RECT_COLOR_TOL = 3; // 0–255 units (RGB distance) from the box's color
 const S_BIN = 0.02; // histogram bin for the overlay's s
 const S_MAX = 0.95; // an "overlay" that keeps more than this of what's under it isn't one (nicest language's white
                     // page read as one with s = 1)
@@ -63,8 +74,8 @@ function unit(v) {
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B
- * @param {{color: number[], alpha: number, band?: number[]}[]} families  full color and α (1 for opaque); band: a
- *   region color in a translucent family's own hue
+ * @param {{color: number[], alpha: number, band?: number[], box?: boolean}[]} families  full color and α (1 for opaque);
+ *   band: a region color in a translucent family's own hue; box: the band is a box under the dots (style.js boxBand)
  * @param {Uint8Array} flat  style.flatMask
  * @param {number} radius  px, the dots' radius
  * @returns {number[][]}
@@ -124,7 +135,7 @@ export function regionColors(image, B, families, flat, radius) {
  * @param {Uint8Array} flat
  * @param {number} radius  px, the dots' radius
  * @returns {{regions: {color: number[], mode: 'over'|'under'|'unknown', s: number|null, pixels: number,
- *            base?: number[], stack?: number[], stackedOver?: number}[], label: Uint8Array}}  label: 0 the main
+ *            base?: number[], stack?: number[], stackedOver?: number, box?: boolean}[], label: Uint8Array}}  label: 0 the main
  *   background, k the region k − 1; an overlap of two bands (stack: the upper's and lower's indices) comes after the
  *   region colors, with the base its pixels are undone to
  */
@@ -165,6 +176,9 @@ export function backgroundRegions(image, B, families, flat, radius) {
         inRegion[p] = best > 0 ? 1 : 0;
     }
     const body = opening(inRegion, width, height, REGION_RIM_OPENING);
+    // a box's rectangle is the box's, whatever seed is nearer
+    const isBox = colors.map(c => families.some(f => f.box && Math.hypot(...sub(f.band, c)) <= BAND_COLOR_TOL));
+    const rects = colors.map((c, i) => (isBox[i] ? boxRects(image, c, width, height) : []));
     for (let p = 0; p < n; p++) {
         if (body[p]) {
             seedOf[p] = near[p];
@@ -174,7 +188,15 @@ export function backgroundRegions(image, B, families, flat, radius) {
     const nearest = nearestTransform(seeds, width, height);
     for (let p = 0; p < n; p++)
         label[p] = nearest[p] >= 0 ? seedOf[nearest[p]] : 0;
-    const regions = colors.map((c, i) => regionMode(image, B, c, families, flat, label, i + 1));
+    rects.forEach((rs, i) => {
+        for (const r of rs) {
+            for (let y = r.y0; y <= r.y1; y++) {
+                for (let x = r.x0; x <= r.x1; x++)
+                    label[y * width + x] = i + 1;
+            }
+        }
+    });
+    const regions = colors.map((c, i) => ({ ...regionMode(image, B, c, families, flat, label, i + 1), ...(isBox[i] ? { box: true } : {}) }));
     for (const st of stacks) {
         regions[st.top] = { ...regions[st.top], mode: 'over', s: st.s, stackedOver: st.bottom };
         const low = regions[st.bottom];
@@ -188,6 +210,55 @@ export function backgroundRegions(image, B, families, flat, radius) {
             regions[label[p] - 1].pixels++;
     }
     return { regions, label };
+}
+
+// The rectangles of the pieces of a box's color (within RECT_COLOR_TOL: two dots' overlap 6 units off made pieces
+// outside protrusion2's green box), merged as RECT_TOL and RECT_MAX_GAP say. Inclusive pixel bounds.
+function boxRects(image, color, width, height) {
+    const { data } = image;
+    const mask = new Uint8Array(width * height);
+    for (let p = 0; p < mask.length; p++)
+        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= RECT_COLOR_TOL ? 1 : 0;
+    let rects = components(mask, width, height).filter(c => c.length >= RECT_MIN_PIXELS).map(c => {
+        const r = { x0: width, y0: height, x1: -1, y1: -1 };
+        for (const p of c) {
+            const x = p % width;
+            const y = (p - x) / width;
+            r.x0 = Math.min(r.x0, x);
+            r.x1 = Math.max(r.x1, x);
+            r.y0 = Math.min(r.y0, y);
+            r.y1 = Math.max(r.y1, y);
+        }
+        return r;
+    });
+    const near1 = (a, b) => Math.abs(a - b) <= RECT_TOL;
+    const gap = (a0, a1, b0, b1) => Math.max(0, Math.max(a0, b0) - Math.min(a1, b1) - 1);
+    const joins = (a, b) => {
+        const inside = (u, v) => u.x0 >= v.x0 && u.x1 <= v.x1 && u.y0 >= v.y0 && u.y1 <= v.y1;
+        if (inside(a, b) || inside(b, a))
+            return true;
+        if (near1(a.y0, b.y0) && near1(a.y1, b.y1))
+            return gap(a.x0, a.x1, b.x0, b.x1) <= RECT_MAX_GAP * (a.y1 - a.y0 + 1);
+        if (near1(a.x0, b.x0) && near1(a.x1, b.x1))
+            return gap(a.y0, a.y1, b.y0, b.y1) <= RECT_MAX_GAP * (a.x1 - a.x0 + 1);
+        return false;
+    };
+    for (let merged = true; merged;) {
+        merged = false;
+        for (let i = 0; i < rects.length && !merged; i++) {
+            for (let j = i + 1; j < rects.length; j++) {
+                if (!joins(rects[i], rects[j]))
+                    continue;
+                const a = rects[i];
+                const b = rects[j];
+                rects[i] = { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) };
+                rects = rects.filter((_, m) => m !== j);
+                merged = true;
+                break;
+            }
+        }
+    }
+    return rects;
 }
 
 // Pairs of region colors where one band lies over the other: flat pixels on B₂ᵗᵒᵖ + s·(B₂ᵇᵒᵗᵗᵒᵐ − B), a
@@ -284,7 +355,12 @@ function regionMode(image, B, B2, families, flat, label, k) {
     }
     const shown = under + over;
     let mode = 'unknown';
-    if (shown >= MODE_MIN_VOTES && under >= MODE_MIN_SHARE * shown)
+    // A box plot's box in its dots' own hue (style.js boxBand) is under them: c − B₂ and c − B nearly agree, so the
+    // dots' colors can't tell (protrusion3: 7.7° and 6.8°, over by a hair), but its outline can, lightened where a dot
+    // crosses it (19, 20, 19 to 87, 94, 87)
+    if (families.some(f => f.box && Math.hypot(...sub(f.band, B2)) <= BAND_COLOR_TOL))
+        mode = 'under';
+    else if (shown >= MODE_MIN_VOTES && under >= MODE_MIN_SHARE * shown)
         mode = 'under';
     else if (shown >= MODE_MIN_VOTES && over >= MODE_MIN_SHARE * shown)
         mode = 'over';

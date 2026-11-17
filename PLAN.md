@@ -2018,3 +2018,60 @@ test/opaque.test.js.
 
 Results (full bench, diffed against 87a1a04): molar1 and protrusion3 as above; every other row identical. Tests in
 test/style.test.js (synthetic) and test/opaque.test.js (molar1).
+
+**bench-nature protrusion1–3: translucent dots over box plots' boxes in their own hue** (2026-11-17)
+
+- Each box is a flat color on its family's line, where a deeper level or a color beyond the levels is expected:
+  protrusion2's green box (198, 237, 219) as level 2, 6 units from the dots' own 193, 235, 216, and its orange box as
+  level 3; protrusion3's (150, 183, 149) as level 2. protrusion1's dots are very light (α 0.16–0.36): each box sits 6
+  units past level 2, took its peak, and the step ratio then ended the sequence at level 1.
+- A level's boundary is arcs of the dots' radius, so no straight run of it is longer than a dot's diameter; a box's
+  edges are. style.js straightShare: the share of a color's boundary in horizontal or vertical runs of 2 radii or
+  more. Over every translucent candidate's levels on the bench: dots' levels 0 (a few grays at radius under 4, axis
+  text: up to 0.063), the protrusion boxes 0.145–0.274, score2's colorbar 0.124. Threshold 0.08. A box must also be an
+  area (solidRegion at 4 px: boxes 0.92–0.99; landing1's black axes and text, straight too, 0.000).
+- boxBand: a level after the first, or a color beyond them, that is a box is the family's band; the family is measured
+  again without its pixels (protrusion2: green 220 | 193 | 177 | 163 | 155, orange 232 | 214). When no second level
+  shows without it the levels stay (protrusion3: two dots on the page, 142, 178, 142, lie 8.4 units off the line to
+  level 1, past PERP_TOL 4). With no lone dot anywhere (protrusion1) the radius is unknown, and a box is told by
+  comparison instead: straighter than level 1 by 2 times in 20 px runs (protrusion1: 3.5–4.0 times).
+- beyondBox, before overBand: protrusion1's one-level candidates read as dots over a band (overBand, for landing1's
+  violins) with the roles swapped, the dots' level 1 as the band and the box as one dot; both readings fit the colors.
+  The band is the straighter of the two: landing1's violins 0.155 against the dots' 0.000; protrusion1's boxes 3.5–4.0
+  times the dots'.
+- A box is a region under the dots (background.js regionMode). In the dots' own hue c − B₂ and c − B nearly agree, so
+  their votes can't tell (protrusion3: 7.7° and 6.8°, "over" by a hair, s 0.46), but the box's outline can: lightened
+  where a dot crosses it, 19, 20, 19 to 87, 94, 87.
+- The box holds its rectangle (merged pieces of its exact color) whatever seed is nearer: protrusion1's boxes are 37
+  px tall and its dots 39 px across, and pixels in such a dot nearer the page above or below were read against the
+  page. Outside the rectangle nearest seeds decide as before: protrusion2's green box shows only above its median,
+  under a stack below; leaving the box's pieces out of the seeds there found 33 for 30 (P 0.848). That version found
+  all 50 of protrusion3's.
+- These Nature figures don't composite in sRGB: in protrusion3 one dot over the box is 116, 163, 122 against
+  128, 167, 127 predicted from c and α on the page (closer in linear light for the green, but not for protrusion2's
+  orange), which read as 1.56 dots and was masked as fractional. unmix.js regionLevels measures a family's levels over
+  a box: the commonest flat color of the region within half a predicted step of the prediction, then findLevels on the
+  line from the box through it (ignoring colors nearer the box than half that: two dots on the page in the region's
+  margin, 12 units from the box, came first). Pixels there count by those levels. Boxes only: over landing1's violins
+  it gave 87 found for 70 against 75.
+- No orange dot in protrusion2 is whole (the whisker crosses each, or the box's edge). families.js withSiblingRadii:
+  a translucent family with no radius takes another's when DOT_MIN_STRONG of its dots show half their edge at it, as
+  opaque siblings do (3 at the green's 30.1 px, none at 25 or 35).
+- protrusion1 went down the color-scale path: green and lavender chained through the mixes of their rims with the
+  gray whiskers, points of 5–89 votes. colormap.js: a scale's top 3 points hold at most 0.7 of the votes (protrusion1:
+  0.92; the gradients 0.23–0.29, score2 0.36, bench2 group-graystroke 0.48).
+- protrusion1's radius: every dot on a whisker read as two halves, and the distance transform gave 9.5–10 for 19.5,
+  below the Hough scan's reach. style.js radiusFromDistance: masked pixels are no family edge, and no peaks or
+  neighbors that hide one. Radii now 18.0–19.5 (pink by sibling).
+- protrusion1: 241 found for 246, P 0.892, R 0.874 (radius unknown before). Misses by row: DMSO 10 (its box shows
+  226 px), Cyto C 8, Pseudo A 6, Cyto E 4; extras mostly in the orange stacks (23 of 26). protrusion2: 26 for 30,
+  P 1.000, R 0.867 (radius unknown before; misses a dot under three at the box's edge and three in the densest
+  stack). protrusion3: 48 for 50, P 1.000, R 0.960, RMSE 0.43 px (114 found before). The app: protrusion1, four
+  families, 241 dots in 19 s, no console errors.
+
+Results (full bench, diffed against 5463870): protrusion1–3 as above; landing1 77 → 75 found for 70 (P 0.909 →
+0.933: its radii 12.0 and 11.5 became 12.05 and 12.0 with the distance transform's change, which alone gives 75);
+beeswarm-boxplot 687 → 667 (P 0.952 → 0.982, R 0.920 → 0.921) and violin-beeswarm RMSE 0.20 → 0.26 px
+(same counts, radius 7.43 → 7.48), both from the distance transform's change; delta1 23 → 24; RMSE and radius in the
+last digit for curve and dots-swarm-box. Tests: test/style.test.js (box band, cut dots' radius, sibling radius),
+test/unmix.test.js (regionLevels), test/background.test.js (box rectangle), test/families.test.js (protrusion1–3).
