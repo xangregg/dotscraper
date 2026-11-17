@@ -20,7 +20,7 @@
 // were such stacks within 4 px; they were found once flat pixels had to be whole counts (FLAT_MAX_FRACTION), which
 // masks the stacks' fractional plateaus. Why that let the fit place them wasn't examined.
 
-import { countImage, flatMask, projectOnLine, EXACT_TOLERANCES } from './style.js';
+import { countImage, flatMask, projectOnLine, isolatedDots, edgeBlur, shapeRadius, EXACT_TOLERANCES, NO_ISOLATED_NOTE } from './style.js';
 
 const PAIR_MAX_RESIDUAL = 6; // 0–255 units (RGB distance): a pair explains a pixel this well or not at all
 const ONE_FAMILY_PERP_REL = 0.2; // a pixel this close to a family's line (perp / t) …
@@ -225,10 +225,27 @@ export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers 
             return { ...e, image };
         const own = familyImage(image, B, e.style, T[j], mixed);
         const line = e.familyMeasure.line;
-        return {
-            ...e, image: own,
-            D: countImage(projectOnLine(own, line), line, e.style.levels, tol),
-            notes: [...e.notes, ...notes],
-        };
+        const D = countImage(projectOnLine(own, line), line, e.style.levels, tol);
+        // with what is under them read per pixel, dots over a region can be whole ones: the radius, if it wasn't
+        // known (landing1: nearly every dot over a violin of its own hue; there no dot is whole even so, and the
+        // radius is the one at which the dots' edges show best)
+        if (!e.style.radius) {
+            const isolated = isolatedDots(D, image.width, image.height, tol);
+            if (isolated.length) {
+                const edge = edgeBlur(D, image.width, isolated);
+                const rs = isolated.map(d => d.r).sort((a, b) => a - b);
+                const radius = (rs[(rs.length - 1) >> 1] + rs[rs.length >> 1]) / 2;
+                const style = { ...e.style, radius, blur: Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)) };
+                return { ...e, image: own, D, style, isolated, edge, notes: [...e.notes.filter(n => n !== NO_ISOLATED_NOTE), ...notes] };
+            }
+            // only for dots over a band of their own hue, where nothing else gives a radius (elsewhere it took a
+            // family the user must measure for one: protrusion3, 120 found for 50)
+            const shape = e.familyMeasure.band ? shapeRadius(D, image.width, image.height) : null;
+            if (shape) {
+                const note = `No isolated whole dot: the radius, ${shape.radius.toFixed(1)} px, is the one at which most dots' edges show as circles (${shape.centers} dots, half their edge or more), and the blur is read from the dots' boundaries. Check it against a few dots.`;
+                return { ...e, image: own, D, style: { ...e.style, radius: shape.radius, blur: shape.blur }, notes: [...e.notes.filter(n => n !== NO_ISOLATED_NOTE), note, ...notes] };
+            }
+        }
+        return { ...e, image: own, D, notes: [...e.notes, ...notes] };
     });
 }

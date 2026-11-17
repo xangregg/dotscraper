@@ -602,3 +602,22 @@ test('regression: step1, blue dots and hollow red rings under two bands, one ove
     assert.ok(m.precision >= 0.95, `precision ${m.precision}, found ${found.length}`);
     assert.ok(m.recall >= 0.7, `recall ${m.recall}, found ${found.length}`);
 });
+
+const LANDING1 = 'landing1-10.1371-journal.pone.0362399';
+
+test('regression: landing1, translucent dots over violins of their own hue, every dot touching a line or an outline', { skip: !existsSync(`${PLOS}${LANDING1}.png`) && 'bench-plos landing1 absent' }, () => {
+    // before: no family. Each violin was its family's one level, the dots' colors beyond it; a dot over the page and
+    // one over the violin give α (0.75) and the color, the violin is a region under the dots, and with no dot
+    // isolated the radius comes from the dots' edges (11.5 and 11.8 px)
+    const image = readImage(`${PLOS}${LANDING1}.png`);
+    const results = extractAll(image);
+    assert.equal(results.length, 2);
+    for (const r of results) {
+        assert.ok(Math.abs(r.est.style.alpha - 0.75) <= 0.03, `alpha ${r.est.style.alpha}`);
+        assert.ok(r.est.style.radius >= 10.5 && r.est.style.radius <= 12.5, `radius ${r.est.style.radius}`);
+    }
+    const px = truthPixelsByTicks(readTruthCsv(`${PLOS}${LANDING1}.csv`), detectAxes(image));
+    const centers = px.laneCenters ?? laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), 2);
+    const row = laneRow(LANDING1, px.dots, centers, results, 0);
+    assert.ok(row.precision >= 0.85 && row.recall >= 0.95, `precision ${row.precision}, recall ${row.recall}, found ${row.found}`);
+});

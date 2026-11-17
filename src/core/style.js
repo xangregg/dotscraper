@@ -105,6 +105,7 @@ const LAYER_MIN_OFF = 20; // 0–255 units
 // group-large, α 0.33: red over blue and blue over red as two purple families with no isolated dot). Measured: the
 // blends' levels within 1.3 of a stack, the real families' 86 or more away.
 const BLEND_TOL = 12; // 0–255 units
+const OVER_BAND_Q = [0.05, 0.95]; // 1 − α for a family's dots over a band of their hue (overBand)
 // A region is solid when much of its color survives an opening by a dot's radius; a "region" of dots doesn't
 // (solidRegion). Measured: boxes, bands and the page 0.71–0.99; step1's blue band 0.52, every blue dot's antialiased
 // rim passing through its color; regions made of dots or outlines 0.00–0.06 (engagement1's cyan, delta1's black,
@@ -232,6 +233,8 @@ const STROKE_TIE = 0.5; // px
  *                                   29 flat pixels over 7 bins, none reaching PEAK_MIN_PIXELS)
  */
 /** @type {Tolerances} */
+/** The note on a translucent family whose radius no isolated dot gave. */
+export const NO_ISOLATED_NOTE = 'No isolated whole dot found, so the radius and edge blur must be set by hand.';
 export const EXACT_TOLERANCES = { flat: FLAT_TOL, minLevelT: LEVEL_SEPARATION / 2, nearB: NEAR_B_ABS_TOL, isolatedFloor: 0, levelSmooth: 0 };
 /** @type {Tolerances} */
 export const JPEG_TOLERANCES = { flat: 6, minLevelT: 15, nearB: 8, isolatedFloor: 0.1, levelSmooth: 3 };
@@ -1094,6 +1097,41 @@ function radiusFromDistance(D, width, height) {
         }
     }
     return peaks.length ? quantile(peaks, DT_RADIUS_QUANTILE) + DT_RADIUS_OFFSET : null;
+}
+
+/**
+ * A translucent family's radius and edge blur when no dot is a whole isolated one (landing1: every dot touches a
+ * gray line, a box or a violin's outline): the distance transform's radius, then larger radii by Hough, as for
+ * opaque families (the largest that keeps RADIUS_SCAN_KEEP of the most centers), on the count clamped to one dot (a
+ * stack or a dot's darker rim is still that dot's disc). Centers with half their edge seen count: dots that dense
+ * show few strong arcs (landing1, at 10–11 px: 2 and 3 strong, 9 and 11 with half an arc, none at other radii).
+ * Null without DOT_MIN_STRONG such centers.
+ *
+ * @param {Float32Array} D  overlap count, NaN where unknown
+ * @param {number} width
+ * @param {number} height
+ * @returns {{radius: number, blur: number, centers: number}|null}  px
+ */
+export function shapeRadius(D, width, height) {
+    const r0 = radiusFromDistance(D, width, height);
+    if (!r0)
+        return null;
+    const C = new Float32Array(D.length);
+    const weight = new Uint8Array(D.length);
+    for (let p = 0; p < D.length; p++) {
+        weight[p] = Number.isNaN(D[p]) ? 0 : 1;
+        C[p] = weight[p] ? Math.min(1, D[p]) : 0;
+    }
+    const centersAt = r => houghCenters(C, weight, width, height, r).filter(c => c.arc >= DOT_MIN_ARC).length;
+    const scan = [];
+    for (let r = r0; r <= RADIUS_SCAN_MAX * r0; r += RADIUS_SCAN_STEP)
+        scan.push({ r, n: centersAt(r) });
+    const most = Math.max(...scan.map(t => t.n));
+    if (most < DOT_MIN_STRONG)
+        return null;
+    const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * most).pop();
+    const edge = boundaryBlur(D, width, height);
+    return { radius: pick.r, blur: Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)), centers: pick.n };
 }
 
 /**
@@ -2278,7 +2316,7 @@ export function estimateStyle(image, opts = {}) {
         }
     }
     else {
-        notes.push('No isolated whole dot found, so the radius and edge blur must be set by hand.');
+        notes.push(NO_ISOLATED_NOTE);
     }
     const inferredLevels = fam.levels.flatMap((L, i) => L.inferred ? [i + 1] : []);
     if (inferredLevels.length)
@@ -2299,7 +2337,8 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
     // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
     // dots as an opaque family).
-    const measured = familyCandidates(image, B, flat, tol).filter(c => c.translucent && !isThin(image, c.levels[0].color))
+    const measured = familyCandidates(image, B, flat, tol).map(c => overBand(image, B, c) ?? c)
+        .filter(c => c.translucent && !isThin(image, c.levels[0].color))
         .map(c => withoutBand(image, B, flat, c, tol));
     // A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with
     // a few pixels of other ink on its line for a weak second level (step1: the red band, 9359 flat pixels, and 2 at
@@ -2365,6 +2404,43 @@ function withoutBand(image, B, flat, c, tol) {
     if (lone.length < DOT_MIN_ISOLATED || !solidRegion(image, L1, median(lone.map(d => d.r))))
         return c;
     return { ...alt, band: L1 };
+}
+
+// A family's dots over a band of their own hue drawn under them (landing1: violins, 193, 206, 227 at 0.35 of the blue
+// dots' offset, under dots at α 0.75): the band is the one level found, and the dots' colors come beyond it at steps no
+// sequence of levels takes. A dot over the page (the first of them, X₁) and one over the band (X₂) differ by
+// (1 − α)·(band − B), as across regions (families.js mergeAcrossRegions), so α = 1 − q and the color is
+// B + (X₁ − B) / α. The colors beyond are all on one line, so X₂ is the one, of most pixels, that puts the color
+// inside the cube (blue 121, 149, 196 → 105, 137, 189: α 0.747, 76, 113, 176; deeper colors gave −210 and −22). The
+// candidate has X₁ as its one level and the band recorded (background.js reads it as a region under the dots).
+function overBand(image, B, c) {
+    if (c.levels.length !== 1 || c.beyond.length < 2 || isThin(image, c.levels[0].color))
+        return null;
+    const band = c.levels[0].color;
+    const d = band.map((v, ch) => v - B[ch]);
+    const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    const [X1, ...rest] = c.beyond;
+    let best = null;
+    for (const X2 of rest) {
+        const e = X2.color.map((v, ch) => v - X1.color[ch]);
+        const q = (e[0] * d[0] + e[1] * d[1] + e[2] * d[2]) / dd;
+        // (the step must be a level's apart: beeswarm-boxplot's gray dots under a gray panel, all colors on one line,
+        // gave a "pair" 5 units apart, α 0.78, and 2129 dots for 711)
+        if (q <= OVER_BAND_Q[0] || q >= OVER_BAND_Q[1] || Math.hypot(...e) < LEVEL_SEPARATION
+            || Math.hypot(e[0] - q * d[0], e[1] - q * d[1], e[2] - q * d[2]) > CLUSTER_ON_LINE_TOL)
+            continue;
+        const alpha = 1 - q;
+        const color = X1.color.map((v, ch) => B[ch] + (v - B[ch]) / alpha);
+        if (color.every(v => v >= -FIT_C_TOL && v <= 255 + FIT_C_TOL) && (!best || X2.count > best.count))
+            best = { alpha, color, count: X2.count };
+    }
+    if (!best)
+        return null;
+    const line = colorLine(B, X1.color);
+    return {
+        seed: X1.color, line, proj: projectOnLine(image, line), levels: [X1], beyond: rest,
+        fit: { alpha: best.alpha, c: best.color, rms: 0, maxAbs: 0 }, pixels: X1.count, translucent: true, band,
+    };
 }
 
 // isolated whole dots under a translucent candidate's levels

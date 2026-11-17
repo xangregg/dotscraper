@@ -1914,3 +1914,26 @@ R 0.951), bench1 smoother-ci.jpg 97 → 98; bench2 group-smoother-ci 205 → 203
 203 → 201 (R 0.995 → 0.985: two dots on the band's edge, the body seeds); bench2 gradient-dots.jpg 196 → 195 (P 0.995
 → 1.000); beeswarm-boxplot 682 → 687 (R 0.917 → 0.920); the rest identical or within 0.1 px RMSE. Tests: a synthetic
 two-band overlay in test/background.test.js and step1 against its truth in test/opaque.test.js.
+
+**bench-plos landing1: dots over violins of their own hue** (2026-11-16)
+
+- No family. Two translucent families, α 0.75 (blue 76, 113, 176; orange 222, 132, 81), over violins drawn under
+  them in their own hue at about 0.35 of the dots' offset (193, 206, 227 and 243, 212, 195): a dot over the page,
+  121, 149, 196, and over its violin, 105, 137, 189, differ by (1 − α)·(violin − white) (likewise orange 230, 163, 125
+  → 227, 152, 110). Each violin was its family's one level, the dots' colors beyond it at steps no sequence takes,
+  so no candidate was translucent, and with no candidate no region was ever looked for.
+- style.js overBand: a one-level candidate whose level isn't thin, with two colors beyond it a level or more apart
+  (LEVEL_SEPARATION; beeswarm-boxplot's gray dots under a gray panel gave a pair 5 apart, 2129 dots for 711) along
+  the band's offset by q in (0.05, 0.95), is a family over a band of its hue: α = 1 − q, color B + (X₁ − B)/α, X₁
+  the first color beyond, X₂ the one of most pixels that puts the color inside the cube (blue: 105, 137, 189, α 0.747;
+  the deeper colors gave −210 and −22). The band is recorded and read as a region under the dots.
+- No dot is isolated, even with the violins read per pixel (every dot touches a gray paired line, a box, a whisker or
+  a violin's outline, and the dots' darker rims read near 2). unmix.js: when a family over a band of its hue has no
+  radius, style.js shapeRadius gives one: the distance transform's, then the Hough radius that keeps 0.75 of the
+  most centers with half an arc (strong arcs: 2 and 3; half arcs 9 and 11 at 10–11 px). Only for those families:
+  elsewhere it gave protrusion3, whose radius is the user's to set, one that found 120 dots for 50.
+- landing1: 77 found for 70 (data, lanes), P 0.909, R 1.000; blue 38 for 34, orange 39 for 35, the extras doubled
+  dots where they are densest.
+
+Results (full bench, diffed against the last commit): landing1 as above; every other row identical. Regression
+test in test/opaque.test.js.
