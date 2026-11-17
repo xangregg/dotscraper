@@ -5,6 +5,7 @@ import { createRng } from '../src/core/rng.js';
 import { estimateStyle, fitGeometric } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readPng } from '../tools/png.mjs';
+import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -154,4 +155,32 @@ test('regression: sparse translucent dots with one coincident pair are transluce
         near(est.style.alpha, 0.5, 0.02, `α at r ${radius}`);
         near(est.style.radius, radius, 0.15, 'radius');
     }
+});
+
+test('a gray label on the line to opaque black dots is no level 1: the dots are an opaque family', () => {
+    // molar1's colors: black dots (19, 20, 19) and a gray label (62, 62, 62), which fit levels 1 and 2 of a translucent
+    // family at α 0.78 that no dot showed whole. The label's strokes, 4 px wide, lie apart from every dot, where a
+    // real level 2 lies inside level 1.
+    const W = 500;
+    const H = 200;
+    const model = createDotModel(solidImage(W, H, [255, 255, 255]), { color: [19, 20, 19], alpha: 1, radius: 7 });
+    const dots = [];
+    for (let k = 0; k < 24; k++)
+        dots.push({ x: 20 + 20 * k, y: 30 + 24 * Math.sin(k / 3) });
+    model.addAll(dots);
+    const im = model.image;
+    for (let s = 0; s < 20; s++) {
+        const x0 = 20 + 24 * s;
+        for (let y = 120; y < 180; y++) {
+            for (let x = x0; x < x0 + 4; x++)
+                im.data.set([62, 62, 62], 3 * (y * W + x));
+        }
+        for (let x = x0; x < x0 + 16; x++) {
+            for (let y = 150; y < 154; y++)
+                im.data.set([62, 62, 62], 3 * (y * W + x));
+        }
+    }
+    const est = estimateStyle(toRgba(im));
+    assert.equal(est.familyMeasure?.kind, 'opaque', est.notes.join(' '));
+    near(est.style.radius, 7, 0.5, 'radius');
 });

@@ -142,6 +142,14 @@ const RING_PAGE_REACH = 3; // px …
 const RING_PAGE_MIN_SHARE = 0.3; // … of the page, for this share of a ring's color (hueRings)
 const RING_FILL_REACH = 4; // px inside a ring from which its fill's color is read (opaqueFamilies' reading (4))
 const COMPACT_MAX_AREA = 2.5; // × π·depth²: a disc is 1, two overlapping discs up to 2; kite2's curve 50
+// Two dots overlap inside each dot, so a translucent family's level 2 lies in level 1: its pieces have level 1's flat
+// pixels close by (flat pixels stop a pixel or two short of an edge on each side). A gray of text on the line to
+// black dots is no level 1 (molar1: the "K_d" label at 62, 62, 62 and black dots as level 2, α 0.78, no dot whole).
+// Real families had 9–100% of their pieces touching; text's levels 0%, over 73–281 pieces.
+const NEST_REACH = 6; // px from a level-2 piece to level 1's flat pixels
+const NEST_MIN_PIECES = 20; // level-2 pieces of NEST_MIN_PIECE_AREA px needed to judge (real families at 0: 7 or fewer)
+const NEST_MIN_PIECE_AREA = 3; // px
+const NEST_MIN_SHARE = 0.05; // of the pieces near level 1
 
 // A dot color can also be text's (nicest language: its gray dots' color is the gray of antialiased black text on the
 // white page, which made white their "background" and text strokes their radius). Text is thin: the family's
@@ -2128,9 +2136,10 @@ function isDotFamily(f) {
 
 /**
  * Opaque dot families: color clusters that aren't a background, aren't levels of a translucent family, and show
- * at least DOT_MIN_COUNT dot-shaped edges at a radius of at least DOT_MIN_RADIUS.
+ * at least DOT_MIN_COUNT dot-shaped edges at a radius of at least DOT_MIN_RADIUS. `ink` is colors of other marks
+ * (levels of rejected translucent candidates): other ink for every family but one of their own color.
  */
-export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLERANCES) {
+export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLERANCES, ink = []) {
     const onTranslucent = c => translucent.some(f => {
         const { B, u } = f.line;
         const e = B.map((v, ch) => v - c[ch]);
@@ -2159,6 +2168,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     }));
     // translucent families' level colors are theirs (see measureOpaque's `others`)
     const levelColors = translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color));
+    const inkFor = seed => ink.filter(c => Math.hypot(c[0] - seed[0], c[1] - seed[1], c[2] - seed[2]) > CLUSTER_TOL);
     // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and so
     // count as a background color; the dot test tells it from a panel.
     const clusters = colorClusters(image, backgrounds.slice(0, 1));
@@ -2220,7 +2230,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             continue;
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
-        let fam = measureOpaque(image, cl.color, backgrounds, levelColors, tol);
+        let fam = measureOpaque(image, cl.color, backgrounds, [...levelColors, ...inkFor(cl.color)], tol);
         // Outlined or stroked fills, in order: (1) a ring whose color is thin over the whole image is an outline that
         // shows its own color (JMP's 1.7 px outlines); (2) else a fill inside a stroke too thin to show its color, off
         // the line from the page to the fill (engagement1, cells1: it places colored fills better than the outline
@@ -2298,7 +2308,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const stroked = out.some(f => f.stroke);
     const final = out.map(f => {
         const rings = stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null;
-        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
+        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
@@ -2498,9 +2508,14 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
     // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
     // dots as an opaque family).
-    const measured = familyCandidates(image, B, flat, tol).map(c => overBand(image, B, c) ?? c)
+    // A candidate whose level 2 lies outside its level 1 is no family (levelsNest); its colors stay other ink for the
+    // opaque families, as when it was dropped later as text (engagement1: black text and the blues' strokes; without
+    // them the blues' fit gave 55 dots for 49, P 0.873)
+    const nesting = familyCandidates(image, B, flat, tol).map(c => overBand(image, B, c) ?? c)
         .filter(c => c.translucent && !isThin(image, c.levels[0].color))
         .map(c => withoutBand(image, B, flat, c, tol));
+    const measured = nesting.filter(c => levelsNest(image, c, flat));
+    const ink = nesting.filter(c => !measured.includes(c)).flatMap(c => c.levels.filter(L => !L.inferred).map(L => L.color));
     // A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with
     // a few pixels of other ink on its line for a weak second level (step1: the red band, 9359 flat pixels, and 2 at
     // a red ring's core); dropped, it is a region (background.js)
@@ -2512,7 +2527,7 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     for (const c of translucent)
         c.kind = 'translucent';
     dropBlends(translucent, B);
-    const opaque = opaqueFamilies(image, backgrounds, translucent, tol);
+    const opaque = opaqueFamilies(image, backgrounds, translucent, tol, ink);
     // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
@@ -2602,6 +2617,32 @@ function overBand(image, B, c) {
         seed: X1.color, line, proj: projectOnLine(image, line), levels: [X1], beyond: rest,
         fit: { alpha: best.alpha, c: best.color, rms: 0, maxAbs: 0 }, pixels: X1.count, translucent: true, band,
     };
+}
+
+// Whether a translucent candidate's level 2 lies in its level 1 (NEST_REACH). Pixels are a level's when flat and
+// nearer its color than half the step between the two levels. True when there are too few pieces to judge, or level 1
+// or 2 was inferred.
+function levelsNest(image, c, flat) {
+    const [L1, L2] = c.levels;
+    if (!L2 || L1.inferred || L2.inferred)
+        return true;
+    const { width, height, data } = image;
+    const half = Math.hypot(...L1.color.map((v, ch) => v - L2.color[ch])) / 2;
+    const in1 = new Uint8Array(width * height);
+    const in2 = new Uint8Array(width * height);
+    for (let p = 0; p < in1.length; p++) {
+        if (!flat[p])
+            continue;
+        const [r, g, b] = [data[4 * p], data[4 * p + 1], data[4 * p + 2]];
+        if (Math.hypot(r - L1.color[0], g - L1.color[1], b - L1.color[2]) < half)
+            in1[p] = 1;
+        else if (Math.hypot(r - L2.color[0], g - L2.color[1], b - L2.color[2]) < half)
+            in2[p] = 1;
+    }
+    const to1 = distanceTransform(in1, width, height);
+    const pieces = components(in2, width, height).filter(cp => cp.length >= NEST_MIN_PIECE_AREA);
+    const near = pieces.filter(cp => cp.some(p => to1[p] <= NEST_REACH * NEST_REACH)).length;
+    return pieces.length < NEST_MIN_PIECES || near >= NEST_MIN_SHARE * pieces.length;
 }
 
 // isolated whole dots under a translucent candidate's levels

@@ -409,6 +409,22 @@ test('regression: kite1, cyan dots on a cyan line under a red band drawn over th
     assert.ok(row.precision >= 0.88 && row.recall >= 0.92, `precision ${row.precision}, recall ${row.recall}, found ${row.found}`);
 });
 
+const MOLAR1 = 'molar1-10.1038-s41586-026-11021-5.png';
+
+test('regression: molar1, black dots beside a gray label that fits as their level 1', { skip: !existsSync(NATURE + MOLAR1) && 'bench-nature molar1 absent' }, () => {
+    // before: radius unknown. The "K_d = 119 nM" label (62, 62, 62) and the black dots (19, 20, 19) fit levels 1 and 2
+    // of a translucent family at α 0.78, with no dot whole; none of the 191 black pieces lies near the gray
+    const results = extractAll(readImage(NATURE + MOLAR1));
+    assert.equal(results.length, 1);
+    assert.equal(results[0].est.familyMeasure.kind, 'opaque');
+    near(results[0].fit.radius, 9.6, 0.4, 'radius');
+    const truthFile = NATURE + 'truth/' + MOLAR1.replace('.png', '.json');
+    if (!existsSync(truthFile))
+        return;
+    const row = groupRow('molar1', readTruthJson(truthFile).dots, results, 0);
+    assert.ok(row.precision >= 0.95 && row.recall >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
+});
+
 const KITE2 = 'kite2-10.1038-s41586-026-11194-z.png';
 
 test('regression: kite2, fills in rings of their darker shade beside a curve of the fill color', { skip: !existsSync(NATURE + KITE2) && 'bench-nature kite2 absent' }, () => {

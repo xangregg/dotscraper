@@ -1995,3 +1995,26 @@ radius: no image here has one now).
 
 Results (full bench, diffed against 22712e8): kite2 as above; every other row identical. Regression test in
 test/opaque.test.js.
+
+**bench-nature molar1: black dots beside a gray label that fits as their level 1** (2026-11-17)
+
+- Radius unknown. Black dots (19, 20, 19) on a black curve, and a label, "K_d = 119 nM", in gray 62, 62, 62: the
+  two fit levels 1 and 2 of a translucent family (α 0.78, rms 0.17), so the dots read as two-dot overlaps, none whole.
+  isThin doesn't catch the label: its strokes are 4 px, and an opening by 1.5 px keeps 70% of them.
+- A translucent family's level 2 lies inside its level 1, since two dots overlap inside each dot. style.js
+  levelsNest counts level 2's flat pieces (3 px or more) that have level 1's flat pixels within 6 px (flat pixels stop
+  1–2 px short of an edge on each side, so 3 px found too few even in real families). Over every bench image's
+  translucent candidates: real families 9–100% of their pieces (step1's band 1 of 42, but withoutBand reads that one
+  first, and the check comes after it), and the ones at 0% had 7 pieces or fewer; text's levels 0% over 73–281 pieces
+  (molar1 0 of 191; engagement1, protrusion1–3's black text). A candidate is dropped with 20 or more pieces and under
+  5% of them near level 1.
+- A dropped candidate's levels stay other ink for the opaque families (`ink`, except for a family of their color):
+  engagement1's black text candidate had been other ink for the blues (and their strokes) until withoutSpeckLevels
+  dropped it; without it, 55 found for 49, P 1.000 → 0.873.
+- molar1: black as an opaque family, r 9.64 (9.59 in the truth), 16 found for 16, P 1.000, R 1.000, RMSE 0.12 px.
+- protrusion3, radius unknown before (its black text candidate came first, with no radius): now the green family,
+  r 22.0, 114 found for 50, R 1.000. The extras are mostly in the green box (89 of the 114 found lie in it): not yet investigated.
+  protrusion1–2 stay radius unknown, for other reasons.
+
+Results (full bench, diffed against 87a1a04): molar1 and protrusion3 as above; every other row identical. Tests in
+test/style.test.js (synthetic) and test/opaque.test.js (molar1).
