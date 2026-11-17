@@ -409,6 +409,23 @@ test('regression: kite1, cyan dots on a cyan line under a red band drawn over th
     assert.ok(row.precision >= 0.88 && row.recall >= 0.92, `precision ${row.precision}, recall ${row.recall}, found ${row.found}`);
 });
 
+const KITE2 = 'kite2-10.1038-s41586-026-11194-z.png';
+
+test('regression: kite2, fills in rings of their darker shade beside a curve of the fill color', { skip: !existsSync(NATURE + KITE2) && 'bench-nature kite2 absent' }, () => {
+    // before: no family. The curve (211, 136, 88) joins the fill's color cluster (209, 131, 82) and borders the page,
+    // so the fill's surroundings were the page, not its rings (193, 88, 32, on the line from the page through the fill:
+    // no stroke reading, and 3 px wide with the overlaps' lenses, so not thin for an outline); its radius was the
+    // curve's half width, 6.9 for 19.5. The rings in the fill's darker shade now give the outline reading.
+    const results = extractAll(readImage(NATURE + KITE2));
+    assert.equal(results.length, 1);
+    near(results[0].fit.radius, 19.5, 0.6, 'radius');
+    const truthFile = NATURE + 'truth/' + KITE2.replace('.png', '.json');
+    if (!existsSync(truthFile))
+        return;
+    const row = groupRow('kite2', readTruthJson(truthFile).dots, results, 0);
+    assert.ok(row.precision >= 0.95 && row.recall >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
+});
+
 const CELLS1 = 'cells1-10.1038-s41586-026-10946-1.png';
 
 test('regression: cells1, magenta dots over a gray bar and clustered are a family like the green, by their fills', { skip: !existsSync(NATURE + CELLS1) && 'bench-nature cells1 absent' }, () => {

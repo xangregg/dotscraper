@@ -134,9 +134,15 @@ const RADIUS_SCAN_MAX = 1.6; // × the distance transform's radius
 const RADIUS_SCAN_KEEP = 0.75; // of the most strong centers, at the largest radius that keeps them
 // A line in the dots' own color puts most distance-transform peaks on its ridge, at its half width (kite1: the cyan
 // line gave 3.5 px for dots of 12.3, and the scan to 1.6 times that found no dot). Each connected piece's deepest point
-// is a dot's center wherever a dot touches the line, so measureOpaque tries again around their median by size,
-// ± this fraction.
+// is a dot's center wherever a dot touches the line, so measureOpaque tries again around the radii the pieces give
+// (componentRadii), ± this fraction.
 const COMPONENT_SCAN = 0.25;
+const HUE_RING_MIN_CHROMA = 30; // 0–255 units (max − min channel) a fill needs for a ring in its hue (kite2: 127)
+const RING_PAGE_REACH = 3; // px …
+const RING_PAGE_MIN_SHARE = 0.3; // … of the page, for this share of a ring's color (hueRings)
+const RING_FILL_REACH = 4; // px inside a ring from which its fill's color is read (opaqueFamilies' reading (4))
+const COMPACT_MAX_AREA = 2.5; // × π·depth²: a disc is 1, two overlapping discs up to 2; kite2's curve 50
+
 // A dot color can also be text's (nicest language: its gray dots' color is the gray of antialiased black text on the
 // white page, which made white their "background" and text strokes their radius). Text is thin: the family's
 // background comes from its thick parts (an opening), and distance peaks below DOT_MIN_RADIUS are ignored.
@@ -1140,11 +1146,14 @@ export function shapeRadius(D, width, height) {
     return { radius: pick.r, blur: Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)), centers: pick.n };
 }
 
-// The median, weighted by size, over connected pieces of a family's pixels of each one's deepest point (distance to
-// outside), plus the half pixel the transform loses between pixel centers; pieces shallower than DOT_MIN_RADIUS are
-// left out. Weighted, the whole dots and the dots joined by a line decide, not the slivers of partly hidden ones
-// (kite1 online, its red band divided out: pieces 5.8–8 px deep, 2500 px in all, against 12.0 and 12.2, 5900 px)
-function componentRadius(D, width, height) {
+// Radii to try from the connected pieces of a family's pixels, each piece by its deepest point (distance to outside)
+// plus the half pixel the transform loses between pixel centers; pieces shallower than DOT_MIN_RADIUS are left out.
+// (1) The median weighted by size: the whole dots and the dots joined by a line decide, not the slivers of partly
+// hidden ones (kite1 online, its red band divided out: pieces 5.8–8 px deep, 2500 px in all, against 12.0 and 12.2,
+// 5900 px). (2) The deepest compact piece (area within COMPACT_MAX_AREA of a disc's at its depth): where a line of the
+// dots' color is as large as the dots, the weighted median falls between them (kite2: its curve, 6.4–7 px deep and
+// 15 700 px, 50 times a disc's area, against 21 dots 16–16.6 px deep, 18 000 px, gave 9.6).
+function componentRadii(D, width, height) {
     const inside = new Uint8Array(D.length);
     for (let p = 0; p < D.length; p++)
         inside[p] = D[p] > 0.5 ? 0 : 1;
@@ -1158,15 +1167,19 @@ function componentRadius(D, width, height) {
             pieces.push({ depth: Math.sqrt(most), size: comp.length });
     }
     if (!pieces.length)
-        return null;
+        return [];
     pieces.sort((a, b) => a.depth - b.depth);
     const half = pieces.reduce((t, q) => t + q.size, 0) / 2;
     let sum = 0;
+    let median = null;
     for (const q of pieces) {
         sum += q.size;
-        if (sum >= half)
-            return q.depth + DT_RADIUS_OFFSET;
+        if (median === null && sum >= half)
+            median = q.depth;
     }
+    const compact = pieces.filter(q => q.size <= COMPACT_MAX_AREA * Math.PI * q.depth * q.depth);
+    const deepest = compact.length ? compact[compact.length - 1].depth : null;
+    return [...new Set([median, deepest].filter(d => d !== null))].map(d => d + DT_RADIUS_OFFSET);
 }
 
 /**
@@ -1713,14 +1726,19 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
             const most = Math.max(0, ...scan.map(t => t.n));
             // a line in the dots' color sets the transform's radius to its half width (kite1: cyan 3.5 px, the dots
-            // 12.3): then the scan runs again around the deepest pieces' radius (componentRadius; kite1: 4 strong
-            // centers at 11.5, 3 at 12, none below 11 or above 12.5)
-            const r1 = most < DOT_MIN_STRONG ? componentRadius(D, width, height) : null;
-            if (r1 && (1 - COMPONENT_SCAN) * r1 > RADIUS_SCAN_MAX * radius) {
-                scan.length = 0;
-                for (let r = (1 - COMPONENT_SCAN) * r1; r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
-                    const cs = centersAt(r);
-                    scan.push({ r, cs, n: strong(cs) });
+            // 12.3): then the scan runs again around each of the pieces' radii (componentRadii), keeping the one with
+            // the most strong centers (kite1: 4 at 11.5, 3 at 12, none below 11 or above 12.5)
+            if (most < DOT_MIN_STRONG) {
+                for (const r1 of componentRadii(D, width, height)) {
+                    if ((1 - COMPONENT_SCAN) * r1 <= RADIUS_SCAN_MAX * radius)
+                        continue;
+                    const near = [];
+                    for (let r = (1 - COMPONENT_SCAN) * r1; r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
+                        const cs = centersAt(r);
+                        near.push({ r, cs, n: strong(cs) });
+                    }
+                    if (Math.max(0, ...near.map(t => t.n)) > Math.max(0, ...scan.map(t => t.n)))
+                        scan.splice(0, scan.length, ...near);
                 }
             }
             const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * Math.max(0, ...scan.map(t => t.n))).pop();
@@ -2230,8 +2248,29 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             fam = strokedFamily(image, cl.color, backgrounds, tol, plain) ?? fam;
         if (!isDotFamily(fam) && notPage && !isThin(image, cl.color) && luminance(ring) < luminance(cl.color))
             fam = outlinedFamily() ?? fam;
+        // (4) else a ring in a darker shade of the fill's own hue, when the fill's surroundings are the page: a line
+        // in nearly the fill's color, joined to it, can border the page longer than the dots' rings do (kite2: a curve
+        // at 211, 136, 88 beside fills at 209, 131, 82 in rings of 193, 88, 32, the ring on the line from the page
+        // through the fill, 6 units off it; text and axes are far off an orange fill's line)
+        // The fill is the commonest color just inside the rings, not the cluster's mean, which the line pulls off it
+        // (kite2: 210, 134, 85; read against it the fills came out 0.94 inside and failed as round). The round fills
+        // in rings of their darker shade are the evidence, so the coverage need only be DOT_MIN_COVERAGE_ANY: the line
+        // is the fill's color too (kite2: 0.32, half its fill-colored pixels the curve's; 8 strong centers at 19.3 px)
+        let byHueRing = false;
+        if (!isDotFamily(fam) && !notPage) {
+            for (const hue of hueRings(image, cl.color, clusters, backgrounds[0])) {
+                const fill = ringFill(image, cl.color, hue);
+                const outlined = fill && measureOpaque(image, fill, backgrounds, [], tol, hue);
+                if (outlined && (isDotFamily(outlined) || (outlined.fillRadius && radiusPlausible(outlined.radius, outlined.isolated.length)
+                    && outlined.strongDots >= DOT_MIN_STRONG && outlined.coverage >= DOT_MIN_COVERAGE_ANY))) {
+                    fam = { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius };
+                    byHueRing = true;
+                    break;
+                }
+            }
+        }
         fam.interior = interior / count;
-        if (isDotFamily(fam))
+        if (byHueRing || isDotFamily(fam))
             out.push(fam);
         else
             rejected.push(plain);
@@ -2263,6 +2302,72 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     return final.sort((a, b) => b.dots - a.dots);
+}
+
+// Color clusters in a darker shade of a fill's hue: on the line from the page through the fill, within
+// CLUSTER_ON_LINE_TOL, and beyond the fill (opaqueFamilies' outline reading (4)). Not only thin ones: kite2's rings
+// are 3 px wide, and its overlaps' lenses, 15 units from the ring color, join them; the outlined measure decides.
+// A ring lies at its dots' rims, next to the page wherever they border it; an overlap of translucent dots, the same
+// darker shade, lies inside them: RING_PAGE_MIN_SHARE of the cluster within RING_PAGE_REACH of the page (kite2:
+// 0.50; bench1 medium-dots.jpg read as exact, its α 0.5 family unseen through JPEG noise and its overlaps taken
+// for rings: 0.11).
+function hueRings(image, fill, clusters, page) {
+    // a gray's darker shade is black, which is also text and axes (primates2: gray antialiasing "outlined" in black,
+    // 136 dots for 15; fanc2, phase1, economist likewise): grays in black outlines are reading (3)'s
+    if (Math.max(...fill) - Math.min(...fill) < HUE_RING_MIN_CHROMA)
+        return [];
+    const u = fill.map((v, ch) => v - page[ch]);
+    const uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+    const shades = clusters.map(c => c.color).filter(c => {
+        const v = c.map((x, ch) => x - page[ch]);
+        const m = (v[0] * u[0] + v[1] * u[1] + v[2] * u[2]) / uu;
+        return m > 1 && Math.hypot(...c.map((x, ch) => x - fill[ch])) > CLUSTER_TOL
+            && Math.hypot(v[0] - m * u[0], v[1] - m * u[1], v[2] - m * u[2]) <= CLUSTER_ON_LINE_TOL;
+    });
+    if (!shades.length)
+        return [];
+    const { width, height, data } = image;
+    const n = width * height;
+    const isPage = new Uint8Array(n);
+    for (let p = 0; p < n; p++)
+        isPage[p] = Math.hypot(data[4 * p] - page[0], data[4 * p + 1] - page[1], data[4 * p + 2] - page[2]) <= INK_TOL ? 1 : 0;
+    const toPage = distanceTransform(isPage, width, height);
+    return shades.filter(c => {
+        let total = 0;
+        let near = 0;
+        for (let p = 0; p < n; p++) {
+            if (Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) > CLUSTER_TOL)
+                continue;
+            total++;
+            near += toPage[p] <= RING_PAGE_REACH * RING_PAGE_REACH;
+        }
+        return total > 0 && near >= RING_PAGE_MIN_SHARE * total;
+    });
+}
+
+// The commonest exact color of a cluster within RING_FILL_REACH of its ring color's pixels (those within
+// CLUSTER_ON_LINE_TOL of `ring`), or null when none is
+function ringFill(image, color, ring) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const near = (p, c, tol) => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= tol;
+    const ringPx = new Uint8Array(n);
+    for (let p = 0; p < n; p++)
+        ringPx[p] = near(p, ring, CLUSTER_ON_LINE_TOL) ? 1 : 0;
+    const reach = dilate(ringPx, width, height, RING_FILL_REACH);
+    const counts = new Map();
+    for (let p = 0; p < n; p++) {
+        if (!reach[p] || ringPx[p] || !near(p, color, CLUSTER_TOL))
+            continue;
+        const key = (data[4 * p] << 16) | (data[4 * p + 1] << 8) | data[4 * p + 2];
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    let best = null;
+    for (const [key, c] of counts) {
+        if (!best || c > best.c)
+            best = { key, c };
+    }
+    return best ? [best.key >> 16, (best.key >> 8) & 255, best.key & 255] : null;
 }
 
 // The family of a fill color inside a stroke (strokeColor), or null when no stroke shows or it isn't a dot family.

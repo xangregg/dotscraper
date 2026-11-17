@@ -1937,3 +1937,61 @@ two-band overlay in test/background.test.js and step1 against its truth in test/
 
 Results (full bench, diffed against the last commit): landing1 as above; every other row identical. Regression
 test in test/opaque.test.js.
+
+**bench-nature kite1: dots on a line of their own color, a band over the dots** (2026-11-16)
+
+- The first copy (a print rendering) was replaced by the online figure, with a data CSV (25 rows). The print copy's
+  colors fit no compositing model: its red band lightened the red dots under it (234, 114, 107 → 249, 128, 118) and
+  turned any teal under it into one flat 121, 177, 176, one dot deep or two; its bands crossed in a color neither
+  order makes. Probably transparency flattened in another color space (CMYK for print). Work aimed at it (a band as a
+  translucent family's only level, over/under decided by decisive votes alone, band crossings as regions, a radius
+  through the layers for a lone translucent family) went unused on the online copy, and one part broke phase1; it was
+  removed.
+- Online kite1: opaque cyan (1, 191, 198) and red (249, 118, 110), r 12.3, JPEG noise (analyzed as a JPEG), a cyan
+  and a red band. Before: 10 found, red only.
+- measureOpaque: the cyan line, in the dots' color, set the distance-transform radius to its half width (3.5 for
+  12.3), and the scan to 1.6 times that found no dot. When it finds none, it scans again around the radii the
+  family's connected pieces give (componentRadii: the size-weighted median of their depths; see kite2 for the other).
+- families.js: the red dots, most inside the red band, had the band as their background (254, 227, 225), and regions
+  were told from the first family's background: the page became a region "under" the dots and the band none, so the
+  cyan dots under it were missed. Regions are now told from the page first; without a layer over the dots, from the
+  first family's background as before (from the page, violin-beeswarm's violins gave 18 more extras, P 0.985 → 0.960,
+  and bench1 ellipse 15 flagged for 2). The red band then reads as over the dots, s 0.82 (0.81 measured).
+- kite1: 26 found for 25, P 0.923, R 0.960 (data CSV and hand truth alike). The miss is a cyan dot 8 px from another;
+  the extras two dots found twice, a cyan one and an opaque red one.
+- Speed, results unchanged: houghGradient computes the Hough votes' gradient once per radius scan (doubles: Float32
+  directions moved votes enough to change two bench2 fits), and the fit's births keep a list of candidate centers
+  instead of scanning the image per attempt (6 of 13 s on the 2.8 Mpx print copy). The test suite: 754 → 405 s.
+
+Results (full bench, diffed against 5377fb5): kite1 as above; every other row identical. Regression test in
+test/opaque.test.js (it replaces the print copy's, a speck filter that once dropped a translucent family without a
+radius: no image here has one now).
+
+**bench-nature kite2: fills in rings of their darker shade, beside a curve of the fill's color** (2026-11-16)
+
+- No family. Orange fills (209, 131, 82) in rings of 192, 85, 28, about 3 px; the fill is the ring's color at α 0.74,
+  but overlaps (lenses 195, 98, 46) don't composite as an sRGB over (α 0.67–0.78 by channel; 6.8 off the line, past
+  PERP_TOL), so no translucent reading. A curve of 211, 136, 88 joins the fill's color cluster (mean 210, 134, 85).
+- As opaque: the cluster's surroundings were the page (the curve borders it longer than the dots' rings do), so no
+  outline reading; the ring is on the line from the page through the fill (6 off), so no stroke (strokeColor wants
+  one off it); and the radius was the curve's half width, 6.9 for 19.5.
+- style.js opaqueFamilies, reading (4): when the fill's surroundings are the page, a color cluster in a darker shade
+  of its hue (hueRings: on the page–fill line within CLUSTER_ON_LINE_TOL, beyond the fill; not only thin ones, as the
+  ring and the lenses make a 3 px cluster) is tried as its outline, the fill read just inside the rings (ringFill:
+  209, 131, 82; the cluster's mean made the fills 0.94 inside and none passed as round). The round fills in rings are
+  the evidence, so the coverage need only be DOT_MIN_COVERAGE_ANY (0.32: half the fill-colored pixels are the
+  curve's). The family is fitted by its rings in drawing order (r 19.0).
+- Only for a fill with a hue (chroma, max − min channel, 30 or more; kite2's 127): a gray's darker shade is black,
+  which is also text and axes. Without it, reading (4) took black as the outline of gray antialiasing (primates2: 136
+  found for 15), of fanc2's gray (P 1.000 → 0.894) and economist's (radius 8.4 → 8.7), and of phase1's gray 228
+  (50 → 69 found, P 0.580 → 0.696: real dots, but not ones black can be told from text for).
+- And only for a shade next to the page: an overlap of translucent dots is the same darker shade, but lies inside
+  them, where a ring lies at their rims. At least 0.3 of the cluster within 3 px of the page (kite2: 0.50; bench1
+  medium-dots.jpg read as exact, its α 0.5 family unseen through JPEG noise, its overlaps taken for rings: 0.11).
+- componentRadii also returns the deepest compact piece (area within 2.5 times a disc's at its depth): the curve,
+  15 700 px at 6.4–7 px deep, made the size-weighted median 9.6 against dots 16–16.6 deep.
+- kite2: 21 found for 21, P 1.000, R 1.000, RMSE 0.11 px. The app: one family, opaque, outlined, r 19.0, 21 dots,
+  none flagged.
+
+Results (full bench, diffed against 22712e8): kite2 as above; every other row identical. Regression test in
+test/opaque.test.js.
