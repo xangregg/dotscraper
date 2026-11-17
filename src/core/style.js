@@ -8,7 +8,7 @@
 // rounding drifts with depth and some images have an odd first step, so the level colors used by the forward
 // model are the measured ones; a geometric fit gives α and c and extrapolates beyond the deepest measured level.
 
-import { houghCenters } from './fit.js';
+import { houghCenters, houghGradient } from './fit.js';
 import { distanceTransform, dilate, nearestTransform, opening } from './layers.js';
 import { backgroundColors } from './axes.js';
 import { pixelCoverage } from './render.js';
@@ -132,6 +132,11 @@ const DT_RADIUS_OFFSET = 0.5; // px
 const RADIUS_SCAN_STEP = 0.5; // px
 const RADIUS_SCAN_MAX = 1.6; // × the distance transform's radius
 const RADIUS_SCAN_KEEP = 0.75; // of the most strong centers, at the largest radius that keeps them
+// A line in the dots' own color puts most distance-transform peaks on its ridge, at its half width (kite1: the cyan
+// line gave 3.5 px for dots of 12.3, and the scan to 1.6 times that found no dot). Each connected piece's deepest point
+// is a dot's center wherever a dot touches the line, so measureOpaque tries again around their median by size,
+// ± this fraction.
+const COMPONENT_SCAN = 0.25;
 // A dot color can also be text's (nicest language: its gray dots' color is the gray of antialiased black text on the
 // white page, which made white their "background" and text strokes their radius). Text is thin: the family's
 // background comes from its thick parts (an opening), and distance peaks below DOT_MIN_RADIUS are ignored.
@@ -1122,7 +1127,8 @@ export function shapeRadius(D, width, height) {
         weight[p] = Number.isNaN(D[p]) ? 0 : 1;
         C[p] = weight[p] ? Math.min(1, D[p]) : 0;
     }
-    const centersAt = r => houghCenters(C, weight, width, height, r).filter(c => c.arc >= DOT_MIN_ARC).length;
+    const grad = houghGradient(C, weight, width, height);
+    const centersAt = r => houghCenters(C, weight, width, height, r, grad).filter(c => c.arc >= DOT_MIN_ARC).length;
     const scan = [];
     for (let r = r0; r <= RADIUS_SCAN_MAX * r0; r += RADIUS_SCAN_STEP)
         scan.push({ r, n: centersAt(r) });
@@ -1132,6 +1138,35 @@ export function shapeRadius(D, width, height) {
     const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * most).pop();
     const edge = boundaryBlur(D, width, height);
     return { radius: pick.r, blur: Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)), centers: pick.n };
+}
+
+// The median, weighted by size, over connected pieces of a family's pixels of each one's deepest point (distance to
+// outside), plus the half pixel the transform loses between pixel centers; pieces shallower than DOT_MIN_RADIUS are
+// left out. Weighted, the whole dots and the dots joined by a line decide, not the slivers of partly hidden ones
+// (kite1 online, its red band divided out: pieces 5.8–8 px deep, 2500 px in all, against 12.0 and 12.2, 5900 px)
+function componentRadius(D, width, height) {
+    const inside = new Uint8Array(D.length);
+    for (let p = 0; p < D.length; p++)
+        inside[p] = D[p] > 0.5 ? 0 : 1;
+    const d2 = distanceTransform(inside, width, height);
+    const pieces = [];
+    for (const comp of components(D, width, height)) {
+        let most = 0;
+        for (const p of comp)
+            most = Math.max(most, d2[p]);
+        if (most >= DOT_MIN_RADIUS * DOT_MIN_RADIUS && most !== Infinity)
+            pieces.push({ depth: Math.sqrt(most), size: comp.length });
+    }
+    if (!pieces.length)
+        return null;
+    pieces.sort((a, b) => a.depth - b.depth);
+    const half = pieces.reduce((t, q) => t + q.size, 0) / 2;
+    let sum = 0;
+    for (const q of pieces) {
+        sum += q.size;
+        if (sum >= half)
+            return q.depth + DT_RADIUS_OFFSET;
+    }
 }
 
 /**
@@ -1648,8 +1683,18 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
             return count > 0 && on >= DOT_MIN_FILL * count;
         };
-        const centersAt = r => (byFill ? houghCenters(fillCover, weight, width, height, byFill.fillRadius) : houghCenters(D, weight, width, height, r))
-            .filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
+        // (the gradient is the radius's alone, and by fill the centers are too)
+        let grad = null;
+        let fillCenters = null;
+        const houghAt = r => {
+            if (byFill) {
+                fillCenters ??= houghCenters(fillCover, weight, width, height, byFill.fillRadius);
+                return fillCenters;
+            }
+            grad ??= houghGradient(D, weight, width, height);
+            return houghCenters(D, weight, width, height, r, grad);
+        };
+        const centersAt = r => houghAt(r).filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
         const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
         let centers = centersAt(radius);
         // The distance transform underestimates the radius where dots touch; packed past the dot test, larger radii
@@ -1667,7 +1712,18 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
                 scan.push({ r, cs, n: strong(cs) });
             }
             const most = Math.max(0, ...scan.map(t => t.n));
-            const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * most).pop();
+            // a line in the dots' color sets the transform's radius to its half width (kite1: cyan 3.5 px, the dots
+            // 12.3): then the scan runs again around the deepest pieces' radius (componentRadius; kite1: 4 strong
+            // centers at 11.5, 3 at 12, none below 11 or above 12.5)
+            const r1 = most < DOT_MIN_STRONG ? componentRadius(D, width, height) : null;
+            if (r1 && (1 - COMPONENT_SCAN) * r1 > RADIUS_SCAN_MAX * radius) {
+                scan.length = 0;
+                for (let r = (1 - COMPONENT_SCAN) * r1; r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
+                    const cs = centersAt(r);
+                    scan.push({ r, cs, n: strong(cs) });
+                }
+            }
+            const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * Math.max(0, ...scan.map(t => t.n))).pop();
             if (pick && pick.n > strong(centers)) {
                 centers = pick.cs;
                 radius = pick.r;

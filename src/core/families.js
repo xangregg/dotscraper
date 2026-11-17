@@ -320,9 +320,20 @@ export function estimateFamilies(image, opts = {}) {
         const hollow = hollowEstimates(image, first.background, []);
         return { image, layers: null, estimates: hollow.length ? hollow : [{ ...first, image }] };
     }
-    const B = first.background.color;
     const radius = first.style?.radius ?? first.candidates.find(c => c.radius)?.radius ?? DEFAULT_RADIUS;
-    const layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
+    // A layer over the dots is divided out against the page, so regions are first told from the page. An opaque
+    // family's background is its dots' surroundings, and a band most of them lie in (kite1: the red dots inside the
+    // red band, 254, 227, 225) made the page a "region" under the dots and the band none, so the cyan dots under it
+    // were never seen. Without a layer over the dots, regions are told from the first family's background as before:
+    // the regions under the dots are read against their own colors either way, and the fits were tuned with it
+    // (from the page, violin-beeswarm's violins under the dots gave 18 more extras, P 0.985 to 0.960).
+    const page = backgroundColor(image).color;
+    let B = page;
+    let layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
+    if (!layers.regions.some(r => r.mode === 'over') && first.background.color.some((v, ch) => v !== page[ch])) {
+        B = first.background.color;
+        layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
+    }
     const overlays = layers.regions.filter(r => r.mode === 'over');
     // Opaque dots over a shaded region are read against its color, as against the page; otherwise the region is
     // other ink and the mask around it takes the dots' edges (boxdots1: black dots over a red box, recall 0.74)

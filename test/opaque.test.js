@@ -14,6 +14,7 @@ import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } fr
 import { readTruthJson, truthFromExport, isDotsExport } from '../tools/truth-json.mjs';
 import { extractAll, groupRow, laneRow } from '../tools/bench.mjs';
 import { detectAxes } from '../src/core/axes.js';
+import { restoreChroma } from '../src/core/jpeg.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -391,10 +392,21 @@ test('regression: engagement1, five blues in one dark stroke are stroked familie
 
 const KITE1 = 'kite1-10.1038-s41586-026-11194-z.png';
 
-test('regression: kite1, a translucent family without a measured radius is kept for the user to set it', { skip: !existsSync(NATURE + KITE1) && 'bench-nature kite1 absent' }, () => {
-    // the speck filter for translucent families once compared a null radius as 0 and dropped the teal family
-    const { estimates } = estimateFamilies(readImage(NATURE + KITE1));
-    assert.ok(estimates.some(e => e.familyMeasure?.kind === 'translucent' && !(e.style.radius > 0)), estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
+test('regression: kite1, cyan dots on a cyan line under a red band drawn over them', { skip: !existsSync(NATURE + KITE1) && 'bench-nature kite1 absent' }, () => {
+    // before: 10 found for 25, red only. The cyan line, in the dots' color, set cyan's radius to its half width (3.5
+    // for 12.3) and the scan never reached the dots; and the red dots, most inside the red band, made the band their
+    // background, which families.js took for the page, so the band was no region and the cyan dots under it unseen
+    const image = readImage(NATURE + KITE1);
+    const results = extractAll(image);
+    assert.equal(results.length, 2);
+    for (const r of results)
+        near(r.fit.radius, 12.3, 0.6, `radius of ${r.est.style.color.map(Math.round)}`);
+    const csv = NATURE + KITE1.replace('.png', '.csv');
+    if (!existsSync(csv))
+        return;
+    const px = truthPixelsByTicks(readTruthCsv(csv), detectAxes(results[0].jpegAuto ? restoreChroma(image) : image));
+    const row = groupRow(KITE1, px.dots, results, 0);
+    assert.ok(row.precision >= 0.88 && row.recall >= 0.92, `precision ${row.precision}, recall ${row.recall}, found ${row.found}`);
 });
 
 const CELLS1 = 'cells1-10.1038-s41586-026-10946-1.png';

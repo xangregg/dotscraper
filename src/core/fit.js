@@ -109,21 +109,21 @@ function huber(r) {
 }
 
 /**
- * Hough vote for dot centers with a known radius on the overlap count image. Each unmasked pixel with a gradient
- * votes, with weight |∇D|, at the point r along the gradient (D rises into a dot, so the gradient points to its
- * center). Across one dot edge |∇D| integrates to about 1 per unit of arc, so a fully visible dot collects about
- * 2πr; a peak's mass divided by that is the fraction of its circumference seen.
+ * The pixels that vote in houghCenters, which don't depend on the radius: each unmasked pixel (with its 8 neighbors)
+ * whose Sobel gradient of D is at least HOUGH_GRAD_MIN, with the gradient's direction and size. A scan over radii
+ * computes it once (on kite1's 2.8 Mpx, about half of each call).
  *
  * @param {Float32Array} D  overlap count, NaN off the color line
  * @param {Uint8Array} weight  1 where the fit may look
  * @param {number} width
  * @param {number} height
- * @param {number} r  px
- * @returns {{x: number, y: number, arc: number}[]}  centers in px, strongest first
+ * @returns {{p: Int32Array, ux: Float64Array, uy: Float64Array, g: Float64Array}}  g in levels per px
  */
-export function houghCenters(D, weight, width, height, r) {
-    const n = width * height;
-    const acc = new Float32Array(n);
+export function houghGradient(D, weight, width, height) {
+    const ps = [];
+    const uxs = [];
+    const uys = [];
+    const gs = [];
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
             const p = y * width + x;
@@ -143,19 +143,50 @@ export function houghCenters(D, weight, width, height, r) {
             const g = Math.hypot(gx, gy);
             if (g < HOUGH_GRAD_MIN)
                 continue;
-            // vote in pixel-index coordinates (center of pixel i is i + 0.5), bilinear
-            const fx = x + r * gx / g;
-            const fy = y + r * gy / g;
-            const ix = Math.floor(fx);
-            const iy = Math.floor(fy);
-            const tx = fx - ix;
-            const ty = fy - iy;
-            for (const [ox, oy, w] of [[0, 0, (1 - tx) * (1 - ty)], [1, 0, tx * (1 - ty)], [0, 1, (1 - tx) * ty], [1, 1, tx * ty]]) {
-                const xx = ix + ox;
-                const yy = iy + oy;
-                if (xx >= 0 && yy >= 0 && xx < width && yy < height)
-                    acc[yy * width + xx] += g * w;
-            }
+            ps.push(p);
+            uxs.push(gx / g);
+            uys.push(gy / g);
+            gs.push(g);
+        }
+    }
+    // (doubles, as the vote used before the split: Float32 directions moved votes enough to change fits)
+    return { p: Int32Array.from(ps), ux: Float64Array.from(uxs), uy: Float64Array.from(uys), g: Float64Array.from(gs) };
+}
+
+/**
+ * Hough vote for dot centers with a known radius on the overlap count image. Each unmasked pixel with a gradient
+ * votes, with weight |∇D|, at the point r along the gradient (D rises into a dot, so the gradient points to its
+ * center). Across one dot edge |∇D| integrates to about 1 per unit of arc, so a fully visible dot collects about
+ * 2πr; a peak's mass divided by that is the fraction of its circumference seen.
+ *
+ * @param {Float32Array} D  overlap count, NaN off the color line
+ * @param {Uint8Array} weight  1 where the fit may look
+ * @param {number} width
+ * @param {number} height
+ * @param {number} r  px
+ * @param {ReturnType<typeof houghGradient>} [grad]  houghGradient(D, weight, width, height), for a scan over radii
+ * @returns {{x: number, y: number, arc: number}[]}  centers in px, strongest first
+ */
+export function houghCenters(D, weight, width, height, r, grad = houghGradient(D, weight, width, height)) {
+    const n = width * height;
+    const acc = new Float32Array(n);
+    for (let k = 0; k < grad.p.length; k++) {
+        const p = grad.p[k];
+        const g = grad.g[k];
+        const x = p % width;
+        const y = (p - x) / width;
+        // vote in pixel-index coordinates (center of pixel i is i + 0.5), bilinear
+        const fx = x + r * grad.ux[k];
+        const fy = y + r * grad.uy[k];
+        const ix = Math.floor(fx);
+        const iy = Math.floor(fy);
+        const tx = fx - ix;
+        const ty = fy - iy;
+        for (const [ox, oy, w] of [[0, 0, (1 - tx) * (1 - ty)], [1, 0, tx * (1 - ty)], [0, 1, (1 - tx) * ty], [1, 1, tx * ty]]) {
+            const xx = ix + ox;
+            const yy = iy + oy;
+            if (xx >= 0 && yy >= 0 && xx < width && yy < height)
+                acc[yy * width + xx] += g * w;
         }
     }
     const smooth = blurPlane(acc, width, height, HOUGH_SMOOTH);
@@ -847,25 +878,35 @@ export function createFit(input) {
             for (let y = cy0; y < cy1; y++) {
                 for (let x = cx0; x < cx1; x++) {
                     const w = box(sumS, x, y);
-                    M[y * width + x] = w >= minSupport * area ? box(sumR, x, y) / w : -Infinity;
+                    const p = y * width + x;
+                    M[p] = w >= minSupport * area ? box(sumR, x, y) / w : -Infinity;
+                    if (M[p] >= BIRTH_MIN_LEVELS && !listed[p]) {
+                        listed[p] = 1;
+                        candidates.push(p);
+                    }
                 }
             }
         }
 
+        // the centers whose mean has reached BIRTH_MIN_LEVELS (a mean changes only where fillMeans runs, so the best
+        // is among them, without a scan of the image per attempt: on kite1's 2.8 Mpx, 6 of its 13 s)
+        const candidates = [];
+        const listed = new Uint8Array(n);
         fillResidual([0, 0, width, height]);
         fillMeans([0, 0, width, height]);
         let added = 0;
         for (let attempt = 0; attempt < MAX_BIRTHS_PER_ROUND; attempt++) {
+            // the largest mean, the first in pixel order among equals
             let best = null;
-            for (let p = 0; p < n; p++) {
+            for (const p of candidates) {
                 const v = M[p];
-                if (v < BIRTH_MIN_LEVELS || (best !== null && v <= best.mean))
+                if (v < BIRTH_MIN_LEVELS || (best !== null && (v < best.mean || (v === best.mean && p > best.p))))
                     continue;
                 const cx = p % width + 0.5;
                 const cy = Math.floor(p / width) + 0.5;
                 if (tabu.some(t => Math.hypot(t.x - cx, t.y - cy) < BIRTH_TABU_RADII * style.radius))
                     continue;
-                best = { x: cx, y: cy, mean: v };
+                best = { x: cx, y: cy, mean: v, p };
             }
             if (!best)
                 break;
