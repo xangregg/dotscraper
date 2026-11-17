@@ -22,8 +22,8 @@ work is completed, and record measured results there (what was tried, the number
   `{ width, height, data }` with `data` a `Uint8ClampedArray` of RGBA, the shape of `ImageData`.
 - Bare imports, if any are ever approved, are allowed only in `src/ui/`, resolved by the import map in
   `index.html` (jsDelivr ESM URLs, pinned versions).
-- Long-running fits run in a module Web Worker (`src/fit-worker.js`) so the page stays responsive; the worker
-  only wraps `src/core/` functions.
+- Long-running work runs in module Web Workers so the page stays responsive: the fit in `src/fit-worker.js`, the
+  scan for dot families (and re-measuring them) in `src/scan-worker.js`. The workers only wrap `src/core/` functions.
 - Do not add Claude attribution to commit messages.
 
 ## Layout (see PLAN.md §7 for what's planned)
@@ -43,6 +43,7 @@ src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, 
                         axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
 src/fit-worker.js       module Web Worker wrapping the fit
+src/scan-worker.js      module Web Worker running the scan for dot families (estimateFamilies), posting progress
 testgraphs/             test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data
                         cells, ticks in the header): LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,

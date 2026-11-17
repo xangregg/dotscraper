@@ -113,6 +113,9 @@ const OVER_BAND_Q = [0.05, 0.95]; // 1 − α for a family's dots over a band of
 const REGION_INK_TOL = 15; // 0–255 units (RGB distance) from a region's color (JPEG noise)
 const REGION_MIN_SOLID = 0.3; // share of the region's color an opening by the dots' radius keeps
 const BLEND_DEPTH = 4; // dots in a stack
+// findCandidates' progress: the share of the work before the opaque clusters (measured 0.07–0.28 on five bench
+// images, 0.73 on protrusion1, whose four translucent families each test their colors for a box)
+const TRANSLUCENT_SHARE = 0.25;
 // A box under the dots (boxBand): straight boundary runs of BOX_RUN_RADII dot radii hold BOX_MIN_STRAIGHT of its
 // boundary. Measured on every translucent candidate's levels on the bench: dots' levels 0 (a few grays at radius under
 // 4, axis text: up to 0.063); boxes 0.145–0.274 (protrusion1–3), and score2's colorbar 0.124.
@@ -2190,9 +2193,10 @@ function isDotFamily(f) {
 /**
  * Opaque dot families: color clusters that aren't a background, aren't levels of a translucent family, and show
  * at least DOT_MIN_COUNT dot-shaped edges at a radius of at least DOT_MIN_RADIUS. `ink` is colors of other marks
- * (levels of rejected translucent candidates): other ink for every family but one of their own color.
+ * (levels of rejected translucent candidates): other ink for every family but one of their own color. `onProgress`
+ * gets the share of color clusters examined (0–1).
  */
-export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLERANCES, ink = []) {
+export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLERANCES, ink = [], onProgress = null) {
     const onTranslucent = c => translucent.some(f => {
         const { B, u } = f.line;
         const e = B.map((v, ch) => v - c[ch]);
@@ -2246,7 +2250,8 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         const { m, off } = offLine(c.map((x, ch) => x - P[ch]), w, ww);
         return m > 0.05 && m < 0.95 && off <= CLUSTER_ON_LINE_TOL;
     }));
-    for (const cl of clusters) {
+    for (const [i, cl] of clusters.entries()) {
+        onProgress?.(i / clusters.length);
         if (onTranslucent(cl.color) || isOutline(cl.color))
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
@@ -2486,6 +2491,7 @@ function median(a) {
  *   passed in must have been found with the same setting
  * @param {number[][]} [opts.regions]  0–255, colors of shaded regions under the dots (background.js), which opaque
  *   dots are read against as against the page
+ * @param {(fraction: number) => void} [opts.onProgress]  the share of the candidate search done (0–1)
  * @returns {object}  { background, candidates, family, style, D, isolated, edge, notes }
  *   style: { color, alpha, levels, radius, blur } ready for render.js; radius and blur are null when no isolated
  *   dot was found. notes: human-readable caveats for display.
@@ -2498,7 +2504,7 @@ export function estimateStyle(image, opts = {}) {
     const flat = flatMask(image, tol);
     const backgrounds = [...backgroundColors(image), ...(opts.regions ?? [])];
     // candidates are the slow part (seconds on large images): reuse them when estimating another family
-    const candidates = opts.candidates ?? findCandidates(image, B, flat, backgrounds, tol);
+    const candidates = opts.candidates ?? findCandidates(image, B, flat, backgrounds, tol, opts.onProgress);
     let fam;
     let familyIndex = opts.family ?? 0;
     if (opts.seed) {
@@ -2555,8 +2561,9 @@ export function estimateStyle(image, opts = {}) {
 
 /**
  * All dot families: translucent ones (levels along a color direction) first, then opaque ones (color clusters).
+ * `onProgress` gets the share of the work done (0–1), by stage: the opaque clusters are most of it on large images.
  */
-export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANCES) {
+export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANCES, onProgress = null) {
     // A translucent family's first level fills the insides of single dots, so it is thick. A first level that is
     // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
     // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
@@ -2588,7 +2595,8 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     for (const c of translucent)
         c.kind = 'translucent';
     dropBlends(translucent, B);
-    const opaque = opaqueFamilies(image, backgrounds, translucent, tol, ink);
+    onProgress?.(TRANSLUCENT_SHARE);
+    const opaque = opaqueFamilies(image, backgrounds, translucent, tol, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f));
     // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));

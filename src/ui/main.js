@@ -4,15 +4,14 @@
 // development needs: the list of local test images, the current one's name kept in the URL hash (#image=<file>) so a
 // reload reopens it, Save truth, and the diagnostic views (Count, Mask, Classes, Model; elements with class dev-only). The deployed site never has the test images, so it doesn't look for them.
 //
-// On each new image the app estimates every dot family (src/core/families.js) and builds the selected family's
-// mask (src/core/layers.js). The panel lists the families: checked ones are fitted by Find dots, the selected one is
+// On each new image the app estimates every dot family (src/core/families.js, in a module worker, src/scan-worker.js,
+// with its progress shown: on large images it takes up to a minute) and builds the selected family's mask
+// (src/core/layers.js). The panel lists the families: checked ones are fitted by Find dots, the selected one is
 // shown in detail (its style, overrides, overlays) and is the one Add and Remove edit. A color picked in the image
 // adds a family of its own.
 
 import { pixelAt, pixelHash } from '../core/image.js';
 import { restoreChroma, jpegNoise } from '../core/jpeg.js';
-import { estimateStyle, opaqueFamilyEstimate } from '../core/style.js';
-import { estimateFamilies } from '../core/families.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render.js';
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
@@ -91,6 +90,7 @@ const state = {
     fit: null, // { families: [{ family, dots, radius, sigma }], dots (all, with family and r), ms, edited, partial }
     undo: [], // earlier fits, for Undo
     worker: null,
+    scanning: false, // the scan worker is estimating families: Find dots and the edits wait for it
     fitStart: 0,
     tick: null, // the status timer while a fit runs
     blockedShown: false, // the status shows why Find dots can't run (findBlocked)
@@ -352,10 +352,85 @@ function showMessage(text, { error = false, busy = false } = {}) {
     el.hidden = !text;
 }
 
-// The style estimate runs on the main thread for a second or two and blocks painting; let the browser paint
-// the message first (a frame, then a task after it) so it shows during the wait.
+// Work on the main thread (decoding, the JPEG-noise and axis checks before a scan) blocks painting; let the browser
+// paint the message first (a frame, then a task after it) so it shows during the wait.
 function nextPaint() {
     return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+/** The message over the view with a progress bar: what is being done (title), its stage and the share done (0–1). */
+function showProgress(title, stage, fraction) {
+    const el = $('stage-message');
+    // updated in place, so the status region announces a new stage rather than every report
+    let box = el.querySelector('.box.progress');
+    if (!box || box.dataset.title !== title) {
+        box = document.createElement('span');
+        box.className = 'box progress';
+        box.dataset.title = title;
+        const head = document.createElement('span');
+        head.textContent = title;
+        const bar = document.createElement('progress');
+        bar.max = 1;
+        const sub = document.createElement('span');
+        sub.className = 'stage';
+        box.append(head, bar, sub);
+        el.replaceChildren(box);
+    }
+    box.querySelector('progress').value = fraction;
+    const sub = box.querySelector('.stage');
+    if (sub.textContent !== stage)
+        sub.textContent = stage;
+    el.classList.remove('error');
+    el.classList.add('busy');
+    el.hidden = false;
+}
+
+// The scan worker (src/scan-worker.js) runs one request at a time; a new request terminates the one running, whose
+// promise then resolves null (a newer image or rescan overtook it). Terminating is the only way to stop a worker
+// mid-computation, and a fresh one starts in milliseconds.
+let scanWorker = null;
+let scanPending = null; // resolve of the running request
+
+/**
+ * Run op in the scan worker, showing its progress under `title`. Resolves to its result, or null if overtaken.
+ */
+function runScan(op, args, title) {
+    if (scanPending) {
+        scanWorker.terminate();
+        scanWorker = null;
+        scanPending(null);
+        scanPending = null;
+    }
+    scanWorker ??= new Worker(new URL('../scan-worker.js', import.meta.url), { type: 'module' });
+    const worker = scanWorker;
+    state.scanning = true;
+    renderFitControls();
+    showProgress(title, '', 0);
+    return new Promise((resolve, reject) => {
+        const done = () => {
+            scanPending = null;
+            state.scanning = false;
+            renderFitControls();
+        };
+        scanPending = resolve;
+        worker.onmessage = e => {
+            const m = e.data;
+            if (m.type === 'progress') {
+                showProgress(title, m.label, m.fraction);
+                return;
+            }
+            done();
+            if (m.type === 'error')
+                reject(new Error(m.message));
+            else
+                resolve(m.result);
+        };
+        worker.onerror = e => {
+            done();
+            reject(new Error(e.message || 'the scan failed'));
+        };
+        worker.postMessage({ op, ...args });
+    });
 }
 
 function setStatus(text, kind = '', title = text) {
@@ -462,29 +537,36 @@ function refreshMarks(dots = state.fit?.dots) {
     view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected, family: state.current, showClose: state.showClose } : null);
 }
 
-/** Estimate every family and select the first. Fitted dots are dropped: they were fitted to other estimates. */
-function analyze({ auto = false } = {}) {
+/**
+ * Estimate every family (in the scan worker) and select the first. Fitted dots are dropped: they were fitted to other
+ * estimates. Resolves false if a newer image or rescan overtook it.
+ */
+async function analyze({ auto = false } = {}) {
     stopFit(false);
     const t0 = performance.now();
-    let prepared = estimateFamilies(state.work, { jpeg: state.jpeg });
+    // until the families come, there are none to fit or edit
+    state.families = [];
+    state.fit = null;
+    state.undo = [];
+    state.scanning = true;
+    selectFamily(0);
     // A PNG made from a JPEG (a screenshot of a web figure) fails the exact-color tests; when the image has JPEG noise
     // and noisy color matching finds more families (all of them, when none showed with exact colors), analyze it as
     // a JPEG. Only on loading: the box is the user's after. Not whenever the noise shows: restoring chroma cost
     // pathogen precision (0.972 → 0.637), which worked as is. A family counts once it has a radius: without one it
     // can't be fitted (step1: the blue dots, radius unknown with exact colors, 5.4 px with noisy matching).
-    if (auto && !state.jpeg && state.noise.likely) {
-        const found = est => est.estimates.filter(e => e.style?.radius).length;
-        const exact = found(prepared);
-        const noisy = estimateFamilies(restoreChroma(state.image), { jpeg: true });
-        if (found(noisy) > exact) {
-            setJpeg(true, true);
-            prepared = noisy;
-            const note = exact
-                ? `Noisy color matching found more dot families than exact colors (${found(noisy)} against ${exact}), and the image has JPEG-like noise (${noiseText()}), so it was turned on.`
-                : `No dot family with a radius showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
-            for (const e of prepared.estimates)
-                e.notes = [note, ...e.notes];
-        }
+    const tryNoisy = auto && !state.jpeg && state.noise.likely;
+    const scan = await runScan('scan', { image: state.image, work: state.work, jpeg: state.jpeg, tryNoisy }, `Scanning ${state.name} for dot colors and sizes…`);
+    if (!scan)
+        return false;
+    const { prepared } = scan;
+    if (scan.switched) {
+        setJpeg(true, true);
+        const note = scan.exact
+            ? `Noisy color matching found more dot families than exact colors (${scan.found} against ${scan.exact}), and the image has JPEG-like noise (${noiseText()}), so it was turned on.`
+            : `No dot family with a radius showed with exact colors, and the image has JPEG-like noise (${noiseText()}), so noisy color matching was turned on.`;
+        for (const e of prepared.estimates)
+            e.notes = [note, ...e.notes];
     }
     state.base = prepared.image;
     state.families = prepared.estimates.map(estimate => ({ estimate, picked: null, enabled: !!estimate.style, overrides: {} }));
@@ -497,6 +579,7 @@ function analyze({ auto = false } = {}) {
     setStatus(auto && state.jpegAuto ? 'No dot family with a radius from exact colors: noisy color matching turned on (JPEG-like noise).' : '');
     // what Find dots needs, if anything, outranks the note (the family notes keep it)
     renderFitControls();
+    return true;
 }
 
 /** Show family k in the panel and the overlays; the fit is kept. */
@@ -542,7 +625,9 @@ function renderFamilies() {
     if (!state.families.length || !state.families.some(f => f.estimate.style)) {
         const li = document.createElement('li');
         li.className = 'off';
-        li.textContent = state.image ? (state.estimate?.notes?.[0] ?? 'No dot family found.') + ' Add one by its color.' : 'No image.';
+        li.textContent = !state.image ? 'No image.'
+            : state.scanning ? 'Scanning…'
+            : (state.estimate?.notes?.[0] ?? 'No dot family found.') + ' Add one by its color.';
         list.append(li);
         return;
     }
@@ -811,7 +896,18 @@ function clickAt(x, y, { alt = false, point = null } = {}) {
 /** A family of a picked color, fitted on its own (on the image with any overlay divided out). */
 async function addPickedFamily(rgb) {
     setMode(null);
-    const estimate = estimateStyle(state.base ?? state.work, { seed: rgb, jpeg: state.jpeg });
+    let estimate;
+    try {
+        estimate = await runScan('seed', { image: state.base ?? state.work, seed: rgb, jpeg: state.jpeg }, `Measuring dots of color ${rgb.join(', ')}…`);
+    }
+    catch (err) {
+        showMessage('');
+        setStatus(`Measuring color ${rgb.join(', ')} failed: ${err.message}`, 'error');
+        return;
+    }
+    showMessage('');
+    if (!estimate)
+        return;
     if (!estimate.style) {
         setStatus(`No dot family of color ${rgb.join(', ')}: ${estimate.notes.join(' ')}`, 'error');
         return;
@@ -819,8 +915,8 @@ async function addPickedFamily(rgb) {
     state.families.push({ estimate, picked: rgb, enabled: true, overrides: {} });
     const k = state.families.length - 1;
     // with outlined families about, every opaque family needs the new fill to give its rings to it
-    if (state.families.some((f, j) => outlineEditable(j) && outlineOf(j)))
-        await remeasureOpaque();
+    if (state.families.some((f, j) => outlineEditable(j) && outlineOf(j)) && !await remeasureOpaque())
+        return;
     selectFamily(k);
     setStatus(`Added a family of color ${rgb.join(', ')}.`);
 }
@@ -846,14 +942,13 @@ function outlineOf(k) {
 // fills known and, when any is outlined, each ring given to the fill it surrounds. With nothing edited and no picked
 // family, the estimates go back to what the analysis found.
 async function remeasureOpaque() {
-    showMessage('Measuring the dot families again…', { busy: true });
-    await nextPaint();
     const opaque = state.families.map((_, j) => j).filter(outlineEditable);
     const seedOf = j => state.families[j].picked ?? state.families[j].estimate.familyMeasure.seed;
     const custom = opaque.some(j => state.families[j].outlineEdit !== undefined || state.families[j].picked);
     const outlines = opaque.map(outlineOf);
     const anyOutline = outlines.some(Boolean);
     const image = state.base ?? state.work;
+    const jobs = [];
     opaque.forEach((j, i) => {
         const f = state.families[j];
         f.auto ??= f.estimate;
@@ -867,13 +962,32 @@ async function remeasureOpaque() {
         // radius plus the width) less the width
         const outer = f.overrides.radius ?? (fm.stroke || fm.outline ? f.estimate.style.radius : (f.estimate.style.radius ?? 0) + (o?.width ?? 0));
         const stroke = o && (f.outlineEdit !== undefined || fm.stroke) ? { color: o.color, fillRadius: Math.max(1, outer - o.width) } : null;
-        f.estimate = opaqueFamilyEstimate(image, seedOf(j), {
+        jobs.push({ j, seed: seedOf(j), opts: {
             stroke, outline: !stroke && f.outlineEdit === undefined ? fm.outline : null,
             others: opaque.filter(q => q !== j).map(seedOf), ringsToOthers: anyOutline, jpeg: state.jpeg,
-        });
+        } });
     });
+    if (jobs.length) {
+        const families = state.families;
+        let estimates;
+        try {
+            estimates = await runScan('opaque', { image, jobs: jobs.map(({ seed, opts }) => ({ seed, opts })) }, 'Measuring the dot families again…');
+        }
+        catch (err) {
+            showMessage('');
+            setStatus(`Measuring the families again failed: ${err.message}`, 'error');
+            return false;
+        }
+        showMessage('');
+        // (overtaken, or a new image came meanwhile: these estimates are of nothing shown)
+        if (!estimates || families !== state.families)
+            return false;
+        jobs.forEach(({ j }, i) => {
+            state.families[j].estimate = estimates[i];
+        });
+    }
     state.estimate = state.families[state.current]?.estimate ?? null;
-    showMessage('');
+    return true;
 }
 
 // family k's outline changed: measure the families again; k's dots are stale (Undo brings them back), the others'
@@ -882,7 +996,8 @@ async function outlineChanged(k) {
     if (familyFit(k))
         pushUndo();
     dropFamilyFit(k);
-    await remeasureOpaque();
+    if (!await remeasureOpaque())
+        return;
     const o = outlineOf(k);
     setStatus(o ? `${familyName(k)}: outline ${o.color.map(Math.round).join(', ')}, ${o.width.toFixed(2)} px; families measured again.` : `${familyName(k)}: no outline; families measured again.`);
     styleChanged();
@@ -923,11 +1038,11 @@ function updateModeHint() {
 
 function renderFitControls() {
     const running = state.worker !== null;
-    const runnable = state.families.some((f, k) => f.enabled && styleOf(k)?.radius > 0);
+    const runnable = !state.scanning && state.families.some((f, k) => f.enabled && styleOf(k)?.radius > 0);
     $('fit-run').disabled = running || !runnable;
     $('fit-run').textContent = running ? 'Finding…' : 'Find dots';
     // the reason replaces the status while it holds, and goes when it no longer does
-    const blocked = running ? null : findBlocked();
+    const blocked = running || state.scanning ? null : findBlocked();
     $('fit-run').title = blocked?.full ?? 'Find the dots of every checked family (families without a radius are skipped)';
     if (blocked) {
         setStatus(blocked.short, 'needed', blocked.full);
@@ -938,7 +1053,7 @@ function renderFitControls() {
     }
     $('fit-stop').disabled = !running;
     $('fit-progress').hidden = !running;
-    const editable = !running && !!currentStyle()?.radius;
+    const editable = !running && !state.scanning && !!currentStyle()?.radius;
     $('edit-add').disabled = !editable;
     $('edit-remove').disabled = !editable || !familyFit()?.dots.length;
     $('edit-move').disabled = !editable || !familyFit()?.dots.length;
@@ -947,10 +1062,10 @@ function renderFitControls() {
     $('copy-table').disabled = !state.fit?.dots.length || running;
     $('save-csv').disabled = !state.fit?.dots.length || running;
     $('save-truth').disabled = !state.fit?.dots.length || running;
-    $('pick-color').disabled = running || !state.image;
-    // a fit in progress was set up with the families as they are
+    $('pick-color').disabled = running || state.scanning || !state.image;
+    // a fit in progress was set up with the families as they are; a scan is measuring them
     for (const id of ['outline-on', 'outline-pick'])
-        $(id).disabled = running;
+        $(id).disabled = running || state.scanning;
     if (!editable && (state.mode === 'add' || state.mode === 'remove'))
         setMode(null);
     if ((state.mode === 'remove' && $('edit-remove').disabled) || (state.mode === 'move' && $('edit-move').disabled))
@@ -1394,7 +1509,7 @@ function setJpeg(jpeg, auto = false) {
 
 /** Show the new image and estimate its families. Resolves false if a later load took over while it waited. */
 async function setImage(name, image, jpeg, load) {
-    showMessage(`Scanning ${name} for dot colors and sizes…`, { busy: true });
+    showMessage(`Reading ${name}…`, { busy: true });
     await nextPaint();
     if (load !== loads)
         return false;
@@ -1412,9 +1527,10 @@ async function setImage(name, image, jpeg, load) {
     state.axes = detectAxes(image);
     state.axisEntries = loadEntries(state.hash, state.axes);
     renderAxesPanel();
-    analyze({ auto: !jpeg });
-    showMessage('');
     $('stage').focus();
+    if (!await analyze({ auto: !jpeg }))
+        return false;
+    showMessage('');
     return true;
 }
 
@@ -1489,14 +1605,15 @@ function wireControls() {
     $('jpeg').addEventListener('change', async e => {
         if (!state.image)
             return;
-        const load = ++loads;
-        showMessage(`Scanning ${state.name} for dot colors and sizes…`, { busy: true });
-        await nextPaint();
-        if (load !== loads)
-            return;
+        ++loads;
         setJpeg(e.target.checked);
-        analyze();
-        showMessage('');
+        try {
+            if (await analyze())
+                showMessage('');
+        }
+        catch (err) {
+            showMessage(`The scan failed: ${err.message}`, { error: true });
+        }
     });
     $('pick-color').addEventListener('click', () => setMode(state.mode === 'pick' ? null : 'pick'));
     $('fit-run').addEventListener('click', runFit);

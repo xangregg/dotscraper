@@ -28,6 +28,20 @@ const FILL_TOL = 40; // 0–255 units (RGB distance) from a fill's color
 // q = 1 − α, which gives α and c without any overlap. A color within this of the prediction is that family.
 const MERGE_TOL = 6; // 0–255 units (RGB distance)
 const MERGE_Q = [0.05, 0.95]; // a plausible 1 − α
+// The scan's stages and the share of its time each takes, for a progress bar (measured on 11 bench images of 0.2–58
+// s: the dots' colors 0.31–0.97 of the time, outlines and hollow rings 0.18–0.49, the dots' colors over the regions
+// 0.20–0.32 where they run; score2, dots on a color scale, 0.68 checking for the scale, most of it the outlines in
+// its fills). A stage that doesn't run is passed over, so the bar can jump.
+const SCAN_STAGES = [
+    { name: 'outlines', label: 'Looking for outlined dots', weight: 0.01 },
+    { name: 'scale', label: 'Checking for a color scale', weight: 0.04 },
+    { name: 'hue outlines', label: 'Looking for outlines around the scale’s fills', weight: 0.12 },
+    { name: 'colors', label: 'Finding the dots’ colors', weight: 0.38 },
+    { name: 'regions', label: 'Finding shaded regions', weight: 0.05 },
+    { name: 'colors again', label: 'Finding the dots’ colors over the regions', weight: 0.12 },
+    { name: 'families', label: 'Measuring each family', weight: 0.06 },
+    { name: 'rings', label: 'Measuring outlines and rings', weight: 0.22 },
+];
 
 // a candidate's full color and α, as background.js wants them
 function candidateStyle(c) {
@@ -289,33 +303,39 @@ function familiesExplainInk(image, candidates) {
  * @param {import('./image.js').RgbaImage} image  as analyzed (a JPEG's chroma already restored)
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]
+ * @param {(label: string, fraction: number) => void} [opts.onProgress]  what is being done and the share of the
+ *   whole done (0–1, by SCAN_STAGES; stages that don't run are skipped over)
  * @returns {{image: import('./image.js').RgbaImage, layers: object|null, estimates: object[]}}  image: with
  *   overlays removed; estimates: one per family candidate, each with the `image` to fit it on (estimates[0] is
  *   the only one, without a style, when no family is found)
  */
 export function estimateFamilies(image, opts = {}) {
     const jpeg = !!opts.jpeg;
+    const stage = scanStages(opts.onProgress);
     // a dark ring off the fill plane decides for outlined dots even when the fills also read as a translucent
     // scale (their overlaps show levels too); JMP's outlines, in the fill's own hue, never pass
+    stage('outlines');
     const outlined = outlineEstimate(image);
     if (outlined)
         return { image, layers: null, estimates: [outlined] };
     let first = null;
+    stage('scale');
     const scaled = colormapEstimate(image, jpeg);
     if (scaled?.scale === 'opaque') {
         // opaque fills on a scale whose outlines are a darker shade of each fill: the rings place the dots where
         // the union of discs can't (bench2 gradient-opaque-stroke's dense stacks); unless a few stroked families
         // found one at a time explain the fills (engagement1: five blues in one dark stroke)
+        stage('hue outlines');
         const hue = findHueOutlines(image);
         if (hue) {
-            first = estimateStyle(image, { jpeg });
+            first = estimateStyle(image, { jpeg, onProgress: stage('colors') });
             if (!familiesExplainInk(image, first.candidates))
                 return { image, layers: null, estimates: [outlinedEstimate(image, backgroundColor(image), hue)] };
         }
     }
     if (scaled && !first)
         return { image, layers: null, estimates: [scaled] };
-    first ??= estimateStyle(image, { jpeg });
+    first ??= estimateStyle(image, { jpeg, onProgress: stage('colors') });
     if (!first.candidates.length) {
         const hollow = hollowEstimates(image, first.background, []);
         return { image, layers: null, estimates: hollow.length ? hollow : [{ ...first, image }] };
@@ -327,6 +347,7 @@ export function estimateFamilies(image, opts = {}) {
     // were never seen. Without a layer over the dots, regions are told from the first family's background as before:
     // the regions under the dots are read against their own colors either way, and the fits were tuned with it
     // (from the page, violin-beeswarm's violins under the dots gave 18 more extras, P 0.985 to 0.960).
+    stage('regions');
     const page = backgroundColor(image).color;
     let B = page;
     let layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
@@ -341,14 +362,17 @@ export function estimateFamilies(image, opts = {}) {
     const regions = under.length && first.candidates.some(c => c.kind === 'opaque') ? under : undefined;
     const work = overlays.length ? removeOverlays(image, B, layers) : image;
     if (overlays.length || regions)
-        first = estimateStyle(work, { jpeg, regions });
+        first = estimateStyle(work, { jpeg, regions, onProgress: stage('colors again') });
+    const each = stage('families');
     const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
     const merged = mergeAcrossRegions(work, B, first.candidates, layers.regions, first.flat, tol);
     if (merged)
         first = estimateStyle(work, { family: 0, candidates: merged, jpeg });
     const estimates = [first];
-    for (let k = 1; k < first.candidates.length; k++)
+    for (let k = 1; k < first.candidates.length; k++) {
+        each(k / first.candidates.length);
         estimates.push(estimateStyle(work, { family: k, candidates: first.candidates, jpeg }));
+    }
     const separated = unmixEstimates(work, estimates, tol, layers);
     if (overlays.length) {
         const rgb = c => c.map(Math.round).join(', ');
@@ -358,6 +382,7 @@ export function estimateFamilies(image, opts = {}) {
         for (const e of separated)
             e.notes = [...e.notes, ...note];
     }
+    const ring = stage('rings');
     const kept = withoutSpeckLevels(withSiblingRadii(work, separated));
     // outlined opaque families are fitted by their rings (ringEstimate)
     const backgrounds = backgroundColors(work);
@@ -366,12 +391,32 @@ export function estimateFamilies(image, opts = {}) {
     // outlines only: a stroke too thin to show its own color is a ring the image barely resolves (engagement1, strokes
     // under a pixel wide: 54 dots for 49 by the union, 40 by rings)
     // (not a fill in the page's color: its ring image would read the whole page as fill)
-    const ringed = kept.map(e => (e.familyMeasure?.kind === 'opaque' && e.familyMeasure.outline && !e.familyMeasure.pageFill && e.style
-        ? ringEstimate(work, e, fills.filter(c => c !== e.style.color), backgrounds)
-        : e));
+    // (the hollow rings after them take about as long as one family's)
+    const ringed = kept.map((e, k) => {
+        ring(k / (kept.length + 1));
+        return e.familyMeasure?.kind === 'opaque' && e.familyMeasure.outline && !e.familyMeasure.pageFill && e.style
+            ? ringEstimate(work, e, fills.filter(c => c !== e.style.color), backgrounds)
+            : e;
+    });
+    ring(kept.length / (kept.length + 1));
     // hollow rings of a color no family found has (its fill, outline or stroke)
     const known = ringed.filter(e => e.style).flatMap(e => [e.style.color, e.familyMeasure?.outline, e.familyMeasure?.stroke].filter(Boolean));
-    return { image: work, layers, estimates: [...ringed, ...hollowEstimates(work, first.background, known)] };
+    const hollow = hollowEstimates(work, first.background, known);
+    stage('done');
+    return { image: work, layers, estimates: [...ringed, ...hollow] };
+}
+
+// estimateFamilies' progress: stage(name) reports the stage's label at the share of the whole where it starts, and
+// returns a reporter of the share of it done (0–1). Stages are in order; one that doesn't run is passed over.
+function scanStages(onProgress) {
+    const report = onProgress ?? (() => {});
+    const at = name => SCAN_STAGES.slice(0, SCAN_STAGES.findIndex(s => s.name === name)).reduce((t, s) => t + s.weight, 0);
+    return name => {
+        const { label = '', weight = 0 } = SCAN_STAGES.find(s => s.name === name) ?? {};
+        const start = name === 'done' ? 1 : at(name);
+        report(label, start);
+        return f => report(label, start + weight * f);
+    };
 }
 
 // A translucent family with no radius of its own takes another's when its dots show at it (style.js siblingRadius).

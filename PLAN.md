@@ -2075,3 +2075,22 @@ beeswarm-boxplot 687 → 667 (P 0.952 → 0.982, R 0.920 → 0.921) and violin-b
 (same counts, radius 7.43 → 7.48), both from the distance transform's change; delta1 23 → 24; RMSE and radius in the
 last digit for curve and dots-swarm-box. Tests: test/style.test.js (box band, cut dots' radius, sibling radius),
 test/unmix.test.js (regionLevels), test/background.test.js (box rectangle), test/families.test.js (protrusion1–3).
+
+**The scan for dot families in a worker, with progress** (2026-11-17)
+
+- On loading, estimateFamilies ran on the main thread: 3–56 s on large images (Node: score2 56 s, protrusion1 25 s;
+  beeswarm-boxplot 19 s and then 33 s more for the noisy-color retry), long enough for the browser's Page Unresponsive
+  warning. Its results survive structured cloning, so src/scan-worker.js runs it (and a picked color's estimateStyle,
+  and re-measuring opaque families after an outline edit). One request at a time: a newer image or rescan terminates
+  the one running.
+- estimateFamilies takes onProgress(label, fraction) over stages weighted by measured time on 11 bench images: the
+  dots' colors 0.31–0.97 of it, outlines and hollow rings 0.18–0.49, the colors over regions 0.20–0.32 where they run,
+  a color scale's check most of score2 (0.68). findCandidates reports each opaque color cluster; its translucent part
+  before them was 0.07–0.28 of it on five images (0.73 on protrusion1).
+- Headless Chrome: score2 scanned in 47.7 s, the main thread's longest gap 347 ms; beeswarm-boxplot (both passes, the
+  bar's halves) 44.5 s, longest gap 197 ms; the same families as before. The bar sits at 0.01–0.05 for 16 s on score2
+  while it checks for a color scale (fast on every other image). Bench rows checked unchanged (landing1, protrusion3,
+  bench2 group).
+- The Claude browser pane ran the scan about 4 times slower: it reports the page hidden, and Chrome lowers hidden
+  pages' and their workers' priority. A cached main.js from before the change also ran there until the scripts were
+  fetched with cache: 'reload'.
