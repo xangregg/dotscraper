@@ -97,6 +97,12 @@ const FLAG_VISIBLE = 0.5; // flag a dot less than this fraction visible
 const DOUBLED_MAX_SHARE = 0.4;
 const DOUBLED_RADIUS_STEP = 0.5; // px
 const DOUBLED_MAX_BUMPS = 3;
+// … and one with at least COINCIDENT_MIN_PAIRS pairs of dots within COINCIDENT_RADII × r of each other, kept when the
+// fit's objective improves: no two opaque dots can be told apart that close, so the disc is too small for the dots
+// (phase1's 82 gray at 19.1 px: 6 such pairs and 12 close of 31, under the share; at 19.6, 25 dots, none, and the
+// objective 5% lower)
+const COINCIDENT_RADII = 0.15;
+const COINCIDENT_MIN_PAIRS = 3;
 // flag a dot this close to another of its family (× r): in the view the two marks are one, and for opaque dots one
 // dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
 // of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
@@ -1086,14 +1092,39 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
     // (beeswarm-boxplot's gray at 8.7 px: 474 dots, 352 in close pairs; at 9.2, 282 and none). Fit again larger.
     const doubled = r => r.dots.filter(d => d.flags.includes('close')).length > DOUBLED_MAX_SHARE * r.dots.length;
     if (input.style.alpha >= 1 && !input.style.layered && (opts.refitRadius ?? true)) {
-        for (let k = 0; k < DOUBLED_MAX_BUMPS && doubled(res); k++) {
+        let k = 0;
+        for (; k < DOUBLED_MAX_BUMPS && doubled(res); k++) {
             const next = fitOnce({ ...input, style: { ...input.style, radius: res.radius + DOUBLED_RADIUS_STEP } }, opts, onProgress);
             next.log.unshift({ stage: 'doubled', radius: res.radius, close: res.dots.filter(d => d.flags.includes('close')).length, dots: res.dots.length });
             next.ms += res.ms; // the time of the fits before it too
             res = next;
         }
+        const objective = r => r.loss + r.lambda * r.dots.length;
+        for (; k < DOUBLED_MAX_BUMPS && coincidentPairs(res.dots, COINCIDENT_RADII * res.radius) >= COINCIDENT_MIN_PAIRS; k++) {
+            const next = fitOnce({ ...input, style: { ...input.style, radius: res.radius + DOUBLED_RADIUS_STEP } }, opts, onProgress);
+            next.ms += res.ms;
+            if (objective(next) >= objective(res)) {
+                res.ms = next.ms;
+                break;
+            }
+            next.log.unshift({ stage: 'coincident', radius: res.radius, pairs: coincidentPairs(res.dots, COINCIDENT_RADII * res.radius), dots: res.dots.length });
+            res = next;
+        }
     }
     return res;
+}
+
+// pairs of dots closer than d (px), by a sweep in x: O(n log n) plus the pairs within d in x
+function coincidentPairs(dots, d) {
+    const xs = dots.map(p => [p.x, p.y]).sort((a, b) => a[0] - b[0]);
+    let pairs = 0;
+    for (let i = 0; i < xs.length; i++) {
+        for (let j = i + 1; j < xs.length && xs[j][0] - xs[i][0] < d; j++) {
+            if (Math.hypot(xs[j][0] - xs[i][0], xs[j][1] - xs[i][1]) < d)
+                pairs++;
+        }
+    }
+    return pairs;
 }
 
 // The first centers: Hough's, and the estimate's seeds (centers it found otherwise) not within HOUGH_NMS_RADII × r of

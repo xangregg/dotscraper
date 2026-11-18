@@ -2174,3 +2174,35 @@ Results (full bench, diffed against 9bbaa9f): hair2 and tumour1 as above; every 
 (hair1 unchanged, 27 for 29). App: hair2 "Found 19 dots, 2 flagged" (pink 10, white 9), tumour1 "Found 44 dots", no
 console errors. Tests in test/opaque.test.js: synthetic rows of crescents beside 0s at hair2's scale (no family
 before), dots over a gray bar (D read 0.36 on the bar before), and the hair2 and tumour1 regressions tightened.
+
+**bench-nature phase1: all five families, four grays in black outlines and black dots** (2026-11-18)
+
+- Found were 187 and 82 (50 for 97, P 0.580 R 0.299). Each missing family failed at its own step:
+  - 136 (27 dots): the outline model measured r 19.2 and 8 strong dots, but coverage 0.29, under 0.35. Its curves,
+    13 px wide beside fills of 17, held most of its pixels. An outlined family's coverage now counts its fill's
+    color only where a disc of 0.5 × the fill radius fits (THICK_FILL_RADII): 0.29 → 0.63. 187 and 82 rose likewise
+    (0.42 → 0.73, 0.36 → 0.66).
+  - 228 (20): its curve outweighed its dots, so its surroundings read as the page and the outline model was never
+    tried. With black forced: r 19.5, 18 strong, coverage 0.43. After the main loop (clusters go largest first, so
+    228 came before any outlined family), a rejected fill is tried in each found family's outline, if darker.
+  - black (16): fill and outline one color, also text's, axes', the colorbar's and every gray dot's ring. Measured
+    as plain ink: r 4.86 (periods), coverage 0.01. A rejected color that is a found family's outline is now measured
+    at those families' radius (measureOpaque `opts.radius`), their rings theirs (the outline width plus RING_SLACK,
+    1.5 px), and kept on 3 or more strong centers filled with it and coverage 0.1 (6 strong, 12 centers, 0.21).
+- Then 82 put pairs on its dots (31 for 16, 6 pairs under 0.15 r apart). Its radius, 19.1, is a little small; before,
+  16 of 35 close (over the 0.4 share) bumped it to 19.6, now 12 of 32 didn't. fitDots now also refits 0.5 px larger
+  when 3 or more pairs are that close, keeping the result only if the objective (loss + λ · dots) is lower: for 82,
+  25 dots, none close, objective 5% lower. Black keeps 5 such pairs (no larger radius is better: its radius is the
+  grays').
+- A synthetic copy (all five, curves under 228 and 136, black periods and a block) found 187 alone before, and showed
+  two more failures phase1 doesn't: (1) without curves, 187's background is black, its outline's color, and 82, on
+  the line from black to 187, was a blend; an outline-colored background is now a rim only when rimOf says, as the
+  outline is. (2) One pure gray's two histogram peaks, 5 units apart, made two families; a cluster within INK_TOL of a
+  found family is skipped.
+- phase1: 50 → 132 found for 97, P 0.580 → 0.606, R 0.299 → 0.825, every family found. About 30 of the 35 extras are
+  the colorbar's blocks (6 per family, beyond the axes' end; bounding the plot there would cut cantons', comment1's
+  and delta1's dots, as noted before), the rest doubles where a same-gray curve meets dots and black's pairs. App:
+  "Found 132 dots, 30 flagged", five families, no console errors.
+
+Results (full bench, diffed against 4e7bba6): phase1 as above; every other row identical but for run times. Tests in
+test/opaque.test.js: the synthetic copy, and phase1's regression (all five families, P ≥ 0.55, R ≥ 0.8).

@@ -288,6 +288,92 @@ test('page-filled dots over a gray bar: the outline mixes with the bar, which is
     near(fit.radius, 9.5, 0.3, 'radius');
 });
 
+// Shapes painted in order on a white canvas, supersampled S × S: discs { x, y, r, color } and thick segments
+// { line: [x0, y0, x1, y1], w, color }, each painted over its bounding box only
+function paintScene(width, height, shapes, S = 4) {
+    const W = width * S;
+    const H = height * S;
+    const buf = new Uint8Array(3 * W * H).fill(255);
+    for (const sh of shapes) {
+        const [x0, y0, x1, y1] = sh.line ?? [sh.x, sh.y, sh.x, sh.y];
+        const reach = sh.line ? sh.w / 2 : sh.r;
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+        const len2 = dx * dx + dy * dy;
+        for (let Y = Math.max(0, Math.floor((Math.min(y0, y1) - reach) * S)); Y < Math.min(H, Math.ceil((Math.max(y0, y1) + reach) * S)); Y++) {
+            for (let X = Math.max(0, Math.floor((Math.min(x0, x1) - reach) * S)); X < Math.min(W, Math.ceil((Math.max(x0, x1) + reach) * S)); X++) {
+                const px = (X + 0.5) / S;
+                const py = (Y + 0.5) / S;
+                const t = len2 ? Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / len2)) : 0;
+                if (Math.hypot(px - x0 - t * dx, py - y0 - t * dy) <= reach)
+                    buf.set(sh.color, 3 * (Y * W + X));
+            }
+        }
+    }
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            for (let ch = 0; ch < 3; ch++) {
+                let sum = 0;
+                for (let sy = 0; sy < S; sy++) {
+                    for (let sx = 0; sx < S; sx++)
+                        sum += buf[3 * ((y * S + sy) * W + x * S + sx) + ch];
+                }
+                data[4 * (y * width + x) + ch] = Math.round(sum / (S * S));
+            }
+            data[4 * (y * width + x) + 3] = 255;
+        }
+    }
+    return { width, height, data };
+}
+
+test('grays in black outlines beside black dots, after phase1: every family, curves of their own grays under them', () => {
+    // before: 187 alone. 136's and 228's rings read as the page, their curves outweighing their dots; 82, between
+    // black and 187, was a blend of 187 with its background, black; black, the outlines' color and text's, read its
+    // periods' radius; one gray's two histogram peaks made two families. Dots of fill radius 17 in outlines 2.4 px
+    // wide, as phase1's.
+    const black = [20, 21, 20];
+    const R = 19.4;
+    const rf = 17;
+    const grays = { 228: [228, 228, 228], 187: [187, 188, 188], 136: [136, 136, 136], 82: [82, 82, 81] };
+    const dots = [];
+    const shapes = [];
+    const row = (key, y, xs) => xs.forEach(x => dots.push({ x, y, family: key }));
+    // 228 and 136 sit on curves of their own gray, 13 px wide, far longer than their dots, from the image's edge (a
+    // stub shorter than 3 r beside a dot reads as its fill, and the fit doubles that dot: phase1's 187 where its
+    // curve meets its dots)
+    shapes.push({ line: [0, 60, 880, 75], w: 13, color: grays[228] }, { line: [0, 300, 880, 285], w: 13, color: grays[136] });
+    shapes.push({ line: [20, 420, 880, 420], w: 2, color: black });
+    row(228, 64, [80, 200, 320, 440, 560]);
+    row(187, 180, [80, 200, 320, 440, 560]);
+    row(136, 296, [80, 200, 320, 440, 560]);
+    row(82, 180, [680, 800]);
+    row(82, 296, [680, 800]);
+    row(82, 64, [680]);
+    row('black', 420, [80, 200, 320, 440, 560, 680]);
+    for (const d of dots) {
+        if (d.family === 'black')
+            shapes.push({ x: d.x, y: d.y, r: R, color: black });
+        else
+            shapes.push({ x: d.x, y: d.y, r: R, color: black }, { x: d.x, y: d.y, r: rf, color: grays[d.family] });
+    }
+    // text's periods, and a black block as a colorbar's (too narrow for a dot)
+    for (let k = 0; k < 30; k++)
+        shapes.push({ x: 30 + 28 * k, y: 500, r: 4.9, color: black });
+    shapes.push({ line: [880, 120, 880, 320], w: 26, color: black });
+    const image = paintScene(900, 530, shapes);
+    const results = extractAll(image);
+    const colorOf = r => r.est.style.color.map(Math.round);
+    for (const [key, c] of [...Object.entries(grays), ['black', black]]) {
+        const res = results.find(r => Math.hypot(...r.est.style.color.map((v, ch) => v - c[ch])) < 10);
+        assert.ok(res, `family ${key} among ${results.map(colorOf).join('; ')}`);
+        const want = dots.filter(d => String(d.family) === key);
+        const m = matchDots(want, res.fit.dots, 2);
+        assert.equal(m.recall, 1, `${key}: missed ${JSON.stringify(m.missed.map(i => want[i]))}`);
+        assert.equal(res.fit.dots.length, want.length, `${key}: extra ${JSON.stringify(m.extra.map(j => res.fit.dots[j]))}`);
+    }
+});
+
 const benchDir = set => new URL(`../${set}/`, import.meta.url).pathname;
 const benchAbsent = (set, name) => !existsSync(benchDir(set) + name) && `${set}/${name} absent`;
 
@@ -459,19 +545,30 @@ test('regression: hair2, decimal points alone are no family; its clustered pink 
 
 const PHASE1 = 'phase1-10.1038-s41586-026-11163-6.png';
 
-test('regression: phase1, gray fills in black outlines are families of their own', { skip: !existsSync(NATURE + PHASE1) && 'bench-nature phase1 absent' }, () => {
+test('regression: phase1, all five families: four grays in black outlines and black dots', { skip: !existsSync(NATURE + PHASE1) && 'bench-nature phase1 absent' }, () => {
     // before: no family. White, gray and black are on one line, so the stroke model can't read a gray fill; the
     // outline model counted every black pixel (text, axes, a black family) as dot, was gated on black being thin over
     // the whole image, and the darker grays were taken for rims between the lighter one and its outline, then merged
     // with it as one translucent family over a black "region"; the same-gray curves behind the dots set the radius
-    // (6.3 for 19). Still missing: gray 136 (coverage 0.29) and 228, and the black family (text's color).
-    const { estimates } = estimateFamilies(readImage(NATURE + PHASE1));
+    // (6.3 for 19). Then 2 of 5 (187 and 82, 50 for 97, R 0.299): 136's coverage 0.29, its curve's pixels counted;
+    // 228's ring read as the page, its curve outweighing its dots; black measured as text (r 4.86, coverage 0.01).
+    const image = readImage(NATURE + PHASE1);
+    const results = extractAll(image);
+    const estimates = results.map(r => r.est);
     const grays = estimates.filter(e => e.style?.outline && e.familyMeasure?.kind === 'opaque');
-    assert.ok(grays.length >= 2, estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
+    const names = estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; ');
+    assert.equal(grays.length, 4, names);
     for (const e of grays) {
         near(e.style.radius, 19.4, 0.8, `radius of ${e.style.color.map(Math.round)}`);
         assert.ok(Math.max(...e.style.outline.color) < 40, 'a black outline');
     }
+    const black = estimates.filter(e => !e.style?.outline && e.style && Math.max(...e.style.color) < 40);
+    assert.equal(black.length, 1, names);
+    near(black[0].style.radius, 19.4, 0.8, 'radius of black');
+    // against the hand truth: measured P 0.606, R 0.825 (most extras on the colorbar, outside the plot)
+    const truth = readTruthJson(`${NATURE}truth/${PHASE1.replace('.png', '.json')}`);
+    const r = groupRow('phase1', truth.dots, results, 0);
+    assert.ok(r.recall >= 0.8 && r.precision >= 0.55, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
 test('regression: engagement1, five blues in one dark stroke are stroked families, not a scale; text is no family', { skip: !existsSync(`${NATURE}${ENGAGEMENT}.png`) && 'bench-nature engagement1 absent' }, () => {

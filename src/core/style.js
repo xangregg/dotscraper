@@ -213,6 +213,8 @@ const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–o
 // An outline is the family's only next to its fill: farther out, the outline's color is other ink (phase1: black
 // outlines around gray fills, and black text, axes and a black family, which counted as dots everywhere)
 const OUTLINE_REACH = 4; // px from the family's fill
+// an outlined family's coverage counts its fill's color where a disc of this × the fill radius fits
+const THICK_FILL_RADII = 0.5;
 // Fills in the page's color (white dots in black outlines on a white page) are the page regions their outlines
 // enclose: round ones within this share of one radius are one family's whole fills (at least PAGE_FILL_MIN_WHOLE of
 // them, and DOT_MIN_STRONG fills in all, whole or partly hidden: hair2's nine white dots lie in two rows, each with one
@@ -260,6 +262,8 @@ const OUTLINE_MAX_THICK = 0.25; // … all but this share of it
 // unknown and no dot was found. The stroke is read from the rings of isolated fills, as the mean of the ring pixels
 // farthest off the background–fill line: not its true color, which no pixel shows, but the far corner of the
 // colors seen, so every ring pixel lies inside the triangle background–fill–stroke.
+// px beyond an outline's measured width that its antialiased rim reaches, read as the ring's
+const RING_SLACK = 1.5;
 const STROKE_RING = 4; // px outside a fill read as its ring (engagement1: dark out to 3–4 px past the fill's color, background from 5)
 const STROKE_CLEAR = 7; // px: beyond the ring, out to this, a fill must have background around it to count as isolated …
 const STROKE_CLEAR_SHARE = 0.9; // … for this share of those pixels
@@ -1583,6 +1587,8 @@ export function strokeColor(image, color, B) {
  * @param {number} [opts.fillRadius]  px, the fill inside the stroke
  * @param {{fill: number[], reach: number}[]|null} [opts.rings]  other families' fills, and how far (px) their rings
  *   reach beyond them
+ * @param {number} [opts.radius]  px, the dots' radius when known otherwise (a found family's outline color as a family
+ *   of its own: its isolated components are text's specks)
  */
 export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES, outline = null, opts = {}) {
     const stroke = opts.stroke ?? null;
@@ -1798,8 +1804,8 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     // half the stroke, got 4.5 for 20 from the distance transform)
     const fillCover = outline ? fillK : stroke ? fillW : null;
     const byFill = !isolated.length && fillCover ? outlinedRadius(fillCover, own, D, width, height) : null;
-    let radius = isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height);
-    const fromDistance = !isolated.length && !byFill;
+    let radius = opts.radius ?? (isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height));
+    const fromDistance = !opts.radius && !isolated.length && !byFill;
     let dots = 0;
     let strongDots = 0;
     let coverage = 0;
@@ -1892,8 +1898,10 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
             }
         }
         // a stroked family's coverage is its fill's: D also covers the stroke's color, which is text and axes too
-        // (hair3: the black ink diluted it to 0.26); so is one measured by its fills
-        const ofFamily = stroke ? fillW : byFill ? own : D;
+        // (hair3: the black ink diluted it to 0.26); so is one measured by its fills, and an outlined one's only where
+        // a disc of THICK_FILL_RADII × the fill radius fits: a line of the fill's color thinner than a fill is no dot
+        // (phase1: gray 136's curves, 13 px wide beside fills of 17, held most of its pixels; coverage 0.29 → 0.63)
+        const ofFamily = stroke ? fillW : byFill ? (outline ? opening(own, width, height, THICK_FILL_RADII * byFill.fillRadius) : own) : D;
         let fam = 0;
         let covered = 0;
         for (let p = 0; p < n; p++) {
@@ -2318,7 +2326,15 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const isOutline = c => out.some(f => f.outline && Math.hypot(...f.outline.map((v, ch) => v - c[ch])) <= CLUSTER_TOL);
     const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= CLUSTER_TOL;
     const rimOf = (f, c, interiorShare) => interiorShare < BLEND_OUTLINE_MAX_INTERIOR || near(c, f.seed) || near(c, f.outline);
-    const isBlend = (c, interiorShare) => out.some(f => [f.background, ...(f.outline && rimOf(f, c, interiorShare) ? [f.outline] : []), ...backgrounds].some(P => {
+    // (an outlined family's background is often its outline's color, all around its dots: as the outline, a rim only
+    // when rimOf says; else every gray between a gray fill and its black outline was a blend: a synthetic copy of
+    // phase1 without curves, its 82 gray dots beside 187s)
+    const bases = (f, c, interiorShare) => {
+        const rim = f.outline && rimOf(f, c, interiorShare);
+        const ownOutline = f.outline && near(f.background, f.outline);
+        return [...(ownOutline && !rim ? [] : [f.background]), ...(rim ? [f.outline] : []), ...backgrounds];
+    };
+    const isBlend = (c, interiorShare) => out.some(f => bases(f, c, interiorShare).some(P => {
         const w = f.seed.map((v, ch) => v - P[ch]);
         const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
         const v = c.map((x, ch) => x - P[ch]);
@@ -2355,6 +2371,10 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     for (const [i, cl] of clusters.entries()) {
         onProgress?.(i / clusters.length);
         if (onTranslucent(cl.color) || isOutline(cl.color))
+            continue;
+        // a second peak of one family's color (two bins' peaks over one pure gray, 5 units apart: two families of the
+        // same dots)
+        if (out.some(f => Math.hypot(...f.seed.map((v, ch) => v - cl.color[ch])) <= INK_TOL))
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
         const c = cl.color;
@@ -2443,7 +2463,45 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         if (byHueRing || isDotFamily(fam))
             out.push(fam);
         else
-            rejected.push(plain);
+            rejected.push(Object.assign(plain, { interior: interior / count }));
+    }
+    // Fills in a found family's outline (after the loop, for the same reason): a plot draws every family's outline
+    // alike, so a fill whose surroundings read as the page, its line of its own color outweighing its rings, is
+    // tried in it (phase1: gray 228's 13 px curve made its ring white; in the 187s' black, 18 strong dots). Darker
+    // than the fill, as reading (3) asks.
+    const outlines = [];
+    for (const f of out) {
+        if (f.outline && !f.pageFill && !outlines.some(O => near(O, f.outline)))
+            outlines.push(f.outline);
+    }
+    for (const [i, f] of [...rejected.entries()].reverse()) {
+        for (const O of outlines) {
+            if (near(O, f.seed) || luminance(O) >= luminance(f.seed) || isThin(image, f.seed))
+                continue;
+            const outlined = measureOpaque(image, f.seed, backgrounds, [], tol, O);
+            if (isDotFamily(outlined)) {
+                out.push({ ...outlined, fillRadius: outlined.fillRadius ?? f.radius, interior: f.interior });
+                rejected.splice(i, 1);
+                break;
+            }
+        }
+    }
+    // Dots filled with a found family's outline color (phase1's black: fill and outline one color, beside grays in
+    // black outlines). That color is also the other dots' rings and, usually, text and axes: its own components give
+    // text's radius (periods, 4.9) and its coverage is tiny (0.01). So it is measured at the outlined families' radius,
+    // their rings theirs (within their outline's width and RING_SLACK of their fills), and its evidence is centers
+    // filled with it at that radius; a glyph holds no filled disc that size.
+    for (const [i, f] of [...rejected.entries()].reverse()) {
+        const owners = out.filter(g => g.outline && !g.pageFill && g.fillRadius && near(g.outline, f.seed));
+        if (!owners.length)
+            continue;
+        const rings = out.filter(g => g.outline && g.fillRadius).map(g => ({ fill: g.seed, reach: g.radius - g.fillRadius + RING_SLACK }));
+        const radius = median(owners.map(g => g.radius));
+        const solid = measureOpaque(image, f.seed, backgrounds, out.map(g => g.seed), tol, null, { radius, rings });
+        if (solid.strongDots >= DOT_MIN_STRONG && solid.coverage >= DOT_MIN_COVERAGE_ANY) {
+            out.push({ ...solid, interior: f.interior, solidRadius: radius, solidRings: rings });
+            rejected.splice(i, 1);
+        }
     }
     // plain fills at a found family's radius (after the loop: clusters are taken largest first, so the sibling with
     // strong arcs may come later); each needs its own centers, filled and seen over half their edge
@@ -2467,8 +2525,8 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     // (the reach is from the fill's color mask, as strokeColor reads the ring)
     const stroked = out.some(f => f.stroke);
     const final = out.map(f => {
-        const rings = stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null;
-        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
+        const rings = f.solidRings ?? (stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
+        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     for (const f of final)
