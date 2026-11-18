@@ -425,6 +425,61 @@ test('regression: molar1, black dots beside a gray label that fits as their leve
     assert.ok(row.precision >= 0.95 && row.recall >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
 });
 
+// Purple dots joined by a purple line, with black dots drawn over half of them (9 px off center) and black error bars
+// down through those: delta1's layout. The black pixels at each seam read as purple's background, so the purple
+// remnant was cut from the black dot over it, masked as part of the line, and a purple dot under black paid for every
+// seam pixel it covered.
+function blackOverPurple() {
+    const W = 700;
+    const H = 388;
+    const R = 14;
+    const PURPLE = [145, 77, 163];
+    const BLACK = [19, 20, 19];
+    const bg = solidImage(W, H, [255, 255, 255]);
+    const purple = [];
+    for (let k = 0; k < 10; k++)
+        purple.push({ x: 40 + 48 * k, y: 120 + 20 * Math.sin(k) });
+    const paint = (x, y, c) => bg.data.set(c, 3 * (Math.round(y) * W + Math.round(x)));
+    for (let k = 0; k + 1 < purple.length; k++) {
+        const [a, b] = [purple[k], purple[k + 1]];
+        for (let t = 0; t <= 1; t += 0.002) {
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++)
+                    paint(a.x + t * (b.x - a.x) + dx, a.y + t * (b.y - a.y) + dy, PURPLE);
+            }
+        }
+    }
+    const under = createDotModel(bg, { color: PURPLE, alpha: 1, radius: R });
+    under.addAll(purple);
+    const covered = purple.filter((_, k) => k % 2);
+    for (const d of covered) {
+        for (let y = d.y - 40; y <= d.y + 22; y++) {
+            for (let dx = -1; dx <= 1; dx++)
+                under.image.data.set(BLACK, 3 * (Math.round(y) * W + Math.round(d.x) + dx));
+        }
+    }
+    const black = [...covered.map(d => ({ x: d.x, y: d.y - 9 })), { x: 60, y: 40 }, { x: 200, y: 40 }, { x: 340, y: 40 }, { x: 480, y: 40 }];
+    const over = createDotModel(under.image, { color: BLACK, alpha: 1, radius: R });
+    over.addAll(black);
+    return { image: toRgba(over.image), purple, black };
+}
+
+test('opaque dots partly under another family\'s are found: the seam is the upper family\'s edge, unknown for the lower', () => {
+    const { image, purple, black } = blackOverPurple();
+    const results = extractAll(image);
+    const ofColor = c => results.find(r => Math.hypot(...r.est.style.color.map((v, ch) => v - c[ch])) < 20);
+    const p = ofColor([145, 77, 163]);
+    const b = ofColor([19, 20, 19]);
+    assert.deepEqual(p.est.familyMeasure.under.map(c => c.map(Math.round)), [[19, 20, 19]], 'purple is under black');
+    assert.deepEqual(b.est.familyMeasure.under, [], 'black is under nothing');
+    // before: 5 of the 10 purple (none of those under black)
+    for (const [r, truth, what] of [[p, purple, 'purple'], [b, black, 'black']]) {
+        const m = matchDots(truth, r.fit.dots, 0.5 * r.fit.radius);
+        assert.equal(m.pairs.length, truth.length, `${what}: ${m.pairs.length} of ${truth.length}, ${r.fit.dots.length} found`);
+        assert.equal(r.fit.dots.length, truth.length, `${what}: ${r.fit.dots.length} found`);
+    }
+});
+
 const DELTA1 = 'delta1-10.1038-s41586-026-10928-3.png';
 
 test('regression: delta1, black dots joined by their line to the axes, beside as much black text', { skip: !existsSync(NATURE + DELTA1) && 'bench-nature delta1 absent' }, () => {
@@ -437,9 +492,9 @@ test('regression: delta1, black dots joined by their line to the axes, beside as
     const truthFile = NATURE + 'truth/' + DELTA1.replace('.png', '.json');
     if (!existsSync(truthFile))
         return;
-    // (purple dots partly behind black ones are still missed: 8 of 24)
+    // (purple dots under black ones: 18 of 24 found before the drawing order; one almost wholly hidden is still missed)
     const row = groupRow('delta1', readTruthJson(truthFile).dots, results, 0);
-    assert.ok(row.precision >= 0.88 && row.recall >= 0.8, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
+    assert.ok(row.precision >= 0.92 && row.recall >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
 });
 
 const KITE2 = 'kite2-10.1038-s41586-026-11194-z.png';

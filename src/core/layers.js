@@ -34,6 +34,7 @@ const SLIVER_OPENING = 1; // px
 const SOLID_COUNT = 1.5; // overlap count
 const SOLID_OPEN_FRACTION = 0.9; // × dot radius: the disc that must fit
 const MASK_DILATE_BASE = 1; // px
+const OVER_INK_TOL = 15; // 0–255 units (RGB distance): an edge ink this close to a family drawn over this one is its
 const MASK_DILATE_BLURS = 2; // px per px of edge blur
 // Beyond the axes is no data, only labels, whose round glyphs ("0") read as small dots (bench2 tiny-dots: three dots
 // in the "100" below the x axis). Pixels farther out than this are masked; a dot centered on the axis line (data at
@@ -292,6 +293,19 @@ function outlineLayers(estimate, width, height, opts) {
     return { classes, thin: new Uint8Array(n), mask, dilate: 0, stats };
 }
 
+// Which of an opaque family's edgeInk values (layers.js buildMask) are inks of families drawn over it: a lookup by value,
+// or null when there are none
+function overInk(fm) {
+    if (!fm?.edgeInk || !fm.under?.length)
+        return null;
+    const over = new Uint8Array(256);
+    fm.inkColors.forEach((c, k) => {
+        if (fm.under.some(u => Math.hypot(u[0] - c[0], u[1] - c[1], u[2] - c[2]) <= OVER_INK_TOL))
+            over[k + 1] = 1;
+    });
+    return over;
+}
+
 /**
  * Classify pixels and build the mask of pixels the fit should ignore.
  *
@@ -340,10 +354,14 @@ export function buildMask(image, estimate, opts = {}) {
             deep[p] = e <= SATURATION_TOL ? 1 : 0;
         }
         // Other marks may hide the rest of a dot: open the family's pixels together with them, so a dot cut in two by
-        // a line over it stays whole (synthetic swarm: half-discs along the median lines joined into "thin" marks)
+        // a line over it stays whole (synthetic swarm: half-discs along the median lines joined into "thin" marks).
+        // Other ink next to the dots is read as their background (style.js measureOpaque's edgeInk), and counts as
+        // other here: else its one-pixel seam cut a dot from the one over it, and the rest of the dot, joined to a
+        // line of its color, was masked as thin (delta1: purple dots under black ones, and under black error bars)
+        const ink = estimate.familyMeasure?.edgeInk;
         const withOther = new Uint8Array(n);
         for (let p = 0; p < n; p++)
-            withOther[p] = deep[p] || classes[p] === CLASS_OTHER ? 1 : 0;
+            withOther[p] = deep[p] || classes[p] === CLASS_OTHER || ink?.[p] ? 1 : 0;
         const kept = opening(withOther, width, height, OPEN_RADIUS_FRACTION * style.radius);
         const raw = new Uint8Array(n);
         for (let p = 0; p < n; p++)
@@ -373,9 +391,13 @@ export function buildMask(image, estimate, opts = {}) {
             }
         }
     }
+    // Other ink next to the dots of a family drawn over this one may hide this one's dots: unknown, not background (a
+    // dot partly under it paid for every pixel of that ink it covered, and the fit dropped it: delta1's purple under
+    // black, 18 found for 24). Against a family drawn under this one it is this one's edge, and stays.
+    const over = overInk(estimate.familyMeasure);
     const seedMask = new Uint8Array(n);
     for (let p = 0; p < n; p++)
-        seedMask[p] = classes[p] === CLASS_OTHER || thin[p] ? 1 : 0;
+        seedMask[p] = classes[p] === CLASS_OTHER || thin[p] || (over && over[estimate.familyMeasure.edgeInk[p]]) ? 1 : 0;
     const mask = dilate(seedMask, width, height, r);
     let outside = 0;
     const b = opts.bounds;

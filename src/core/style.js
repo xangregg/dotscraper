@@ -113,6 +113,14 @@ const OVER_BAND_Q = [0.05, 0.95]; // 1 − α for a family's dots over a band of
 const REGION_INK_TOL = 15; // 0–255 units (RGB distance) from a region's color (JPEG noise)
 const REGION_MIN_SOLID = 0.3; // share of the region's color an opening by the dots' radius keeps
 const BLEND_DEPTH = 4; // dots in a stack
+// The pixels next to an opaque family's dots that are another ink (measureOpaque's edgeInk): its index in the others'
+// colors plus 1, or this for an ink not among them
+const EDGE_INK_UNLISTED = 255;
+// Drawing order of two opaque families (drawnUnder): seam pixels on the upper one's circles, and how many times those
+// on the lower one's they must be
+const ORDER_RING = 2; // px from a found dot's circle
+const ORDER_MIN_PIXELS = 20;
+const ORDER_RATIO = 3;
 // findCandidates' progress: the share of the work before the opaque clusters (measured 0.07–0.28 on five bench
 // images, 0.73 on protrusion1, whose four translucent families each test their colors for a box)
 const TRANSLUCENT_SHARE = 0.25;
@@ -1524,6 +1532,11 @@ export function strokeColor(image, color, B) {
  * inner disc must be the fill: a darker family's fill can lie inside the triangle, near the stroke). With `rings`,
  * the other families' fills, a ring pixel nearer one of them than to this family's fill reads 0.
  *
+ * Near the family, a pixel is read against its nearest other color, which keeps the edges where dots touch other ink;
+ * where that color isn't the page, the pixel is other ink, recorded in `edgeInk` (1 + the index of the `others` color
+ * it is, as `inkColors` lists them, or EDGE_INK_UNLISTED). Whether this family's dots go on under it depends on which
+ * is drawn on top (opaqueFamilies' `under`; layers.js buildMask).
+ *
  * @param {object} [opts]
  * @param {number[]|null} [opts.stroke]  0–255
  * @param {number} [opts.fillRadius]  px, the fill inside the stroke
@@ -1598,6 +1611,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     // other families' fills, thick parts only: a stroke near another family's color is still this dot's ring
     const otherFill = stroke ? thickMembers(image, others) : null;
     const D = new Float32Array(n);
+    const edgeInk = new Uint8Array(n);
     const fillW = stroke ? new Float32Array(n) : null;
     // with an outline, how far each pixel is from the outline toward the fill: the fill's antialiased coverage
     const fillK = outline ? new Float32Array(n) : null;
@@ -1718,6 +1732,10 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         const off = Math.hypot(v0 - m * w0, v1 - m * w1, v2 - m * w2);
         const tol = Math.max(offAbs, OFF_MIX_REL * Math.abs(m) * Math.sqrt(ww));
         D[p] = off > tol || m > MAX_MIX ? NaN : Math.min(1, Math.max(0, m));
+        if (near[p] && D[p] < 0.5 && !pageColors.some(P => Math.hypot(b0 - P[0], b1 - P[1], b2 - P[2]) <= INK_TOL)) {
+            const k = others.findIndex(O => Math.hypot(b0 - O[0], b1 - O[1], b2 - O[2]) <= INK_TOL);
+            edgeInk[p] = k >= 0 && k < EDGE_INK_UNLISTED - 1 ? k + 1 : EDGE_INK_UNLISTED;
+        }
     }
     if (!stroke)
         fillSaturatedOverlaps(image, D, B, color, others);
@@ -1740,6 +1758,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     let dots = 0;
     let strongDots = 0;
     let coverage = 0;
+    let found = [];
     if (radiusPlausible(radius, isolated.length)) {
         const weight = new Uint8Array(n);
         for (let p = 0; p < n; p++)
@@ -1816,6 +1835,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         }
         dots = centers.length;
         strongDots = strong(centers);
+        found = centers.map(c => ({ x: c.x, y: c.y }));
         // share of the family's pixels inside the found discs
         const inDisc = new Uint8Array(n);
         for (const c of centers) {
@@ -1842,6 +1862,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const pixels = mask.reduce((t, v) => t + v, 0);
     return {
         kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
+        edgeInk, inkColors: others, centers: found,
         ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
         ...(paged ? { pageFill: true, fitColor } : {}),
         levels: [{ t: Math.hypot(...B.map((v, ch) => v - fitColor[ch])), color: fitColor, count: pixels }],
@@ -2372,7 +2393,34 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
+    for (const f of final)
+        f.under = final.filter(g => g !== f && drawnUnder(f, g, image.width)).map(g => g.seed);
     return final.sort((a, b) => b.dots - a.dots);
+}
+
+// Whether opaque family f is drawn under g, from their seam: the pixels of g's ink next to f's dots (f's edgeInk).
+// The seam is the edge of the dot on top, so it lies on that family's circles and inside the other's discs; the dots
+// on top are whole and their centers found, while those underneath are partly hidden and often not. Seam pixels
+// within ORDER_RING of a found circle of each family are counted, and f is under g when g's circles carry
+// ORDER_RATIO times as many as f's (delta1: purple under black).
+function drawnUnder(f, g, width) {
+    if (!f.radius || !g.radius || !f.edgeInk)
+        return false;
+    const k = f.inkColors.findIndex(c => Math.hypot(c[0] - g.seed[0], c[1] - g.seed[1], c[2] - g.seed[2]) <= INK_TOL);
+    if (k < 0)
+        return false;
+    const onCircle = (h, x, y) => h.centers.some(c => Math.abs(Math.hypot(x - c.x, y - c.y) - h.radius) <= ORDER_RING);
+    let onF = 0;
+    let onG = 0;
+    for (let p = 0; p < f.edgeInk.length; p++) {
+        if (f.edgeInk[p] !== k + 1)
+            continue;
+        const x = p % width + 0.5;
+        const y = Math.floor(p / width) + 0.5;
+        onF += onCircle(f, x, y);
+        onG += onCircle(g, x, y);
+    }
+    return onG >= ORDER_MIN_PIXELS && onG >= ORDER_RATIO * onF;
 }
 
 // Color clusters in a darker shade of a fill's hue: on the line from the page through the fill, within

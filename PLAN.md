@@ -2110,3 +2110,29 @@ test/unmix.test.js (regionLevels), test/background.test.js (box rectangle), test
 
 Results (full bench, diffed against 81f7e35): delta1 as above; every other row identical but for run times. Test in
 test/opaque.test.js.
+
+**bench-nature delta1: purple dots under black ones, the drawing order of opaque families** (2026-11-17)
+
+- Black is drawn over purple. 8 purple dots partly under black ones were missed (18 of 24 found). measureOpaque reads
+  pixels near a family against their nearest other color, so the black pixels at a seam read 0, the page, for purple.
+  (1) In layers.js buildMask's thin test that one-pixel seam cut the purple remnant from the black dot over it, and
+  the remnant, joined to the purple line, was masked as thin (the whole visible part of the dot at 666, 613). (2) A
+  purple dot under black paid for every seam pixel it covered, so the fit dropped the Hough centers it had there
+  (arcs 0.30–0.51 at four of the misses).
+- measureOpaque now records those pixels (edgeInk, by which other color: inkColors) and returns its centers. (1) The
+  thin test counts them as other ink: one more purple found (45, P 0.956, R 0.896). (2) Masking them for the fit found
+  every purple dot but one, but let black put dots where purple shows (4 black extras): a seam is the edge of the dot on
+  top. So opaqueFamilies decides the drawing order (drawnUnder): the seam lies on the upper family's circles and inside
+  the lower one's discs, and the upper's dots are whole, their centers found. Seam pixels within 2 px of each family's
+  found circles are counted; f is under g with 20 or more on g's and 3 times as many as on f's. The seam pixels are
+  masked only for a family under the other's ink (layers.js overInk).
+- Disc interiors first (a top dot holds no other color): by the truth's centers 0.142 against 0.000, but the found
+  centers are the filled ones, mostly not covered (0.007, 40 px), and a synthetic copy gave nothing.
+- delta1: 44 → 50 found for 48, P 0.909 → 0.940, R 0.833 → 0.979, RMSE 0.19 → 0.31 px (the purple under black placed
+  less exactly); purple 24 for 24 but one doubled (flagged), one miss almost wholly behind a black dot, 2 black extras
+  where the curves cross.
+
+Results (full bench, diffed against a92c0d5): delta1 as above; nicest language 164 → 163 for 162 (P 0.988 → 0.994);
+kite1 26 → 27 for 25 (P 0.923 → 0.889): a cyan dot doubled 5 px away, flagged, from the thin test's change (no order
+found there); every other row identical but for times. Tests in test/opaque.test.js: a synthetic black-over-purple
+copy of delta1's layout (5 of 10 purple before), and delta1's thresholds raised.
