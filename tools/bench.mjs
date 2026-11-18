@@ -21,6 +21,7 @@ import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { dotFamilies } from '../src/core/outline.js';
+import { paletteColors, paletteFamilies } from '../src/core/colormap.js';
 import { detectAxes, plotBounds } from '../src/core/axes.js';
 import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 import { readTruthJson, isDotsExport } from './truth-json.mjs';
@@ -105,17 +106,20 @@ export function extractAll(image, jpeg = false) {
     return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds))).map(r => ({ ...r, jpegAuto }));
 }
 
-// Outlined dots of a few fill colors are fitted as one family of rings; each dot's family comes from its fill
-// (outline.dotFamilies), and each family becomes a result of its own, so the group scoring checks the colors.
+// Outlined dots of a few fill colors are fitted as one family of rings, and a palette's dots as one family; each
+// dot's family comes from its fill (outline.dotFamilies; a palette's colors and each dot's from its own pixels,
+// colormap.js paletteColors and paletteFamilies), and each family becomes a result of its own, so the group scoring
+// checks the colors.
 function splitByFill(image, res) {
-    const fams = res.est.fillFamilies;
-    if (!fams)
+    const fams = res.est.fillFamilies ?? (res.est.palette ? paletteColors(image, res.fit.dots, res.fit.radius, res.est.background.color) : null);
+    if (!fams?.length)
         return [res];
     const st = res.est.style;
-    const which = dotFamilies(image, res.fit.dots, fams, res.fit.radius, res.fit.radius * (1 + st.ring.inner) / 2);
+    const which = res.est.palette ? paletteFamilies(image, res.fit.dots, res.fit.radius, fams)
+        : dotFamilies(image, res.fit.dots, fams, res.fit.radius, res.fit.radius * (1 + st.ring.inner) / 2);
     return fams.map((color, k) => ({
         ...res,
-        est: { ...res.est, style: { ...st, color } },
+        est: { ...res.est, fillFamilies: fams, style: { ...st, color } },
         fit: { ...res.fit, dots: res.fit.dots.filter((_, i) => which[i].family === k).map(d => ({ ...d, familySure: which[res.fit.dots.indexOf(d)].sure })) },
         hough: [],
     }));

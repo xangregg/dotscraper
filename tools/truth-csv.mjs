@@ -16,7 +16,7 @@
 //
 // A test image's own truth (testgraphs/<name>.csv) may have no plot area: its tick values are then paired with the
 // ticks detected in the image (truthPixelsByTicks), and positions are interpolated between ticks in the scale's
-// transform. Scale types: "linear" and "log y+1" (log(v + 1)); "with jitter" after the type means each dot was
+// transform. Scale types: "linear", "log" and "log y+1" (log(v + 1)); "with jitter" after the type means each dot was
 // moved by a random amount, so the truth gives its cell, not its position.
 //
 // When the x tick list is exactly the set of distinct x values (bench3: x is a group, ticks 1 and 2), x names a
@@ -28,6 +28,13 @@
 // name is replaced by its number.
 
 import { readFileSync } from 'node:fs';
+
+// a tick label's number, with a thousands suffix as printed (1K, 2.5M, 1B)
+const SUFFIXES = { K: 1e3, M: 1e6, B: 1e9 };
+function tickNumber(s) {
+    const m = s.match(/^(-?[\d.]+)\s*([KMB])$/i);
+    return m ? Number(m[1]) * SUFFIXES[m[2].toUpperCase()] : Number(s);
+}
 
 /**
  * @param {string} path
@@ -60,11 +67,11 @@ export function readTruthCsv(path) {
     const names = text => (text ? text.split(',').map(s => s.trim()) : null);
     const xNames = names(header['x ticks']);
     const yNames = names(header['y ticks']);
-    // category names: every tick isn't a number
-    const categories = list => (list?.some(s => !Number.isFinite(Number(s))) ? list : null);
+    // category names: every tick isn't a number (as printed: 1K, 10M are numbers)
+    const categories = list => (list?.some(s => !Number.isFinite(tickNumber(s))) ? list : null);
     const xCategories = categories(xNames);
     const yCategories = categories(yNames);
-    const ticks = (list, cats) => (cats ? cats.map((_, i) => i + 1) : list?.map(Number) ?? null);
+    const ticks = (list, cats) => (cats ? cats.map((_, i) => i + 1) : list?.map(tickNumber) ?? null);
     const value = (cell, cats, axis) => {
         if (!cats)
             return Number(cell);
@@ -125,6 +132,8 @@ export function truthPixels(truth) {
 function transformOf(type) {
     if (type === 'linear')
         return v => v;
+    if (/^log$/i.test(type))
+        return v => Math.log(v);
     if (/^log y\s*\+\s*1$/i.test(type))
         return v => Math.log1p(v);
     return null;
@@ -180,7 +189,7 @@ export function truthPixelsByTicks(truth, axes) {
         return { error: `${xTicks.length} x and ${yTicks.length} y ticks detected for ${truth.xTicks?.length} and ${truth.yTicks?.length} in the header` };
     const xt = xs ? [...truth.xTicks].sort((a, b) => a - b).map((v, i) => [v, xs[i]]) : null;
     const yt = [...truth.yTicks].sort((a, b) => a - b).map((v, i) => [v, ys[ys.length - 1 - i]]);
-    const dots = truth.rows.map(r => ({ x: xt ? interpolate(xt, fx, r.x) : NaN, y: interpolate(yt, fy, r.y), cell: [r.x, r.y], ...(truth.lanes ? { lane: r.x } : {}) }));
+    const dots = truth.rows.map(r => ({ x: xt ? interpolate(xt, fx, r.x) : NaN, y: interpolate(yt, fy, r.y), cell: [r.x, r.y], group: r.group, ...(truth.lanes ? { lane: r.x } : {}) }));
     return {
         dots, jitter: !!(truth.xScale.jitter || truth.yScale.jitter),
         laneCenters: truth.lanes && xt ? xt.map(([, px]) => px) : null, lanesFromDots,

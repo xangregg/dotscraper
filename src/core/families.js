@@ -122,17 +122,21 @@ function colormapEstimate(image, jpeg) {
     const cm = findColormap(image, B, flatMask(image, tol), tol);
     if (!cm)
         return null;
+    // a categorical palette is fitted the same way; each dot's color is read from its own pixels after the fit
+    // (colormap.js paletteColors), and splits the dots into families
+    const colored = cm.palette ? 'Dots of many distinct colors (a categorical palette, not a scale)' : `Dots colored by a continuous scale (${cm.points.length} colors sampled)`;
+    const after = cm.palette ? ' After the fit, each dot\'s color is read where no other dot covers it, and the dots are split by color; a dot mostly covered is marked unsure.' : '';
     if (cm.alpha === null) {
         const { image: virtual } = opaqueImage(image, B, cm);
         const est = estimateStyle(virtual, { jpeg });
-        const note = `Opaque dots colored by a continuous scale (${cm.points.length} colors sampled): every dot pixel is counted as covered, so the fit sees one opaque family. Outlines are fitted as part of the dot, and edges between dots of different colors aren't used.`;
-        return { ...est, image: virtual, scale: 'opaque', notes: [note, ...est.notes] };
+        const note = `Opaque ${colored.charAt(0).toLowerCase()}${colored.slice(1)}: every dot pixel is counted as covered, so the fit sees one opaque family. Outlines are fitted as part of the dot, and edges between dots of different colors aren't used.${after}`;
+        return { ...est, image: virtual, scale: 'opaque', palette: cm.palette, notes: [note, ...est.notes] };
     }
     const { image: virtual, P } = rayImage(image, B, cm);
     const measured = measureFamily(virtual, B, P, flatMask(virtual, tol), tol);
     const est = estimateStyle(virtual, { family: 0, candidates: [colormapCandidate(measured, B, P, cm.alpha)], jpeg });
-    const note = `Dots colored by a continuous scale (${cm.points.length} colors sampled): each pixel is counted along its own direction from the background, so the fit sees one family. Outlines are fitted as part of the dot.`;
-    return { ...est, image: virtual, scale: 'translucent', notes: [note, ...est.notes] };
+    const note = `${colored}: each pixel is counted along its own direction from the background, so the fit sees one family. Outlines are fitted as part of the dot.${after}`;
+    return { ...est, image: virtual, scale: 'translucent', palette: cm.palette, notes: [note, ...est.notes] };
 }
 
 /**

@@ -5,10 +5,12 @@ import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { flatMask, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '../src/core/style.js';
 import { findColormap, rayImage, opaqueImage } from '../src/core/colormap.js';
 import { readImage } from '../tools/png.mjs';
-import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
-import { extractAll } from '../tools/bench.mjs';
+import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
+import { extractAll, groupRow } from '../tools/bench.mjs';
+import { detectAxes } from '../src/core/axes.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';
+import { createRng } from '../src/core/rng.js';
 
 const WHITE = [255, 255, 255];
 const ALPHA = 0.5;
@@ -58,6 +60,81 @@ test('findColormap: dots of a continuous scale give one curve and their α', () 
     const lens = at(23, 32);
     const level2 = WHITE.map((b, ch) => b + (2 - ALPHA) * (P[ch] - b));
     lens.forEach((c, ch) => assert.ok(Math.abs(c - level2[ch]) <= 4, `lens ${lens} vs ${level2}`));
+});
+
+// A categorical palette (tab10-like, as the wages2025 test image's), translucent, overlapping at random, and one color
+// far in direction from the rest with few dots (wages2025's pink: no chain reaches it)
+const PALETTE = [[31, 119, 180], [44, 160, 44], [214, 39, 40], [255, 127, 14], [148, 103, 189], [140, 86, 75],
+    [127, 127, 127], [188, 189, 34], [23, 190, 207], [57, 59, 121], [99, 121, 57], [189, 158, 57]];
+const PINK = [227, 119, 194];
+const PALETTE_RADIUS = 17.6; // px
+
+function paletteImage() {
+    const rng = createRng(7);
+    const width = 900;
+    const height = 520;
+    const dots = [];
+    // dense and at wages2025's scale (r 17.6): sparse or small dots of a palette leave few mixes to chain through,
+    // and are families found one at a time
+    PALETTE.forEach((color, family) => {
+        for (let i = 0; i < 20; i++)
+            dots.push({ x: 80 + rng.uniform() * 740, y: 40 + rng.uniform() * 380, family, color });
+    });
+    for (let i = 0; i < 4; i++)
+        dots.push({ x: 120 + 220 * i, y: 480, family: PALETTE.length, color: PINK });
+    let im = solidImage(width, height, WHITE);
+    for (const d of dots) {
+        const model = createDotModel(im, { color: d.color, alpha: 0.6, radius: PALETTE_RADIUS });
+        model.add(d.x, d.y);
+        im = model.image;
+    }
+    const rgba = toRgba(im);
+    return { image: { ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) }, dots };
+}
+
+test('findColormap: a categorical palette is told from a scale; its dots split by their own colors', () => {
+    // before: one family "colored by a continuous scale", and no pink (a palette's colors chain through overlaps of
+    // unlike colors, but its votes are in peaks; pink links to none)
+    const { image, dots } = paletteImage();
+    const cm = findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES);
+    assert.ok(cm?.palette, 'a palette');
+    const scale = findColormap(scaleImage().image, WHITE, flatMask(scaleImage().image), EXACT_TOLERANCES);
+    assert.equal(scale.palette, false, 'a scale stays a scale');
+    const results = extractAll(image);
+    assert.equal(results.length, PALETTE.length + 1, results.map(r => r.est.style.color.map(Math.round).join(',')).join('; '));
+    // measured: 188 of 244 found in their own color's family (the scene is denser than wages2025: a fifth of the dots
+    // are mostly hidden), every color at least half; of 177 dots marked sure, none on another color's dot
+    let matched = 0;
+    for (const res of results) {
+        // the family's one-dot color names its palette color
+        const one = c => WHITE.map((b, ch) => b + 0.6 * (c[ch] - b));
+        const k = [...PALETTE, PINK].findIndex(c => Math.hypot(...one(c).map((v, ch) => v - res.est.style.color[ch])) <= 6);
+        assert.ok(k >= 0, `family color ${res.est.style.color.map(Math.round)}`);
+        const want = dots.filter(d => d.family === k);
+        const m = matchDots(want, res.fit.dots, 2);
+        matched += m.pairs.length;
+        assert.ok(m.recall >= 0.5, `color ${k}: ${m.pairs.length} of ${want.length}`);
+        const others = dots.filter(d => d.family !== k);
+        const wrong = res.fit.dots.filter(d => d.familySure && !want.some(t => Math.hypot(t.x - d.x, t.y - d.y) <= 2)
+            && others.some(t => Math.hypot(t.x - d.x, t.y - d.y) <= 2));
+        assert.equal(wrong.length, 0, `color ${k}: sure dots on other colors ${JSON.stringify(wrong.map(d => [Math.round(d.x), Math.round(d.y)]))}`);
+    }
+    assert.ok(matched >= 0.75 * dots.length, `${matched} of ${dots.length}`);
+});
+
+const WAGES = new URL('../testgraphs/wages2025', import.meta.url).pathname;
+
+test('regression: wages2025, 22 occupation groups in a palette are families, each dot by its own pixels', { skip: !existsSync(WAGES + '.png') && 'testgraphs wages2025 absent' }, () => {
+    // before: one family "colored by a continuous scale" (P 0.860 R 0.845 pooled); split one family at a time, 9
+    // families in 6 minutes; by palette, 38 colors (stacks, gridline grays) until the colors had to be uniform, 41
+    // dots in the wrong family until each dot voted by its exact pixels, and no pink (8 dots, outside the chain).
+    // Measured: 23 families (the 22, and the median line's purple), P 0.851 R 0.846 by group.
+    const image = readImage(WAGES + '.png');
+    const results = extractAll(image);
+    assert.ok(results.length >= 22 && results.length <= 24, `${results.length} families`);
+    const px = truthPixelsByTicks(readTruthCsv(WAGES + '.csv'), detectAxes(image));
+    const r = groupRow('wages2025', px.dots, results, 0);
+    assert.ok(r.precision >= 0.83 && r.recall >= 0.83, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
 test('findColormap: one translucent family is not a color scale', () => {

@@ -10,6 +10,9 @@
 // j has its center at j + 0.5. Positions of lines and ticks are darkness-weighted centers.
 
 const GRAY_CHROMA = 24; // 0–255: max(r, g, b) − min(r, g, b) for a gray pixel
+// … or, for a dark pixel, this: dark navy text and ticks are ink as black is (wages2025: 24, 37, 50, chroma 26)
+const DARK_GRAY_CHROMA = 40;
+const DARK_GRAY_LUMINANCE = 64; // 0–255
 const INK_TOL = 15; // 0–255 units (Euclidean RGB) from the background for a pixel to be ink
 // Gray ink darker than this is "dark" (axes, ticks); lighter is gridline gray. Measured: axes and frames 0–125 in
 // the published figures but 164–165 in JMP's (bench1), gridlines 194–244.
@@ -46,7 +49,8 @@ const WORD_GAP_HEIGHTS = 0.6; // glyphs closer than this × their height (along 
 // pathogen's tick labels with its axis title, and cantons' "200" with its rotated title
 const WORD_MIN_OVERLAP = 0.5; // × the shorter glyph's height
 const WORD_MAX_HEIGHT_RATIO = 2.5; // glyphs of one word differ in height by less than this (a tall rule doesn't join)
-const LABEL_ON_TICK_SPACINGS = 0.3; // a word belongs to a tick only if centered within this × spacing of it
+const LABEL_ON_TICK_SPACINGS = 0.3; // a word belongs to a tick only if centered within this × spacing of it …
+const LABEL_BEYOND_TOL = 2; // px: … and not wholly beyond the axis line's ends by more than this
 // Labels on the side away from the ticks must label at least this many (beeswarm-boxplot: the "***" above a gray
 // significance bracket labeled 2 of its 3 down-pointing ends and made it an x axis) …
 const OTHER_SIDE_MIN_LABELS = 3;
@@ -123,7 +127,8 @@ export function grayInk(image, backgrounds) {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        if (Math.max(r, g, b) - Math.min(r, g, b) > GRAY_CHROMA || !isInk(data, i, backgrounds))
+        const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+        if ((chroma > GRAY_CHROMA && !(chroma <= DARK_GRAY_CHROMA && luminance(data, i) < DARK_GRAY_LUMINANCE)) || !isInk(data, i, backgrounds))
             continue;
         out[p] = luminance(data, i) < DARK_LUMINANCE ? 2 : 1;
     }
@@ -477,6 +482,14 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth
     for (const b of mergeWords(inkComponents(image, backgrounds, rect).map(c => c.box))) {
         const mid = h ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2;
         if ((h ? b[2] - b[0] : b[3] - b[1]) > maxWidth * spacing)
+            continue;
+        // a word wholly beyond the axis line's ends is no label of its ticks: the other axis's, at the corner
+        // (wages2025: the x axis's "100", under the corner, "labeled" the y axis's corner tick at gap 0, and the y
+        // labels, 19 px out, fell outside the column it set). Requiring a word to span its tick lost labels that run
+        // off the image (bench1–2 medium-dots-grid2: the last x label's "1" alone, and the gridlines above the axis
+        // outnumbered the labels)
+        const [lo, hi] = h ? [b[0], b[2]] : [b[1], b[3]];
+        if (hi < axis.from - LABEL_BEYOND_TOL || lo > axis.to + LABEL_BEYOND_TOL)
             continue;
         let best = null;
         for (const t of ticks) {

@@ -2206,3 +2206,52 @@ before), dots over a gray bar (D read 0.36 on the bar before), and the hair2 and
 
 Results (full bench, diffed against 4e7bba6): phase1 as above; every other row identical but for run times. Tests in
 test/opaque.test.js: the synthetic copy, and phase1's regression (all five families, P ≥ 0.55, R ≥ 0.8).
+
+**testgraphs wages2025: a categorical palette, and navy axes** (2026-11-18)
+
+A 4000 × 4000 scatterplot of 766 occupations (772 rows with both values) in 22 group colors, translucent (α 0.58)
+with white rims, log axes, a legend, a dashed median line and annotations. The scan made one family "colored by a
+continuous scale" and found no axes.
+
+- Truth CSV (tools/truth-csv.mjs): ticks as printed (1K, 10M) are numbers, "log" is a scale, and tick-placed truth
+  keeps each row's group (truthPixelsByTicks dropped it, so groupRow pooled every family; kite1 and landing1, the
+  other CSVs with a group, are now scored by group too).
+- Axes (axes.js): the ticks and labels are dark navy, 24, 37, 50, chroma 26 over GRAY_CHROMA (24), so no tick was
+  found and unlabeled gridlines stood in. A dark pixel (luminance under 64) is gray ink up to chroma 40. Then the y
+  labels were all dropped: the x axis's "100", under the corner, reached into the y labels' search beside the corner
+  tick, clipped at gap 0, and the labels 19 px out fell outside the column (minimum gap + 17 px). A word wholly
+  beyond the axis line's ends (by 2 px) is now no label of its ticks. Two rules tried first broke JMP renderings:
+  skipping words cut by the search's edge lost bench1 tiny-dots' bottom y label, drawn right at the ticks; requiring
+  a word to span its tick lost medium-dots-grid2's last x label, whose "00" runs off the image, and then the 1 px
+  gridlines above the axis outnumbered the labels, the plot was read as below the axis and masked whole (0 found in
+  bench1 and bench2). Both axes: 6 labeled ticks; the plot bounded left and below.
+- A palette, not a scale (colormap.js): its colors chain through the mixes of overlapping dots of unlike colors, but
+  the votes pile up at its colors. wages2025: 26 peaks (points with the most votes within 0.08), the top 10% of
+  points 0.87 of the votes; scales 3–6 peaks, 0.32–0.41 (bench1–2 gradients) and 0.61 (score2's viridis). A palette
+  is 10 peaks or more and over 0.75.
+- Rejected from the scale path, it split one family at a time: 9 of the 22 (7 read as opaque at their one-dot
+  colors), 860 found, P 0.823 R 0.917 pooled, in 6 minutes against 1. So it is fitted as a scale is, one virtual
+  family that reads overlaps of unlike colors, and each fitted dot's color is read afterwards:
+  - paletteColors: each dot's own pixels (3 px inside it and beyond the other fitted dots' rims), their median, from
+    dots with 20 or more such pixels, 90% of them within 8 of the median, clustered greedily within 8 (each color's
+    dots lie within 0–11 of it; the nearest two colors, both blues, are 17.6 apart). Without the uniformity test, 38
+    colors: two-dot stacks (a fitted dot over a missed one), gridline grays, the median line's purple. Testing
+    instead that a color lay on the one-dot curve lost both grays, whose direction the subtitle's slate text holds
+    (its peak, 68 741 votes, is the largest).
+  - paletteFamilies: the dot's own pixels vote for the color they are within 8 of. By their median, 41 of 652 matched
+    dots were in another family, all marked sure: missed dots cover part of the "own" pixels, and a stack's nearest
+    color is another's. By votes, 10, all unsure.
+  - A palette's color needn't chain: pink (8 dots) is 0.38 from the nearest color in direction and was off the curve,
+    never fitted. Points outside the chain are added when at least 0.5 × the nearest peak's distance from the
+    background (pink 0.77; the gridlines' gray 0.28).
+- The bench (splitByFill) and the app (labelFills) split the fitted dots by color as for outlined dots of a few
+  fills; the app names the family "23 colors (a palette)" and shows each dot's color, unsure ones marked.
+- wages2025: 23 families (the 22 and the median line's purple), 767 found for 772, P 0.851 R 0.846 by group (0.860
+  and 0.845 pooled before); 72 flagged; 64 s. Extras still on the legend's markers (fitted twice each), the title,
+  subtitle and the median line's label: no top or right bound, and no text or legend masking yet.
+
+Results (full bench, diffed against dd5b19a): wages2025 added as above; every other row identical but for run times
+(kite1 and landing1 alike by group). App: "Found 767 dots, 72 flagged", "23 colors (a palette), α 0.58, r 17.6", no
+console errors. Tests: a synthetic palette at wages2025's scale (colormap.test.js: 13 colors, none of 177 sure dots in
+another color's family), wages2025's palette and axes, navy axes, and the truth CSV's printed ticks, log scale and
+groups.

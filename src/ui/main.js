@@ -16,6 +16,7 @@ import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render.js';
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { dotFamilies, createOutlineModel } from '../core/outline.js';
+import { paletteColors, paletteFamilies } from '../core/colormap.js';
 import { detectAxes, plotBounds } from '../core/axes.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
@@ -141,13 +142,23 @@ function setFits(families, extra = {}) {
 
 // Outlined dots of a few fill colors are fitted as one family of rings; each dot's fill color comes from its pixels
 // (outline.dotFamilies): fill is its index in the estimate's fillFamilies, fillSure false where its fill is mostly
-// hidden and the color may not be in the image at all.
+// hidden and the color may not be in the image at all. A palette's dots are fitted as one family too, and its colors
+// are read from the fitted dots after each fit (colormap.js paletteColors, paletteFamilies).
 function labelFills(f) {
     const est = state.families[f.family]?.estimate;
-    const fams = est?.fillFamilies;
-    if (!fams || !f.dots.length)
+    if (!est || !f.dots.length)
         return;
-    const which = dotFamilies(state.work, f.dots, fams, f.radius, f.radius * (1 + est.style.ring.inner) / 2);
+    if (est.palette) {
+        const colors = paletteColors(state.work, f.dots, f.radius, est.background.color);
+        est.fillFamilies = colors.length ? colors : null;
+        if (!colors.length)
+            return;
+    }
+    const fams = est.fillFamilies;
+    if (!fams)
+        return;
+    const which = est.palette ? paletteFamilies(state.work, f.dots, f.radius, fams)
+        : dotFamilies(state.work, f.dots, fams, f.radius, f.radius * (1 + est.style.ring.inner) / 2);
     f.dots.forEach((d, i) => {
         d.fill = which[i].family;
         d.fillSure = which[i].sure;
@@ -219,6 +230,10 @@ function familyKind(k) {
     if (est.scale === 'outline') {
         const c = est.candidates[0];
         kind = c.hollow ? 'hollow rings' : `outlined, ${c.oneColor ? 'one fill color' : c.fillColors ? `${c.fillColors} fill colors` : 'fills vary'}`;
+    }
+    else if (est.palette) {
+        const n = est.fillFamilies?.length;
+        kind = `${n ? `${n} colors` : 'many colors'} (a palette), ${est.scale === 'opaque' ? 'opaque' : `α ${fmt(st.alpha, 2)}`}`;
     }
     else if (est.scale === 'opaque') {
         kind = 'colored by a scale, opaque';
@@ -721,7 +736,8 @@ function renderStylePanel() {
         });
     }
     const c0 = est.candidates[0];
-    const scaleText = est.scale !== 'outline' ? 'varies by dot (color scale)'
+    const scaleText = est.palette ? `${est.fillFamilies ? `${est.fillFamilies.length} colors` : 'many colors'}, a palette (each dot's read from its own pixels after the fit)`
+        : est.scale !== 'outline' ? 'varies by dot (color scale)'
         : c0?.hollow ? `${style?.color.join(', ')} at the rings' darkest, nothing inside (rings fitted)`
         : c0?.oneColor ? 'one fill color, projected out (rings fitted)'
         : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale; rings fitted)';
@@ -1212,6 +1228,9 @@ function fitChanged() {
     renderFitControls();
     renderDotsSection();
     renderFamilies();
+    // a palette's colors are read from its fitted dots (labelFills), which the style panel names
+    if (state.families[state.current]?.estimate.palette)
+        renderStylePanel();
     renderLegend();
     if (state.image)
         refreshView(true);

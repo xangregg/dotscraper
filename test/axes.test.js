@@ -54,6 +54,19 @@ test('regression: mid-gray axes and ticks (JMP draws them at luminance 165) are 
     assert.ok([...ax.x.ticks, ...ax.y.ticks].every(t => t.label));
 });
 
+test('regression: dark navy ticks and labels (wages2025: 24, 37, 50, chroma 26) are axes', () => {
+    // before: gray ink was chroma 24 or less, so no tick was found and the gridlines stood in, unlabeled (crisp, as
+    // wages2025's: blurred, the edges' mixes with white are gray enough)
+    const spec = plot({ blur: 0 });
+    const centered = a => ({ ...a, ticks: a.ticks.map(t => t + 0.5) });
+    spec.axes = { ...spec.axes, color: [24, 37, 50], width: 1, x: centered(spec.axes.x), y: centered(spec.axes.y) };
+    const ax = detectAxes(synthGraph(spec).image);
+    assert.ok(ax.x?.line && ax.y?.line, 'both axis lines');
+    assert.equal(ax.x.ticks.length, 6);
+    assert.equal(ax.y.ticks.length, 5);
+    assert.ok([...ax.x.ticks, ...ax.y.ticks].every(t => t.label));
+});
+
 test('no y axis line: light gridlines and a dark baseline in step with them stand in as y ticks', () => {
     const spec = plot({
         gridlines: [100, 160, 220].map(y => ({ points: [[40, y], [410, y]], width: 2, color: [225, 225, 225] })),
@@ -132,6 +145,17 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
     assert.equal(bb.y.ticks.length, 9);
     // its gray significance bracket (luminance 160) has three unlabeled "ticks" but is not an x axis
     assert.equal(bb.x, null);
+});
+
+test('regression: wages2025, navy ticks on gray axis lines, and the x axis\'s corner label isn\'t a y label', { skip: !has('wages2025.png') && 'local test image absent' }, () => {
+    // before: no tick on either axis (navy, chroma 26); then the y axis's labels were all dropped: the x label "100",
+    // under the corner, reached into their search beside the corner tick at gap 0, and they lay 19 px out
+    const ax = detectAxes(readPng(new URL('../testgraphs/wages2025.png', import.meta.url).pathname));
+    for (const k of ['x', 'y']) {
+        assert.ok(ax[k]?.line, `${k} axis line`);
+        assert.equal(ax[k].ticks.filter(t => t.label).length, 6, `${k}: ${ax[k].ticks.map(t => t.pos.toFixed(0))}`);
+    }
+    assert.ok(ax.y.ticks.every(t => t.label[2] < ax.y.line.pos), 'y labels left of the y axis');
 });
 
 test('regression: the native-size dog-ages "100" label keeps its "1"', { skip: !has('dog-ages-actual-size.png') && 'local test image absent' }, () => {

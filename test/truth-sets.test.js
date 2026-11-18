@@ -120,6 +120,21 @@ test('truth CSV by ticks: the header pairs with the labeled ticks when minor tic
     assert.match(truthPixelsByTicks(truth, axes).error, /ticks detected/);
 });
 
+test('truth CSV by ticks: ticks as printed (1K, 10M), log scales, and each row\'s group', () => {
+    // before (wages2025): "1K" was a category name, "log" no scale, and the group was dropped, so the bench pooled
+    // every family
+    const path = join(mkdtempSync(join(tmpdir(), 'truth-')), 'log.csv');
+    writeFileSync(path, '# x ticks: 100, 1K, 10K\n# y ticks: 10, 20, 40\n# x scale: log\n# y scale: log\nn,wage,group\n1000,20,3\n316.2,28.28,5\n');
+    const truth = readTruthCsv(path);
+    assert.deepEqual(truth.xTicks, [100, 1000, 10000]);
+    const tick = pos => ({ pos, label: [0, 0, 1, 1] });
+    const px = truthPixelsByTicks(truth, { x: { ticks: [tick(100), tick(200), tick(300)] }, y: { ticks: [tick(500), tick(400), tick(300)] } });
+    assert.deepEqual(px.dots.map(d => d.group), ['3', '5']);
+    assert.deepEqual([px.dots[0].x, px.dots[0].y], [200, 400]);
+    // halfway in the log between ticks
+    assert.ok(Math.abs(px.dots[1].x - 150) < 0.01 && Math.abs(px.dots[1].y - 350) < 0.05, `${px.dots[1].x}, ${px.dots[1].y}`);
+});
+
 test('truth CSV by ticks: lane data without x ticks takes its lanes from the fitted dots', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'truth-')), 'lanes.csv');
     // the first row is lane 2 (hair1): lanes still go left to right

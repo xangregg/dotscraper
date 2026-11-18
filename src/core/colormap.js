@@ -24,7 +24,8 @@
 //
 // Color scales are rare, so this stays a side path: it assumes no other family shares the plot, doesn't report
 // each dot's color, and fits JMP's outlined markers (an outline-colored disc under a smaller fill) as one disc at
-// the outline's radius.
+// the outline's radius. A categorical palette (many colors, its votes in peaks) is fitted the same way, and its dots'
+// colors are read from their own pixels after the fit (paletteColors).
 
 const WINDOW = 2; // px: half side of the window whose summed offsets give a pixel's direction
 const MIN_OFFSET = 15; // 0–255 units from B: flat pixels at least this far vote for the one-dot curve
@@ -54,6 +55,28 @@ const MAX_POINT_SHARE = 0.5;
 // votes; scales: 0.23–0.36, bench2 group-graystroke 0.48)
 const FEW_POINTS = 3;
 const MAX_FEW_SHARE = 0.7;
+// Many in peaks is a categorical palette, not a scale: its colors chain through the mixes of overlapping dots of
+// unlike colors, but its votes pile up at its colors. Peaks are points with the most votes within NEIGHBOR_DIST; a
+// palette has PALETTE_MIN_PEAKS or more and its top PALETTE_TOP_POINTS of the points hold over PALETTE_TOP_SHARE of
+// the votes (testgraphs wages2025, 22 colors: 26 peaks, 0.87; scales: 3–6 peaks, 0.32–0.41 for bench1–2's
+// gradients, 0.61 for score2's viridis). It is fitted as a scale is, one virtual family, which reads overlaps of
+// unlike colors; split one at a time its 22 colors gave 9 families and took 6 minutes against 1. Each fitted dot's
+// color is then its own pixels' (paletteColors).
+const PALETTE_MIN_PEAKS = 10;
+const PALETTE_TOP_POINTS = 0.1;
+const PALETTE_TOP_SHARE = 0.75;
+// a palette's color outside the chain counts when this far from B, × the nearest of the chain's peaks
+const PALETTE_MIN_M_RATIO = 0.5;
+// A palette's colors from the fitted dots (paletteColors): their own pixels this far inside them and beyond the others'
+// rims, the white rims (wages2025: about 2 px) and blur left out …
+const PALETTE_INSET = 3; // px
+const PALETTE_MIN_OWN = 20; // px of them for a dot's color to count
+// … if one color: this share of them within PALETTE_COLOR_TOL of their median
+const PALETTE_UNIFORM = 0.9;
+// … one color when this close (wages2025: each color's dots within 0–11 of its median, the two nearest colors 17.6
+// apart, both blues), and shared by this many dots at least
+const PALETTE_COLOR_TOL = 8; // 0–255 units
+const PALETTE_MIN_DOTS = 2;
 // α from the ratios of flat pixels: a histogram peak at 1 (one dot, by construction) and one at 2 − α
 const RATIO_BIN = 0.01;
 const RATIO_SMOOTH = 1.5; // bins, sd
@@ -184,6 +207,133 @@ function largestChain(points) {
  *
  * @returns {number|null}
  */
+/**
+ * A palette's colors, from fitted dots: each dot's own color is the median of its pixels PALETTE_INSET inside it and
+ * as far beyond every other dot's rim (one dot over the background: its one-dot color, exact in a PNG), taken from
+ * dots with PALETTE_MIN_OWN such pixels, PALETTE_UNIFORM of them that color: a fitted dot partly over a missed one,
+ * or on text or a line, isn't one color (wages2025: 38 colors for 22, among them two-dot stacks, gridline grays and
+ * the median line's purple; testing the colors against the one-dot curve instead lost both grays, whose direction
+ * the subtitle's slate text holds). Colors within PALETTE_COLOR_TOL of the commonest are one, greedily,
+ * while PALETTE_MIN_DOTS share one. Each dot's family is then paletteFamilies'. O(dots² + dots · r²) per color.
+ *
+ * @param {import('./image.js').RgbaImage} image  the original RGB
+ * @param {{x: number, y: number}[]} dots  px
+ * @param {number} radius  px
+ * @param {number[]} B  the background, 0–255
+ * @returns {number[][]}  0–255, the commonest first
+ */
+export function paletteColors(image, dots, radius, B) {
+    const { width, height, data } = image;
+    const rIn = radius - PALETTE_INSET;
+    const median = a => a.sort((u, v) => u - v)[a.length >> 1];
+    const colors = [];
+    for (const d of dots) {
+        const others = dots.filter(o => o !== d && Math.hypot(o.x - d.x, o.y - d.y) < 2 * radius);
+        const own = [[], [], []];
+        for (let y = Math.max(0, Math.floor(d.y - rIn)); y < Math.min(height, Math.ceil(d.y + rIn)); y++) {
+            for (let x = Math.max(0, Math.floor(d.x - rIn)); x < Math.min(width, Math.ceil(d.x + rIn)); x++) {
+                const cx = x + 0.5;
+                const cy = y + 0.5;
+                if ((cx - d.x) ** 2 + (cy - d.y) ** 2 > rIn * rIn || others.some(o => Math.hypot(cx - o.x, cy - o.y) < radius + PALETTE_INSET))
+                    continue;
+                const p = 4 * (y * width + x);
+                for (let ch = 0; ch < 3; ch++)
+                    own[ch].push(data[p + ch]);
+            }
+        }
+        const n = own[0].length;
+        if (n < PALETTE_MIN_OWN)
+            continue;
+        const c = own.map(a => median([...a]));
+        let same = 0;
+        for (let i = 0; i < n; i++) {
+            if (Math.hypot(own[0][i] - c[0], own[1][i] - c[1], own[2][i] - c[2]) <= PALETTE_COLOR_TOL)
+                same++;
+        }
+        if (same >= PALETTE_UNIFORM * n && Math.hypot(...c.map((x, ch) => x - B[ch])) >= MIN_OFFSET)
+            colors.push(c);
+    }
+    const close = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= PALETTE_COLOR_TOL;
+    const out = [];
+    let left = colors;
+    while (left.length) {
+        let best = null;
+        for (const c of left) {
+            const n = left.filter(o => close(o, c)).length;
+            if (!best || n > best.n)
+                best = { c, n };
+        }
+        if (best.n < PALETTE_MIN_DOTS)
+            break;
+        const members = left.filter(o => close(o, best.c));
+        out.push([0, 1, 2].map(ch => median(members.map(c => c[ch]))));
+        left = left.filter(o => !close(o, best.c));
+    }
+    return out;
+}
+
+/**
+ * Each fitted dot's palette color: its pixels PALETTE_INSET inside it and beyond the other fitted dots' rims vote
+ * for the palette color they are within PALETTE_COLOR_TOL of. Missed dots cover some of those pixels, so their
+ * median is often a two-dot stack, whose nearest color is another family's (wages2025: 41 of 652 matched dots in the
+ * wrong family that way); where the dot shows alone its color is exact. Sure with PALETTE_MIN_OWN votes; else the
+ * color with the most, marked unsure (none: the nearest to the pixels' median, unsure). O(dots · (neighbors + r² ·
+ * colors)).
+ *
+ * @param {import('./image.js').RgbaImage} image  the original RGB
+ * @param {{x: number, y: number}[]} dots  px
+ * @param {number} radius  px
+ * @param {number[][]} colors  from paletteColors
+ * @returns {{family: number, sure: boolean}[]}
+ */
+export function paletteFamilies(image, dots, radius, colors) {
+    const { width, height, data } = image;
+    const rIn = radius - PALETTE_INSET;
+    return dots.map(d => {
+        const others = dots.filter(o => o !== d && Math.hypot(o.x - d.x, o.y - d.y) < 2 * radius);
+        const votes = new Array(colors.length).fill(0);
+        const seen = [[], [], []];
+        for (let y = Math.max(0, Math.floor(d.y - rIn)); y < Math.min(height, Math.ceil(d.y + rIn)); y++) {
+            for (let x = Math.max(0, Math.floor(d.x - rIn)); x < Math.min(width, Math.ceil(d.x + rIn)); x++) {
+                const cx = x + 0.5;
+                const cy = y + 0.5;
+                if ((cx - d.x) ** 2 + (cy - d.y) ** 2 > rIn * rIn || others.some(o => Math.hypot(cx - o.x, cy - o.y) < radius + PALETTE_INSET))
+                    continue;
+                const p = 4 * (y * width + x);
+                for (let ch = 0; ch < 3; ch++)
+                    seen[ch].push(data[p + ch]);
+                const k = colors.findIndex(c => Math.hypot(data[p] - c[0], data[p + 1] - c[1], data[p + 2] - c[2]) <= PALETTE_COLOR_TOL);
+                if (k >= 0)
+                    votes[k]++;
+            }
+        }
+        const most = Math.max(...votes);
+        if (most > 0)
+            return { family: votes.indexOf(most), sure: most >= PALETTE_MIN_OWN };
+        // no pixel shows a palette color: the nearest to their median, unsure
+        if (!seen[0].length)
+            return { family: 0, sure: false };
+        const med = seen.map(a => a.sort((u, v) => u - v)[a.length >> 1]);
+        const dist = c => Math.hypot(c[0] - med[0], c[1] - med[1], c[2] - med[2]);
+        return { family: colors.reduce((best, c, k) => (dist(c) < dist(colors[best]) ? k : best), 0), sure: false };
+    });
+}
+
+// points with the most votes within NEIGHBOR_DIST of them. O(points²).
+function peaksOf(points) {
+    const dist = (a, b) => Math.hypot(a.u[0] - b.u[0], a.u[1] - b.u[1], a.u[2] - b.u[2]);
+    return points.filter(q => points.every(o => o === q || o.votes < q.votes || dist(o, q) >= NEIGHBOR_DIST));
+}
+
+// Whether a chain's votes are a categorical palette's (see PALETTE_MIN_PEAKS): many peaks, most votes in few points.
+// O(points²).
+function isPalette(points, votes) {
+    const peaks = peaksOf(points).length;
+    const sorted = points.map(q => q.votes).sort((a, b) => b - a);
+    const top = sorted.slice(0, Math.ceil(PALETTE_TOP_POINTS * sorted.length)).reduce((t, v) => t + v, 0);
+    return peaks >= PALETTE_MIN_PEAKS && top > PALETTE_TOP_SHARE * votes;
+}
+
 function ratioAlpha(ratios) {
     const nb = Math.ceil(RATIO_MAX / RATIO_BIN);
     const hist = new Float64Array(nb + 1);
@@ -286,6 +436,7 @@ export function findColormap(image, B, flat, tol) {
     });
     if (!points.length)
         return null;
+    const all = points;
     const scale = largestChain(points);
     points = scale.points;
     const spread = scale.spread;
@@ -294,6 +445,14 @@ export function findColormap(image, B, flat, tol) {
     if (points.length < MIN_POINTS || spread < MIN_SPREAD || Math.max(...points.map(q => q.votes)) > MAX_POINT_SHARE * votes
         || top > MAX_FEW_SHARE * votes)
         return null;
+    const palette = isPalette(points, votes);
+    // a palette's colors needn't chain: one far from the others in direction, with few dots, links to none (wages2025:
+    // pink, 8 dots, 0.38 from the nearest color); it is as far from B as they are, a light line not (the gridlines'
+    // gray, at 0.28 of the nearest peak's distance; pink 0.77)
+    if (palette) {
+        const minM = Math.min(...peaksOf(points).map(q => q.m));
+        points = [...points, ...all.filter(q => !points.includes(q) && q.m >= PALETTE_MIN_M_RATIO * minM)];
+    }
     const ratios = [];
     for (let p = 0; p < n; p++) {
         if (!flat[p] || background[p])
@@ -308,7 +467,7 @@ export function findColormap(image, B, flat, tol) {
     const alpha = ratioAlpha(ratios);
     if (alpha === null && spread < MIN_OPAQUE_SPREAD)
         return null;
-    return { points, alpha, spread, dir };
+    return { points, alpha, spread, dir, palette };
 }
 
 // 1 where a background pixel lies within RIM_REACH (a square neighborhood; cheap and close enough)
