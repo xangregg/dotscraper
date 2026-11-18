@@ -128,13 +128,14 @@ test('regression: wages2025, 22 occupation groups in a palette are families, eac
     // before: one family "colored by a continuous scale" (P 0.860 R 0.845 pooled); split one family at a time, 9
     // families in 6 minutes; by palette, 38 colors (stacks, gridline grays) until the colors had to be uniform, 41
     // dots in the wrong family until each dot voted by its exact pixels, and no pink (8 dots, outside the chain).
-    // Measured: 23 families (the 22, and the median line's purple), P 0.851 R 0.846 by group.
+    // Measured: 23 families (the 22, and the median line's purple), P 0.851 R 0.846 by group; with text and the legend
+    // masked (annotations.js), P 0.978 R 0.848.
     const image = readImage(WAGES + '.png');
     const results = extractAll(image);
     assert.ok(results.length >= 22 && results.length <= 24, `${results.length} families`);
     const px = truthPixelsByTicks(readTruthCsv(WAGES + '.csv'), detectAxes(image));
     const r = groupRow('wages2025', px.dots, results, 0);
-    assert.ok(r.precision >= 0.83 && r.recall >= 0.83, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
+    assert.ok(r.precision >= 0.96 && r.recall >= 0.83, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
 test('findColormap: one translucent family is not a color scale', () => {

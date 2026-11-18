@@ -17,7 +17,8 @@ import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { dotFamilies, createOutlineModel } from '../core/outline.js';
 import { paletteColors, paletteFamilies } from '../core/colormap.js';
-import { detectAxes, plotBounds } from '../core/axes.js';
+import { detectAxes, plotBounds, backgroundColors } from '../core/axes.js';
+import { annotationBoxes } from '../core/annotations.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
@@ -92,6 +93,7 @@ const state = {
     undo: [], // earlier fits, for Undo
     worker: null,
     scanning: false, // the scan worker is estimating families: Find dots and the edits wait for it
+    annotations: null, // { image, byRadius }: text and legend markers in state.work by dot radius, masked (annotations.js)
     fitStart: 0,
     tick: null, // the status timer while a fit runs
     blockedShown: false, // the status shows why Find dots can't run (findBlocked)
@@ -188,7 +190,22 @@ function analysisImage() {
 }
 
 function maskOpts(k) {
-    return { bounds: plotBounds(state.axes), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+    return { bounds: plotBounds(state.axes), exclude: annotations(styleOf(k)?.radius), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+}
+
+// text and legend markers to mask (annotations.js), read once per analyzed image and radius
+function annotations(radius) {
+    if (!state.work || !radius)
+        return [];
+    if (state.annotations?.image !== state.work)
+        state.annotations = { image: state.work, byRadius: new Map() };
+    let boxes = state.annotations.byRadius.get(radius);
+    if (!boxes) {
+        const { text, legend } = annotationBoxes(state.work, backgroundColors(state.work)[0], radius);
+        boxes = [...text, ...legend];
+        state.annotations.byRadius.set(radius, boxes);
+    }
+    return boxes;
 }
 
 /** What the fit needs for one family, with its overrides. */

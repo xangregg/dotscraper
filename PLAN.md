@@ -2255,3 +2255,40 @@ Results (full bench, diffed against dd5b19a): wages2025 added as above; every ot
 console errors. Tests: a synthetic palette at wages2025's scale (colormap.test.js: 13 colors, none of 177 sure dots in
 another color's family), wages2025's palette and axes, navy axes, and the truth CSV's printed ticks, log scale and
 groups.
+
+**Text and legends masked** (2026-11-18, wages2025)
+
+wages2025's 105 extras of 767 lay on its legend (each marker fitted twice), title, subtitle and the median line's
+two-line label; no axis bounds them (right and top). annotations.js finds text lines and legend markers on the image
+as analyzed, and buildMask masks their boxes (`opts.exclude`) for every family, in the bench and the app.
+
+- Ink is what differs from the page (by INK_TOL); its 8-connected pieces get a box, a pixel count, an inscribed
+  radius (distance transform) and the color at that deepest pixel.
+- A glyph is a piece thin for its height (inscribed radius ≤ 0.3 × height; a disc's is 0.5), thinner than the dots
+  (≤ 0.6 × their radius), at least 6 px tall, filling 0.08 of its box and no wider than 4 × its height. Measured in
+  wages2025: subtitle and legend strokes 4–6 px, median label 8–10, title 15–17 beside dots of 17.6. Each bound came
+  from a regression in the full bench:
+  - against height only, a chain of touching dots is thin too: bench-plos adults1's black cluster (strokes 13.5–20
+    beside dots of 13) made a "line" and lost 18 dots; bench2 medium-dots lost 40 in a box of translucent clusters.
+    So the dots' radius: wages2025's bold title, as thick as its dots, stays unmasked (670 found against 664, P 0.978
+    against 0.986).
+  - testgraphs violin-beeswarm: its frame, thin for its height, made the whole plot "text" (0 found). Fill 0.02.
+  - bench3 dots-swarm-violin and -box (51 and 7 lost): the dots' own gray covers 5% of the image, a "background"
+    color, so only their rims were ink, thin arcs in rows. Text is now read against the page alone.
+- A line: glyphs overlapping by half the shorter's height, apart by at most 0.6 × the taller's, heights within 2.5×,
+  of one ink (stroke colors within 60: a dot's piece joined "Police officers" and its box covered dots), 3 or more,
+  60% of them on the median bottom (within 0.08 × height, 2 px at least: white rims cut wages2025's overlapping dots
+  into crescents, thin like glyphs, which chained in its dense middle), and not 80% one piece repeated (box within
+  2 px and pixel count within 5%: a row of hollow rings; o, n and e share a box, not a count).
+- A legend marker: a round piece (aspect 1.25) filled like a disc (inscribed radius ≥ 0.35 × height), within 2 line
+  heights before a line and centered on it, 3 or more in a column (centers within 3 px). wages2025's markers are the
+  dots' size (radius 17.1), so only their column tells them from data.
+- wages2025: 670 found for 772, P 0.851 → 0.978, R 0.846 → 0.848; 22 legend markers, 79 text boxes, 0.8 s.
+
+Results (full bench, diffed against 815cb69): wages2025 as above (22 families: the median line's purple went with its
+label); cells1 73 → 74 (one more extra, not located: its boxes are labels outside the plot); phase1 132 → 135 (3
+more extras; its boxes are "System", above the colorbar where its extras are, and the x axis title); primates2 RMSE
+0.01 → 0.03 px; every other row identical but for run times. App: "Found 670 dots, 34 flagged in 23.9 s", "22 colors
+(a palette)", no console errors; 3 dots left on the title. Tests: test/annotations.test.js (a synthetic page: a
+title, a note beside a dot, a legend column, crescents, a row of rings, touching black dots and a frame; wages2025's
+boxes), and wages2025's palette regression at P ≥ 0.96.

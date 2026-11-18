@@ -257,10 +257,21 @@ function components8(mask, width, height) {
 
 // Outlined dots (families.js outlineEstimate) bring their own mask: what can't be read in P, plus what lies beyond
 // the axes. Pixels are classed as family where a ring may be (D > 0), other where masked.
+// set the pixels of each box [x0, y0, x1, y1) to 1, in place
+function fillBoxes(mask, width, height, boxes) {
+    for (const [x0, y0, x1, y1] of boxes ?? []) {
+        for (let y = Math.max(0, Math.floor(y0)); y < Math.min(height, Math.ceil(y1)); y++) {
+            for (let x = Math.max(0, Math.floor(x0)); x < Math.min(width, Math.ceil(x1)); x++)
+                mask[y * width + x] = 1;
+        }
+    }
+}
+
 function outlineLayers(estimate, width, height, opts) {
     const n = width * height;
     const { D, style } = estimate;
     const mask = Uint8Array.from(estimate.outlineMask);
+    fillBoxes(mask, width, height, opts.exclude);
     const classes = new Uint8Array(n);
     for (let p = 0; p < n; p++)
         classes[p] = mask[p] ? CLASS_OTHER : (D[p] > 0 ? CLASS_FAMILY : CLASS_BACKGROUND);
@@ -315,6 +326,8 @@ function overInk(fm) {
  * @param {number} [opts.dilate]  px, mask dilation (default MASK_DILATE_BASE + MASK_DILATE_BLURS × blur)
  * @param {{left: number|null, right: number|null, top: number|null, bottom: number|null}} [opts.bounds]  px, the
  *   plot area's sides (axes.plotBounds); pixels more than OUTSIDE_MARGIN_RADII × radius beyond them are masked
+ * @param {number[][]} [opts.exclude]  boxes [x0, y0, x1, y1) px masked as other ink: text and legend markers
+ *   (annotations.annotationBoxes)
  * @returns {{classes: Uint8Array, thin: Uint8Array, mask: Uint8Array, dilate: number,
  *            stats: {background: number, family: number, other: number, thin: number, masked: number,
  *                    maskedFamily: number, outside: number}}}
@@ -398,6 +411,7 @@ export function buildMask(image, estimate, opts = {}) {
     const seedMask = new Uint8Array(n);
     for (let p = 0; p < n; p++)
         seedMask[p] = classes[p] === CLASS_OTHER || thin[p] || (over && over[estimate.familyMeasure.edgeInk[p]]) ? 1 : 0;
+    fillBoxes(seedMask, width, height, opts.exclude);
     const mask = dilate(seedMask, width, height, r);
     let outside = 0;
     const b = opts.bounds;

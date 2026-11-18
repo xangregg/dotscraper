@@ -22,7 +22,8 @@ import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { dotFamilies } from '../src/core/outline.js';
 import { paletteColors, paletteFamilies } from '../src/core/colormap.js';
-import { detectAxes, plotBounds } from '../src/core/axes.js';
+import { detectAxes, plotBounds, backgroundColors } from '../src/core/axes.js';
+import { annotationBoxes } from '../src/core/annotations.js';
 import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 import { readTruthJson, isDotsExport } from './truth-json.mjs';
 import { pixelHash } from '../src/core/image.js';
@@ -68,9 +69,9 @@ export function extract(image, family = 0, candidates = undefined, jpeg = false,
     return fitEstimate(image, est, bounds);
 }
 
-// mask and fit for one family's estimate
-function fitEstimate(image, est, bounds) {
-    const layers = buildMask(image, est, { bounds });
+// mask and fit for one family's estimate; exclude: boxes to mask (text, legend markers)
+function fitEstimate(image, est, bounds, exclude = undefined) {
+    const layers = buildMask(image, est, { bounds, exclude });
     const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base, seeds: est.seeds };
     const fit = fitDots(input);
     const hough = houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
@@ -103,7 +104,13 @@ export function extractAll(image, jpeg = false) {
     if (missing)
         throw new Error(missing.notes.join(' '));
     const bounds = plotBounds(detectAxes(image));
-    return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds))).map(r => ({ ...r, jpegAuto }));
+    // text and legends are read on the image as analyzed, not a family's virtual one, against each family's radius
+    const backgrounds = backgroundColors(image);
+    const exclude = e => {
+        const { text, legend } = annotationBoxes(image, backgrounds[0], e.style.radius);
+        return [...text, ...legend];
+    };
+    return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds, exclude(e)))).map(r => ({ ...r, jpegAuto }));
 }
 
 // Outlined dots of a few fill colors are fitted as one family of rings, and a palette's dots as one family; each
