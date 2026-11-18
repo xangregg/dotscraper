@@ -425,6 +425,23 @@ test('regression: molar1, black dots beside a gray label that fits as their leve
     assert.ok(row.precision >= 0.95 && row.recall >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
 });
 
+const DELTA1 = 'delta1-10.1038-s41586-026-10928-3.png';
+
+test('regression: delta1, black dots joined by their line to the axes, beside as much black text', { skip: !existsSync(NATURE + DELTA1) && 'bench-nature delta1 absent' }, () => {
+    // before: no black family. The dots, line, error bars and axes are one piece 14.1 px deep, 47% of the black; text
+    // 3–5 px deep is 49%, so the radius scan went around the bold panel label "g" (8.1 px) and found no dots
+    const results = extractAll(readImage(NATURE + DELTA1));
+    const black = results.filter(r => r.est.familyMeasure.kind === 'opaque' && Math.max(...r.est.style.color) < 40);
+    assert.equal(black.length, 1, `families ${results.map(r => r.est.style.color.map(Math.round)).join(' / ')}`);
+    near(black[0].fit.radius, 14, 0.6, 'radius');
+    const truthFile = NATURE + 'truth/' + DELTA1.replace('.png', '.json');
+    if (!existsSync(truthFile))
+        return;
+    // (purple dots partly behind black ones are still missed: 8 of 24)
+    const row = groupRow('delta1', readTruthJson(truthFile).dots, results, 0);
+    assert.ok(row.precision >= 0.88 && row.recall >= 0.8, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}, found ${row.found}`);
+});
+
 const KITE2 = 'kite2-10.1038-s41586-026-11194-z.png';
 
 test('regression: kite2, fills in rings of their darker shade beside a curve of the fill color', { skip: !existsSync(NATURE + KITE2) && 'bench-nature kite2 absent' }, () => {

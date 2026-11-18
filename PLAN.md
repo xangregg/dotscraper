@@ -2094,3 +2094,19 @@ test/unmix.test.js (regionLevels), test/background.test.js (box rectangle), test
 - The Claude browser pane ran the scan about 4 times slower: it reports the page hidden, and Chrome lowers hidden
   pages' and their workers' priority. A cached main.js from before the change also ran there until the scripts were
   fetched with cache: 'reload'.
+
+**bench-nature delta1: black dots joined by their line to the axes, beside as much black text** (2026-11-17)
+
+- No black family: measured at r 3.5 (text strokes), 2 strong centers and coverage 0.075. Hough on black's coverage
+  shows the dots at 13.5–14.2 px (15–17 strong centers), but the rescan never reached them. componentRadii's pieces:
+  dots, line, error bars and axes are one piece 14.1 px deep and 47% of the black; text and tick labels, 3–5 px deep,
+  49%; so the size-weighted median fell on the bold panel label "g" (8.1 px), and the deepest compact piece was a
+  scrap of text (the dots' piece is 32.8 times a disc's area). The rescan covered 6.5–10.8 px: no strong center.
+- componentRadii also offers the deepest piece of all: dots are usually their color's thickest ink.
+- delta1: 24 → 44 found for 48, P 0.958 → 0.909, R 0.479 → 0.833, RMSE 0.32 → 0.19 px; black r 14.4 (truth 14.0),
+  26 found. Purple went 24 → 18: with black a family, its pixels mask the edges of purple dots partly behind black
+  ones (8 missed, 2 placed beside them). Before, black was read as a region under the dots, which likely let purple's
+  edges against it count (not checked). 2 black extras where the curves cross.
+
+Results (full bench, diffed against 81f7e35): delta1 as above; every other row identical but for run times. Test in
+test/opaque.test.js.

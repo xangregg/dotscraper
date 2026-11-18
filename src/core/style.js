@@ -1216,7 +1216,10 @@ export function shapeRadius(D, width, height) {
 // hidden ones (kite1 online, its red band divided out: pieces 5.8–8 px deep, 2500 px in all, against 12.0 and 12.2,
 // 5900 px). (2) The deepest compact piece (area within COMPACT_MAX_AREA of a disc's at its depth): where a line of the
 // dots' color is as large as the dots, the weighted median falls between them (kite2: its curve, 6.4–7 px deep and
-// 15 700 px, 50 times a disc's area, against 21 dots 16–16.6 px deep, 18 000 px, gave 9.6).
+// 15 700 px, 50 times a disc's area, against 21 dots 16–16.6 px deep, 18 000 px, gave 9.6). (3) The deepest piece:
+// dots are usually their color's thickest ink, even when a line joins them all into one piece with the axes and
+// error bars (delta1: that piece 14.1 px deep, 47% of the black, against text 3–5 px deep, 49%, so the median fell on
+// the bold panel label "g", 8.1 px, and the deepest compact piece was a scrap of text).
 function componentRadii(D, width, height) {
     const inside = new Uint8Array(D.length);
     for (let p = 0; p < D.length; p++)
@@ -1243,7 +1246,7 @@ function componentRadii(D, width, height) {
     }
     const compact = pieces.filter(q => q.size <= COMPACT_MAX_AREA * Math.PI * q.depth * q.depth);
     const deepest = compact.length ? compact[compact.length - 1].depth : null;
-    return [...new Set([median, deepest].filter(d => d !== null))].map(d => d + DT_RADIUS_OFFSET);
+    return [...new Set([median, deepest, pieces[pieces.length - 1].depth].filter(d => d !== null))].map(d => d + DT_RADIUS_OFFSET);
 }
 
 /**
