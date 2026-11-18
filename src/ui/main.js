@@ -186,7 +186,7 @@ function fitInputFor(k) {
     const style = styleOf(k);
     const image = imageOf(k);
     const mask = k === state.current ? state.layers.mask : buildMask(image, { ...est, style }, maskOpts(k)).mask;
-    return { image, style, line: est.familyMeasure.line, mask, D: est.D, imgT: est.fitT, base: est.base };
+    return { image, style, line: est.familyMeasure.line, mask, D: est.D, imgT: est.fitT, base: est.base, seeds: est.seeds };
 }
 
 /** The color that names a family: the picked color, or its seed; null for one whose dots vary in color. */

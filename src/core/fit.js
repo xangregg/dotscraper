@@ -351,6 +351,7 @@ function blurPlane(src, width, height, sigma) {
  * @param {Float32Array} [input.base]  t per pixel under the dots, for outlined dots (style.layered: outline.js)
  * @param {Float32Array} [input.imgT]  the image's values to compare, if not its projection on the line (opaque
  *                                     families: coverage against the local background, in color units)
+ * @param {{x: number, y: number}[]} [input.seeds]  px, centers to try first besides Hough's (fitDots)
  */
 export function createFit(input) {
     const { image, line, mask } = input;
@@ -1095,6 +1096,15 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
     return res;
 }
 
+// The first centers: Hough's, and the estimate's seeds (centers it found otherwise) not within HOUGH_NMS_RADII × r of
+// one of them; the fit then keeps only those that pay for themselves
+function withSeeds(centers, seeds, r) {
+    if (!seeds?.length)
+        return centers;
+    const near = s => centers.some(c => Math.hypot(c.x - s.x, c.y - s.y) < HOUGH_NMS_RADII * r);
+    return [...centers, ...seeds.filter(s => !near(s))];
+}
+
 // fitDots without the radius check for doubled dots
 function fitOnce(input, opts, onProgress) {
     const t0 = Date.now();
@@ -1111,8 +1121,8 @@ function fitOnce(input, opts, onProgress) {
     };
     const st = input.style;
     const ringOnly = st.alpha === 0 && st.ring;
-    const initial = opts.initial ?? (ringOnly ? ringCenters(input.D, fit.weight, width, height, st.radius, st.ring.inner, RING_MIN_ARC_FIRST)
-        : houghCenters(input.D, fit.weight, width, height, st.radius));
+    const initial = opts.initial ?? withSeeds(ringOnly ? ringCenters(input.D, fit.weight, width, height, st.radius, st.ring.inner, RING_MIN_ARC_FIRST)
+        : houghCenters(input.D, fit.weight, width, height, st.radius), input.seeds, st.radius);
     for (const c of initial)
         fit.add(c.x, c.y);
     log.push({ stage: 'candidates', dots: initial.length });

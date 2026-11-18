@@ -21,7 +21,7 @@ const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${
 function fitFamily(image, k, candidates) {
     const est = estimateStyle(image, { family: k, candidates });
     const layers = buildMask(image, est);
-    const fit = fitDots({ image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT });
+    const fit = fitDots({ image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, seeds: est.seeds });
     return { est, layers, fit };
 }
 
@@ -204,6 +204,90 @@ test('dots filled with the page color inside outlines: one family by their enclo
     assert.equal(fit.dots.length, dots.length, `extra ${JSON.stringify(m.extra.map(j => fit.dots[j]))}`);
 });
 
+// Outlined white dots and "0"s, drawn in order on a canvas (supersampled 4 × 4 for the antialiasing): a dot is a
+// black disc of radius R with a white one of rf over it; a 0 a black ellipse with a white one inside, its counter
+// about half a fill's area; `bar` a gray rectangle drawn first, under the dots.
+function outlinedScene({ dots, zeros = [], bar = null, width = 300, height = 130, R = 9.5, rf = 8 }) {
+    const S = 4;
+    const black = [20, 20, 20];
+    const gray = [171, 168, 173];
+    const sum = new Float64Array(3 * width * height);
+    const color = (x, y) => {
+        let c = [255, 255, 255];
+        if (bar && x >= bar.x0 && x < bar.x1 && y >= bar.y0 && y < bar.y1)
+            c = gray;
+        for (const z of zeros) {
+            const e = (a, b) => ((x - z.x) / (a * rf)) ** 2 + ((y - z.y) / (b * rf)) ** 2 <= 1;
+            if (e(0.875, 1.3))
+                c = e(0.56, 1) ? [255, 255, 255] : black;
+        }
+        for (const d of dots) {
+            const r = Math.hypot(x - d.x, y - d.y);
+            if (r <= R)
+                c = r <= rf ? [255, 255, 255] : black;
+        }
+        return c;
+    };
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            for (let sy = 0; sy < S; sy++) {
+                for (let sx = 0; sx < S; sx++) {
+                    const c = color(x + (sx + 0.5) / S, y + (sy + 0.5) / S);
+                    for (let ch = 0; ch < 3; ch++)
+                        sum[3 * (y * width + x) + ch] += c[ch];
+                }
+            }
+        }
+    }
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let p = 0; p < width * height; p++) {
+        for (let ch = 0; ch < 3; ch++)
+            data[4 * p + ch] = Math.round(sum[3 * p + ch] / (S * S));
+        data[4 * p + 3] = 255;
+    }
+    return { width, height, data };
+}
+
+test('page-filled dots mostly hidden in rows: their crescents are fills, the counters of 0s are not', () => {
+    // before: no family (two whole fills, under the three needed); with crescents taken at any Hough arc of a fifth,
+    // the 0s' counters became dots too. Each row is drawn left to right, so its last dot is the only whole one and the
+    // others show their left crescents. At hair2's scale (fill 26.6 px, outline 3.9, dots 14.6 apart): half as large,
+    // the fit drops two middle dots, which change the union of discs by less than a dot costs.
+    const rows = [[60, 74.6, 89.2, 103.8, 118.4], [300, 314.6, 329.2, 343.8]];
+    const dots = rows.flatMap((xs, k) => xs.map(x => ({ x, y: 50 + 100 * k })));
+    const zeros = [{ x: 470, y: 50 }, { x: 520, y: 50 }, { x: 570, y: 50 }, { x: 520, y: 150 }];
+    const image = outlinedScene({ dots, zeros, width: 640, height: 200, R: 30.5, rf: 26.6 });
+    const est = estimateStyle(image);
+    const k = est.candidates.findIndex(c => c.pageFill);
+    assert.ok(k >= 0, `a page-filled family among ${est.candidates.map(c => c.seed)}`);
+    const { fit } = fitFamily(image, k, est.candidates);
+    const m = matchDots(dots, fit.dots, 1.5);
+    assert.equal(m.recall, 1, `missed ${JSON.stringify(m.missed.map(i => dots[i]))}`);
+    assert.equal(fit.dots.length, dots.length, `extra ${JSON.stringify(m.extra.map(j => fit.dots[j]))}`);
+});
+
+test('page-filled dots over a gray bar: the outline mixes with the bar, which is no part of a dot', () => {
+    // before: the gray (171), on the line from white to black, read as 0.36 of the outline out to the outline's
+    // reach, so the dots over the bar read larger than those on the page (tumour1: the fit paired them)
+    const dots = [{ x: 30, y: 40 }, { x: 60, y: 40 }, { x: 90, y: 40 }, { x: 160, y: 50 }, { x: 200, y: 70 }, { x: 240, y: 55 }];
+    const bar = { x0: 140, x1: 260, y0: 30, y1: 125 };
+    const image = outlinedScene({ dots, bar });
+    const est = estimateStyle(image);
+    const k = est.candidates.findIndex(c => c.pageFill);
+    assert.ok(k >= 0, `a page-filled family among ${est.candidates.map(c => c.seed)}`);
+    const fam = estimateStyle(image, { family: k, candidates: est.candidates });
+    // on the bar, two pixels beyond a dot's outline
+    for (const d of dots.slice(3)) {
+        const p = Math.floor(d.y) * image.width + Math.floor(d.x + 11.5);
+        assert.equal(fam.D[p], 0, `D beside (${d.x}, ${d.y})`);
+    }
+    const { fit } = fitFamily(image, k, est.candidates);
+    const m = matchDots(dots, fit.dots, 1);
+    assert.equal(m.recall, 1, `missed ${JSON.stringify(m.missed.map(i => dots[i]))}`);
+    assert.equal(fit.dots.length, dots.length, `extra ${JSON.stringify(m.extra.map(j => fit.dots[j]))}`);
+    near(fit.radius, 9.5, 0.3, 'radius');
+});
+
 const benchDir = set => new URL(`../${set}/`, import.meta.url).pathname;
 const benchAbsent = (set, name) => !existsSync(benchDir(set) + name) && `${set}/${name} absent`;
 
@@ -353,14 +437,24 @@ test('regression: hair3, pink fills in a black stroke are one family at their fu
     assert.ok(estimates[0].style.outline, 'outlined');
 });
 
-test('regression: hair2, decimal points alone are no family; its clustered pink dots are one, by their outlines', { skip: !existsSync(NATURE + HAIR2) && 'bench-nature hair2 absent' }, () => {
+test('regression: hair2, decimal points alone are no family; its clustered pink dots are one, by their outlines, and its white ones by their crescents', { skip: !existsSync(NATURE + HAIR2) && 'bench-nature hair2 absent' }, () => {
     // before: black specks (r 4.86, coverage 0.02, 4 isolated) made the only family, 170 "dots". Its nine pink dots
     // sit in two heavy clusters (one strong arc in the stroke model); the outline model finds them by their fills.
-    // Its white-filled dots are the page's color: no family yet.
-    const { estimates } = estimateFamilies(readImage(NATURE + HAIR2));
-    assert.equal(estimates.length, 1, estimates.map(e => `${e.style?.color.map(Math.round)}`).join('; '));
-    assert.ok(Math.hypot(...estimates[0].style.color.map((v, ch) => v - [255, 175, 179][ch])) < 8);
-    near(estimates[0].style.radius, 30.3, 0.8, 'radius');
+    // Its nine white-filled dots, the page's color, were no family: two rows with one whole dot each (two whole
+    // fills, three needed; the crescents show under half their edge); then the fit, by the union, found 7.
+    const image = readImage(NATURE + HAIR2);
+    const results = extractAll(image);
+    assert.equal(results.length, 2, results.map(r => `${r.est.style.color.map(Math.round)}`).join('; '));
+    const pink = results.find(r => !r.est.familyMeasure.pageFill);
+    assert.ok(Math.hypot(...pink.est.style.color.map((v, ch) => v - [255, 175, 179][ch])) < 8);
+    near(pink.est.style.radius, 30.3, 0.8, 'radius');
+    const white = results.find(r => r.est.familyMeasure.pageFill);
+    assert.equal(white.fit.dots.length, 9, JSON.stringify(white.fit.dots.map(d => [Math.round(d.x), Math.round(d.y)])));
+    // against the data (lanes 1–2 white, 3–4 pink): measured P 0.947 (the pink's one doubled dot), R 1.000
+    const px = truthPixelsByTicks(readTruthCsv(NATURE + HAIR2.replace('.png', '.csv')), detectAxes(image));
+    const centers = laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), 4);
+    const r = laneRow('hair2', px.dots, centers, results, 0);
+    assert.ok(r.precision >= 0.9 && r.recall >= 0.95, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
 const PHASE1 = 'phase1-10.1038-s41586-026-11163-6.png';
@@ -638,7 +732,9 @@ test('regression: hair1, white dots in black outlines on a white bar are a famil
 });
 
 test('regression: tumour1, white dots in black outlines over gray and red bars are one family', { skip: !existsSync(`${NATURE}${TUMOUR1}.png`) && 'bench-nature tumour1 absent' }, () => {
-    // before: no family; then a light gray cluster near the page's color made a second, duplicate family
+    // before: no family; then a light gray cluster near the page's color made a second, duplicate family; then 41 for
+    // 44, P 0.976 R 0.909: lane 8's six dots at zero, four of them crescents, read as page (2 found), and the 6 of
+    // 0.9964 was a dot. Measured now: 44 for 44, P 1.000 R 1.000.
     const image = readImage(`${NATURE}${TUMOUR1}.png`);
     const results = extractAll(image);
     assert.equal(results.length, 1);
@@ -646,7 +742,7 @@ test('regression: tumour1, white dots in black outlines over gray and red bars a
     const px = truthPixelsByTicks(readTruthCsv(`${NATURE}${TUMOUR1}.csv`), detectAxes(image));
     const centers = laneCentersFromDots(results[0].fit.dots.map(d => d.x), 8);
     const r = laneRow(TUMOUR1, px.dots, centers, results, 0);
-    assert.ok(r.precision >= 0.9 && r.recall >= 0.85, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
+    assert.ok(r.precision >= 0.95 && r.recall >= 0.97, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
 const PLOS = new URL('../bench-plos/', import.meta.url).pathname;

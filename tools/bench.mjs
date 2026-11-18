@@ -70,7 +70,7 @@ export function extract(image, family = 0, candidates = undefined, jpeg = false,
 // mask and fit for one family's estimate
 function fitEstimate(image, est, bounds) {
     const layers = buildMask(image, est, { bounds });
-    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base };
+    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base, seeds: est.seeds };
     const fit = fitDots(input);
     const hough = houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
     return { est, layers, fit, hough };

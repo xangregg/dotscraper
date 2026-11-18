@@ -2136,3 +2136,41 @@ Results (full bench, diffed against a92c0d5): delta1 as above; nicest language 1
 kite1 26 → 27 for 25 (P 0.923 → 0.889): a cyan dot doubled 5 px away, flagged, from the thin test's change (no order
 found there); every other row identical but for times. Tests in test/opaque.test.js: a synthetic black-over-purple
 copy of delta1's layout (5 of 10 purple before), and delta1's thresholds raised.
+
+**bench-nature hair2 and tumour1: white dots in black outlines, mostly hidden** (2026-11-18)
+
+- Both have dots filled with the page's color, found as the page regions their outlines enclose (pageFills). A dot
+  mostly behind others shows a crescent, under half its edge. The in-disc test wanted a Hough center with half its
+  edge seen, so crescents read as page: a dot behind them cost the fit more than it gained. tumour1's lane 8 (six dots
+  at zero, four crescents) found 2. hair2's white dots (two rows of five and four, 0.55 × the fill radius apart) had
+  only two whole fills, under the three needed, so they were no family, and the pink family's mask took them.
+- At a Hough arc of 0.2 the crescents pass the in-disc test, but so do digits' counters (0s and 8s, arcs 0.42–0.49).
+  New test: a region's edge must be its own circle (within 1.5 px of the fill radius, 0.2 of the edge at least) or
+  the outlines of fills over it (within 1.4 × the fill radius of another center), 0.9 of it in all. Measured, every
+  real fill and crescent of tumour1, hair1 and hair2 scores 1.00 (own share 0.43 or more), counters 0.61 at most. The
+  old false dot, the 6 of tumour1's 0.9964 (arc 0.69), scores 0.
+- Dots closer than their radius: a crescent also lies in the disc of the dot beside it. Each region takes the center
+  whose circle is most of its edge, not the first one whose disc holds it.
+- A family needs two whole fills now, and three dots in all, counted as distinct centers. pageFilledFamily takes those
+  as its evidence when too few dots show half their edge (hair2: 2 strong).
+- The fit still lost hair2's middle crescents: by the union of discs, a dot 0.47 r from both neighbors changes the
+  model by less than it costs, and its Hough never proposes it. The crescents' centers are now the fit's seeds (the
+  estimate's `seeds`, added to Hough's first centers). Seeded, all 9 survive. Half as large (a synthetic copy at fill
+  r 14.5), two of them die: a limit of fitting outlined dots by the union.
+- The rim of a page-filled dot was read as a mix of the outline with the page, but over tumour1's gray bars (171, on
+  the line from white to black) the bar read 0.36 out to the outline's reach. Dots over bars read a pixel larger, and
+  the fit paired them. Its 10.54 radius came from fitDots' doubled-dot bump (22 of 52 close, just over 0.4); with the
+  crescents found it was 20 of 54, under, and 10 extras showed. The rim is now read against what the dot lies on: the
+  nearest flat pixel beyond the family, not of the outline's color (style.js surroundings).
+- Rings (ringEstimate with the fills as the fill mask) were tried for both: hair2 unchanged (no isolated ring to
+  measure), tumour1 37 for 44. Not kept.
+- Seeding gave tumour1 two flagged extras in lane 8 (a double paid for by the tick under it, and a dot inside the
+  union beside the axis line, both outline-colored ink within the outline's reach). Choosing each crescent's center by
+  its edge removed them.
+- tumour1: 41 → 44 for 44, P 0.976 → 1.000, R 0.909 → 1.000, RMSE 0.43 → 0.34 px. hair2: 10 → 19 for 18, P 0.900 →
+  0.947, R 0.500 → 1.000 (the white 9 of 9; the pink's one doubled dot, flagged, as before).
+
+Results (full bench, diffed against 9bbaa9f): hair2 and tumour1 as above; every other row identical but for run times
+(hair1 unchanged, 27 for 29). App: hair2 "Found 19 dots, 2 flagged" (pink 10, white 9), tumour1 "Found 44 dots", no
+console errors. Tests in test/opaque.test.js: synthetic rows of crescents beside 0s at hair2's scale (no family
+before), dots over a gray bar (D read 0.36 on the bar before), and the hair2 and tumour1 regressions tightened.

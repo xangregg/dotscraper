@@ -214,19 +214,33 @@ const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–o
 // outlines around gray fills, and black text, axes and a black family, which counted as dots everywhere)
 const OUTLINE_REACH = 4; // px from the family's fill
 // Fills in the page's color (white dots in black outlines on a white page) are the page regions their outlines
-// enclose: round ones within this share of one radius are one family's whole fills …
+// enclose: round ones within this share of one radius are one family's whole fills (at least PAGE_FILL_MIN_WHOLE of
+// them, and DOT_MIN_STRONG fills in all, whole or partly hidden: hair2's nine white dots lie in two rows, each with one
+// whole dot in front) …
 const PAGE_FILL_SIZE_TOL = 0.1;
+const PAGE_FILL_MIN_WHOLE = 2;
 // … and every enclosed region up to this × a whole fill's area is a fill, whole or partly hidden (crescents where
 // dots overlap); larger ones (a bar's inside) aren't
 const PAGE_FILL_AREA_SLACK = 1.2;
 // the outline's color is read in this band outside the whole fills
 const PAGE_RING_BAND = [0.5, 2]; // px beyond the fill radius
 // A region is a fill only inside a fill-sized circle whose edge it shows: a Hough center at the fill radius with at
-// least DOT_MIN_ARC of its edge seen, holding this share of the region within PAGE_FILL_DISC_SLACK px beyond the
-// fill radius (letters' counters and the gaps between other dots are enclosed page too: hair1's P, B, D and the gaps
-// among its pink dots each became a dot)
+// least PAGE_FILL_MIN_ARC of its edge seen, holding this share of the region within PAGE_FILL_DISC_SLACK px beyond
+// the fill radius (letters' counters and the gaps between other dots are enclosed page too: hair1's P, B, D and the
+// gaps among its pink dots each became a dot). The arc is low for crescents: a dot mostly hidden shows a quarter of
+// its edge or less (tumour1's lane of six at zero, hair2's rows).
 const PAGE_FILL_IN_DISC = 0.9;
 const PAGE_FILL_DISC_SLACK = 1.5; // px
+const PAGE_FILL_MIN_ARC = 0.2;
+// … and its edge must be its own circle (within PAGE_FILL_EDGE_TOL of the fill radius, PAGE_FILL_OWN_EDGE of it at
+// least) or the outlines of fills over it (within the widest outline of the other centers more than
+// PAGE_FILL_SAME_RADII × the fill radius away), PAGE_FILL_EXPLAINED of it in all. A glyph's counter is bounded by its
+// stroke, which is neither: measured, every dot of tumour1, hair1 and hair2 is explained at 1.00 (own 0.43 or more),
+// counters at 0.61 at most (the 0s and 8s of p-values, 0.03–0.38; 0.9964's 6 was a dot, at 0)
+const PAGE_FILL_EDGE_TOL = 1.5; // px
+const PAGE_FILL_OWN_EDGE = 0.2;
+const PAGE_FILL_EXPLAINED = 0.9;
+const PAGE_FILL_SAME_RADII = 0.25;
 // A marker's outline is thin beside its fill, which it must show; a glyph's stroke is thick beside its counter, which
 // encloses page as round as a dot's (comment1's geometric font: o, 0, d and a gave 11 "dots", stroke 0.56 × the counter's
 // radius; hair1's outlines are 0.19 × the fill's, tumour1's 0.27)
@@ -1333,6 +1347,33 @@ function localBackground(image, near, colors, others) {
     return bg;
 }
 
+// What a page-filled family's dots lie on, per pixel: the color of the nearest pixel away from the family (`near`)
+// in a flat patch (its 4 neighbors within INK_TOL of it) and not of the outline's color. Flat, as a bar's inside or
+// the page is, so that text and lines beside a dot aren't its background. 0–255, 3 per pixel.
+function surroundings(image, near, outline) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const known = new Uint8Array(n);
+    const same = (p, q) => Math.hypot(data[4 * p] - data[4 * q], data[4 * p + 1] - data[4 * q + 1], data[4 * p + 2] - data[4 * q + 2]) <= INK_TOL;
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const p = y * width + x;
+            if (near[p] || Math.hypot(data[4 * p] - outline[0], data[4 * p + 1] - outline[1], data[4 * p + 2] - outline[2]) <= CLUSTER_TOL)
+                continue;
+            known[p] = same(p, p - 1) && same(p, p + 1) && same(p, p - width) && same(p, p + width) ? 1 : 0;
+        }
+    }
+    const nearest = nearestTransform(known, width, height);
+    const bg = new Float32Array(3 * n);
+    for (let p = 0; p < n; p++) {
+        const q = nearest[p] >= 0 ? nearest[p] : p;
+        bg[3 * p] = data[4 * q];
+        bg[3 * p + 1] = data[4 * q + 1];
+        bg[3 * p + 2] = data[4 * q + 2];
+    }
+    return bg;
+}
+
 // 1 where a pixel is another family's ring: within `reach` of that family's fill and nearer it (by STROKE_TIE) than to
 // this family's fill (`own`, its thick parts); null without rings. O(families · pixels).
 function ringOwners(image, own, rings) {
@@ -1553,7 +1594,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const isPage = c => Math.hypot(c[0] - page[0], c[1] - page[1], c[2] - page[2]) <= INK_TOL;
     // an outlined fill in the page's color is the page its outlines enclose (pageFills); for the fit it is the outline's
     // color on the page, as the fill shows no contrast
-    const paged = outline && isPage(color) ? pageFills(image, color) ?? { mask: new Uint8Array(n), discs: [] } : null;
+    const paged = outline && isPage(color) ? pageFills(image, color) ?? { mask: new Uint8Array(n), discs: [], centers: [] } : null;
     // another family's fill in the page's color can't be told from the page by color: those dots are found by shape
     others = others.filter(O => !isPage(O));
     const ringFills = opts.rings?.filter(r => !isPage(r.fill)) ?? null;
@@ -1618,8 +1659,9 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     // a page-colored fill's antialiased inner rim, next to it, is inside the dot; farther out the outline is mixed with
     // the page
     const besideFill = paged ? dilate(own, width, height, 1.5) : null;
-    const po = paged ? outline.map((v, ch) => v - page[ch]) : null;
-    const poo = paged ? po[0] * po[0] + po[1] * po[1] + po[2] * po[2] : 0;
+    // … whatever the dot lies on: the page, or a bar (tumour1's gray, 171, lies on the line from white to black, and
+    // read as 0.36 of the outline: every dot over a bar read a pixel larger, and the fit put in pairs)
+    const rimBg = paged ? surroundings(image, near, outline) : null;
     for (let p = 0; p < n; p++) {
         const r = data[4 * p];
         const g = data[4 * p + 1];
@@ -1635,10 +1677,13 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
                 D[p] = member(p, color) ? 0 : NaN;
                 continue;
             }
-            const v = [r - page[0], g - page[1], b - page[2]];
+            const w = [rimBg[3 * p], rimBg[3 * p + 1], rimBg[3 * p + 2]];
+            const po = outline.map((v, ch) => v - w[ch]);
+            const poo = po[0] * po[0] + po[1] * po[1] + po[2] * po[2];
+            const v = [r - w[0], g - w[1], b - w[2]];
             const m = (v[0] * po[0] + v[1] * po[1] + v[2] * po[2]) / poo;
             const off = Math.hypot(v[0] - m * po[0], v[1] - m * po[1], v[2] - m * po[2]);
-            if (off > Math.max(offAbs, OFF_MIX_REL * Math.abs(m) * Math.sqrt(poo)) || m > MAX_MIX) {
+            if (poo < MIN_CONTRAST * MIN_CONTRAST || off > Math.max(offAbs, OFF_MIX_REL * Math.abs(m) * Math.sqrt(poo)) || m > MAX_MIX) {
                 D[p] = NaN;
                 continue;
             }
@@ -1864,7 +1909,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
         edgeInk, inkColors: others, centers: found,
         ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
-        ...(paged ? { pageFill: true, fitColor } : {}),
+        ...(paged ? { pageFill: true, fitColor, fillCenters: paged.centers } : {}),
         levels: [{ t: Math.hypot(...B.map((v, ch) => v - fitColor[ch])), color: fitColor, count: pixels }],
         beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
     };
@@ -2036,15 +2081,17 @@ function roundFills(fill, width, height) {
  * Fills in the page's own color (within INK_TOL: bench2 stroked-dots' translucent fills, about 230 on white, are a
  * color of their own): page-colored regions cut off from the rest of the page (not touching the image
  * border), which is what an outline does to a white dot on a white page. Round regions of one size (the largest
- * group within PAGE_FILL_SIZE_TOL; DOT_MIN_STRONG of them at least) are whole fills. An enclosed region up to
+ * group within PAGE_FILL_SIZE_TOL; PAGE_FILL_MIN_WHOLE of them at least) are whole fills. An enclosed region up to
  * PAGE_FILL_AREA_SLACK × their area (a bar's inside is larger) is a fill, whole or partly hidden, when it lies in the
- * disc of a Hough center at the fill radius (PAGE_FILL_IN_DISC): a hidden dot's crescent shows an arc of its own edge,
- * which a letter's counter or a gap between other dots (bounded by arcs curving the other way) doesn't. Null without
- * such a group. O(pixels) plus O(centers · r²).
+ * disc of a Hough center at the fill radius (PAGE_FILL_IN_DISC) and its edge is that circle or the outlines of fills
+ * over it (PAGE_FILL_EXPLAINED): a hidden dot's crescent shows an arc of its own edge, which a letter's counter or a
+ * gap between other dots (bounded by arcs curving the other way) doesn't. Null without DOT_MIN_STRONG fills.
+ * O(pixels) plus O(centers · r²) and O(edge pixels · centers).
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} page  0–255
- * @returns {{mask: Uint8Array, discs: {cx: number, cy: number, r: number}[]}|null}  discs: the whole fills, px
+ * @returns {{mask: Uint8Array, discs: {cx: number, cy: number, r: number}[], centers: {x: number, y: number}[]}|null}
+ *   discs: the whole fills, px; centers: one per dot the fills show, whole or partly hidden, px
  */
 function pageFills(image, page) {
     const { width, height, data } = image;
@@ -2060,7 +2107,7 @@ function pageFills(image, page) {
         if (!best || group.length > best.length || (group.length === best.length && d.r > best.r))
             best = Object.assign(group, { r: d.r });
     }
-    if (!best || best.length < DOT_MIN_STRONG)
+    if (!best || best.length < PAGE_FILL_MIN_WHOLE)
         return null;
     const rf = median(best.map(d => d.r));
     const maxArea = PAGE_FILL_AREA_SLACK * Math.PI * Math.max(...best.map(d => d.r)) ** 2;
@@ -2091,9 +2138,10 @@ function pageFills(image, page) {
         if (x > 0 && x < width - 1 && y > 0 && y < height - 1 && [p - 1, p + 1, p - width, p + width].some(q => label[q] >= 0))
             cover[p] = Math.min(1, Math.max(0, luminance([data[4 * p], data[4 * p + 1], data[4 * p + 2]]) / pageL));
     }
-    const inDisc = new Float64Array(candidates.length);
-    for (const c of houghCenters(cover, new Uint8Array(n).fill(1), width, height, rf).filter(c => c.arc >= DOT_MIN_ARC)) {
-        const reach = rf + PAGE_FILL_DISC_SLACK;
+    // the Hough centers whose disc holds a region
+    const holding = candidates.map(() => []);
+    const reach = rf + PAGE_FILL_DISC_SLACK;
+    for (const c of houghCenters(cover, new Uint8Array(n).fill(1), width, height, rf).filter(c => c.arc >= PAGE_FILL_MIN_ARC)) {
         const seen = new Map();
         for (let y = Math.max(0, Math.floor(c.y - reach)); y < Math.min(height, Math.ceil(c.y + reach)); y++) {
             for (let x = Math.max(0, Math.floor(c.x - reach)); x < Math.min(width, Math.ceil(c.x + reach)); x++) {
@@ -2102,17 +2150,45 @@ function pageFills(image, page) {
                     seen.set(k, (seen.get(k) ?? 0) + 1);
             }
         }
-        for (const [k, count] of seen)
-            inDisc[k] = Math.max(inDisc[k], count / candidates[k].length);
-    }
-    const mask = new Uint8Array(n);
-    candidates.forEach((comp, k) => {
-        if (inDisc[k] >= PAGE_FILL_IN_DISC) {
-            for (const p of comp)
-                mask[p] = 1;
+        for (const [k, count] of seen) {
+            if (count >= PAGE_FILL_IN_DISC * candidates[k].length)
+                holding[k].push(c);
         }
+    }
+    // each region's edge (pixels beside another), and its center: of those holding it, the one whose circle is most of
+    // that edge (dots closer than their radius: a crescent lies in the disc of the dot beside it too)
+    const edges = candidates.map((comp, k) => comp.filter(p => ![p - 1, p + 1, p - width, p + width].every(q => label[q] === k)));
+    const onCircle = (p, c) => {
+        const x = p % width;
+        const y = (p - x) / width;
+        return Math.abs(Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y) - rf) <= PAGE_FILL_EDGE_TOL;
+    };
+    const own = (k, c) => edges[k].filter(p => onCircle(p, c)).length;
+    const center = holding.map((cs, k) => cs.reduce((a, c) => (a && own(k, a) >= own(k, c) ? a : c), null));
+    // dots that may lie over a region: the whole fills and the other regions' centers
+    const dots = [...best.map(d => ({ x: d.cx, y: d.cy })), ...center.filter(c => c)];
+    const outer = rf * (1 + PAGE_RING_MAX_WIDTH) + PAGE_FILL_EDGE_TOL;
+    const mask = new Uint8Array(n);
+    // dots, not regions: a line across a crescent cuts it in two, and specks of page lie between outlines
+    const fills = new Set();
+    candidates.forEach((comp, k) => {
+        const c = center[k];
+        if (!c)
+            return;
+        const over = dots.filter(o => Math.hypot(o.x - c.x, o.y - c.y) > PAGE_FILL_SAME_RADII * rf);
+        const edge = edges[k];
+        const explained = edge.filter(p => {
+            const x = p % width;
+            const y = (p - x) / width;
+            return onCircle(p, c) || over.some(o => Math.hypot(x + 0.5 - o.x, y + 0.5 - o.y) <= outer);
+        }).length;
+        if (own(k, c) < PAGE_FILL_OWN_EDGE * edge.length || explained < PAGE_FILL_EXPLAINED * edge.length)
+            return;
+        fills.add(c);
+        for (const p of comp)
+            mask[p] = 1;
     });
-    return { mask, discs: [...best] };
+    return fills.size >= DOT_MIN_STRONG ? { mask, discs: [...best], centers: [...fills].map(c => ({ x: c.x, y: c.y })) } : null;
 }
 
 /**
@@ -2148,7 +2224,9 @@ function pageFilledFamily(image, backgrounds, tol) {
         return null;
     const fam = measureOpaque(image, page, backgrounds, [], tol, outline);
     const rf = median(fills.discs.map(d => d.r));
-    return isDotFamily(fam) && fam.radius - rf <= PAGE_RING_MAX_WIDTH * rf ? fam : null;
+    // the fills are the evidence where few dots show half their edge (hair2: two whole dots and seven crescents)
+    const enough = isDotFamily(fam) || (radiusPlausible(fam.radius, fam.isolated.length) && fam.coverage >= DOT_MIN_COVERAGE);
+    return enough && fam.radius - rf <= PAGE_RING_MAX_WIDTH * rf ? fam : null;
 }
 
 // share of the pixels whose centers lie within r of (cx, cy) where v > 0.5
@@ -2934,5 +3012,8 @@ function opaqueEstimate(image, fam, candidates, familyIndex, flat, pageBackgroun
             ...((fam.outline ?? fam.stroke) && fam.fillRadius ? { outline: { color: [...(fam.outline ?? fam.stroke)], inner: fam.fillRadius / fam.radius } } : {}),
         },
         D: fam.D, fitT, isolated: fam.isolated, edge, notes,
+        // a page-colored fill's crescents, for the fit's first centers: their edges lie inside the union of discs, where
+        // its Hough can't see them (hair2: rows of five dots 0.47 r apart, the middle ones never proposed)
+        ...(fam.fillCenters ? { seeds: fam.fillCenters } : {}),
     };
 }
