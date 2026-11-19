@@ -387,9 +387,10 @@ dd {
     border-radius: 3px;
 }
 
+/* extrapolated or inferred: the border says so, the color stays exact (an opacity blended the panel into it, and
+   dog-ages' levels 6–8 showed lighter than level 5) */
 .swatch.extrapolated {
     border-style: dashed;
-    opacity: 0.8;
 }
 
 /* a family whose dots vary in color: no single swatch is honest */
