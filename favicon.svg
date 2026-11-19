@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+    <!-- An opaque tile, so the icon reads on light and dark tab bars alike. Axes and three translucent dots whose
+         overlaps are darker: the stacks the app counts. -->
+    <rect x="1" y="1" width="30" height="30" rx="6" fill="#fcfcfb" stroke="#0b0b0b" stroke-opacity="0.15"/>
+    <path d="M6.5 5v20.5H27" fill="none" stroke="#0b0b0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#2a78d6" fill-opacity="0.6">
+        <circle cx="13.5" cy="17" r="5"/>
+        <circle cx="19" cy="13.5" r="5"/>
+        <circle cx="21" cy="19.5" r="5"/>
+    </g>
+</svg>
