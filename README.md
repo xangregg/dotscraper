@@ -35,6 +35,8 @@ The About panel in the app has the details, the keys, and what to trust.
 ## Development
 
 Plain ES modules, no build step and no runtime dependencies. Node 22 or later for the tests and tools.
+The code was largely written with [Claude Code](https://claude.com/claude-code), working from `PLAN.md` and
+`CLAUDE.md`.
 
 ```bash
 npm install
