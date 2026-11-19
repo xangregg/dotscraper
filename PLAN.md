@@ -2292,3 +2292,31 @@ more extras; its boxes are "System", above the colorbar where its extras are, an
 (a palette)", no console errors; 3 dots left on the title. Tests: test/annotations.test.js (a synthetic page: a
 title, a note beside a dot, a legend column, crescents, a row of rings, touching black dots and a frame; wages2025's
 boxes), and wages2025's palette regression at P ≥ 0.96.
+
+**bench-nature autocor1: dots clipped at the plot's edges; the misses that remain** (2026-11-19)
+
+With the user's hand truth (727 dots, the scan's result adjusted: most changes additions from slivers of color, a
+few dots cut at the plot's edges, a few interior dots moved or removed): 703 found, P 0.979 R 0.946; 39 missed, 15
+extras. Against the source CSV (804 rows, many wholly hidden) 0.953 and 0.833.
+
+- The plot clips its dots: at the y axis line and where the x axis line ends (x 2033; no line there), a straight
+  cut, the family's coverage full just inside and white just beyond. Read as the dots' edge: at the right end the fit
+  moved the cut dots in and stacked three where two were. Beyond the axes the mask keeps a margin of a radius
+  (other plots draw whole dots across them), so the cut had to be read: axes.clipEdges gives the bounding axis
+  lines and their far ends, and buildMask masks everything beyond one where the coverage is full (≥ 0.9) just
+  inside and empty (≤ 0.1) 1.5 px past the line (or past the boundary pixel, within 3 px of a line's end) in 70% of
+  the rows full inside, 2 radii of them at least. autocor1: cuts at the y axis (x 266) and at x 2032; the three
+  stacked extras went, and two cut dots were found (702 found, P 0.980, R 0.946). Still missed there: two dots
+  more than half past the cut and mostly under others, and at the y axis two dots 6 px apart, fitted as one.
+- The other 31 misses lie in the dense band, most along the opaque curve drawn over the dots (35–50% of their disc
+  masked as its ink). Measured: 0–11 px of each missed dot's disc show the family's color uncovered by a fitted
+  dot. The neighbors' discs already cover the slivers, so a dot there explains almost nothing, and the fit rightly
+  won't pay for it: the evidence the hand truth used is the shape of the edges, which the union of discs can't
+  read. Not attempted (births on slivers this small would add dots wherever a fit's discs fall short elsewhere).
+- The extras now cover little page (0–2% of their discs white): mostly one dot standing for two in the dense band.
+
+Results (full bench, diffed against 9ceaf57): autocor1 by hand 703 → 702 for 727, P 0.979 → 0.980, R 0.946; by the
+CSV P 0.953 → 0.960, R 0.833 → 0.838; phase1 135 → 129 for 97, P 0.593 → 0.620 (gray 136 clipped where the x axis line
+ends, x 1287, masking the colorbar beyond; 228 and 187 at the x axis line, recall unchanged); every other row
+identical but for run times. Test in test/layers.test.js: a synthetic plot clipping its dots at the y axis and the x
+axis line's end (cut dots found whole; without the clip, one at the end is misplaced).

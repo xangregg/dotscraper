@@ -40,6 +40,18 @@ const MASK_DILATE_BLURS = 2; // px per px of edge blur
 // in the "100" below the x axis). Pixels farther out than this are masked; a dot centered on the axis line (data at
 // the scale's end) keeps every pixel.
 const OUTSIDE_MARGIN_RADII = 1; // × dot radius beyond the axis line
+// Some plots clip their dots at the plot area (autocor1: at the y axis and where the x axis line ends, a straight cut
+// through dots). Beyond such a cut nothing can be seen, so it is masked with no margin, and a cut dot is fitted whole,
+// half of it unseen; read as white, the cut was its edge, and the fit moved the dots in and doubled them. A cut is
+// the family's coverage full (≥ CLIP_FULL) just inside and empty (≤ CLIP_EMPTY) just beyond, CLIP_GAP px out past
+// the line (or the boundary pixel at a line's end), in CLIP_MIN_SHARE of the rows full inside and in CLIP_MIN_RADII ×
+// the radius of them at least: a dot's round edge meets a line in a few rows, a cut in a dot's height.
+const CLIP_FULL = 0.9;
+const CLIP_EMPTY = 0.1;
+const CLIP_GAP = 1.5; // px
+const CLIP_SEARCH = 3; // px either side of a line's end for the cut's column
+const CLIP_MIN_SHARE = 0.7;
+const CLIP_MIN_RADII = 2;
 // Stand-in for an infinite distance in the transform: finite so the parabola intersections stay exact (q² ≤ ~10⁷
 // px² is far below the precision of FAR), and far beyond any real squared distance.
 const FAR = 1e12; // px²
@@ -257,6 +269,66 @@ function components8(mask, width, height) {
 
 // Outlined dots (families.js outlineEstimate) bring their own mask: what can't be read in P, plus what lies beyond
 // the axes. Pixels are classed as family where a ring may be (D > 0), other where masked.
+// Where a family's coverage is cut at a clip edge (see CLIP_FULL): the cut's position (px, the first pixel row or
+// column beyond it), or null when the dots aren't cut there. At a line the cut is the line; at a line's end, the
+// column (or row) within CLIP_SEARCH of it with the most cut rows. O(extent · CLIP_SEARCH).
+function clipAt(D, width, height, edge, radius) {
+    const v = edge.dir === 'v';
+    const alongMax = v ? height : width;
+    const acrossMax = v ? width : height;
+    const a0 = Math.max(0, Math.floor(edge.from ?? 0));
+    const a1 = Math.min(alongMax, Math.ceil(edge.to ?? alongMax));
+    const at = (a, c) => (v ? a * width + c : c * width + a);
+    const count = (inside, beyond) => {
+        if (inside < 0 || beyond < 0 || inside >= acrossMax || beyond >= acrossMax)
+            return { full: 0, cut: 0 };
+        let full = 0;
+        let cut = 0;
+        for (let a = a0; a < a1; a++) {
+            if (!(D[at(a, inside)] >= CLIP_FULL))
+                continue;
+            full++;
+            if (D[at(a, beyond)] <= CLIP_EMPTY)
+                cut++;
+        }
+        return { full, cut };
+    };
+    let best = null;
+    if (edge.thickness > 0) {
+        const half = edge.thickness / 2 + CLIP_GAP;
+        const inside = Math.floor(edge.pos - edge.out * half);
+        const beyond = Math.floor(edge.pos + edge.out * half);
+        // the line's pixels and beyond: from its near side outward
+        const at = edge.out > 0 ? Math.round(edge.pos - edge.thickness / 2) : Math.round(edge.pos + edge.thickness / 2) - 1;
+        best = { ...count(inside, beyond), at };
+    }
+    else {
+        for (let c = Math.round(edge.pos) - CLIP_SEARCH; c <= Math.round(edge.pos) + CLIP_SEARCH; c++) {
+            // the boundary pixel c may be antialiased: inside is the one before it, beyond the one after
+            // (ties go outward: the dot's last full pixel and the first empty one both bound a cut)
+            const k = count(c - edge.out, c + edge.out);
+            if (!best || k.cut > best.cut || (k.cut === best.cut && (c - best.at) * edge.out > 0))
+                best = { ...k, at: c };
+        }
+    }
+    return best.cut >= CLIP_MIN_RADII * radius && best.cut >= CLIP_MIN_SHARE * best.full ? best.at : null;
+}
+
+// mask every pixel at or beyond a cut (the first row or column beyond, from clipAt), in place; returns the count
+function maskBeyond(mask, width, height, edge, cut) {
+    let n = 0;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const c = edge.dir === 'v' ? x : y;
+            if (edge.out > 0 ? c >= cut : c <= cut) {
+                n += 1 - mask[y * width + x];
+                mask[y * width + x] = 1;
+            }
+        }
+    }
+    return n;
+}
+
 // set the pixels of each box [x0, y0, x1, y1) to 1, in place
 function fillBoxes(mask, width, height, boxes) {
     for (const [x0, y0, x1, y1] of boxes ?? []) {
@@ -328,6 +400,8 @@ function overInk(fm) {
  *   plot area's sides (axes.plotBounds); pixels more than OUTSIDE_MARGIN_RADII × radius beyond them are masked
  * @param {number[][]} [opts.exclude]  boxes [x0, y0, x1, y1) px masked as other ink: text and legend markers
  *   (annotations.annotationBoxes)
+ * @param {object[]} [opts.clips]  lines where the plot may clip its dots (axes.clipEdges); beyond one that cuts this
+ *   family's coverage, everything is masked
  * @returns {{classes: Uint8Array, thin: Uint8Array, mask: Uint8Array, dilate: number,
  *            stats: {background: number, family: number, other: number, thin: number, masked: number,
  *                    maskedFamily: number, outside: number}}}
@@ -429,7 +503,15 @@ export function buildMask(image, estimate, opts = {}) {
             }
         }
     }
-    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside };
+    const clipped = [];
+    for (const edge of opts.clips ?? []) {
+        const cut = style.radius ? clipAt(D, width, height, edge, style.radius) : null;
+        if (cut === null)
+            continue;
+        clipped.push({ ...edge, cut });
+        outside += maskBeyond(mask, width, height, edge, cut);
+    }
+    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside, clipped };
     for (let p = 0; p < n; p++) {
         if (classes[p] === CLASS_BACKGROUND)
             stats.background++;

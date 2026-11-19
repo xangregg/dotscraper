@@ -17,7 +17,7 @@ import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { dotFamilies, createOutlineModel } from '../core/outline.js';
 import { paletteColors, paletteFamilies } from '../core/colormap.js';
-import { detectAxes, plotBounds, backgroundColors } from '../core/axes.js';
+import { detectAxes, plotBounds, clipEdges, backgroundColors } from '../core/axes.js';
 import { annotationBoxes } from '../core/annotations.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
@@ -190,7 +190,7 @@ function analysisImage() {
 }
 
 function maskOpts(k) {
-    return { bounds: plotBounds(state.axes), exclude: annotations(styleOf(k)?.radius), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+    return { bounds: plotBounds(state.axes), clips: clipEdges(state.axes), exclude: annotations(styleOf(k)?.radius), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
 }
 
 // text and legend markers to mask (annotations.js), read once per analyzed image and radius

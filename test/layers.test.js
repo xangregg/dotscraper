@@ -6,6 +6,8 @@ import { distanceTransform, dilate, opening, buildMask, CLASS_FAMILY, CLASS_OTHE
 import { estimateStyle } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readPng } from '../tools/png.mjs';
+import { detectAxes, plotBounds, clipEdges } from '../src/core/axes.js';
+import { fitDots } from '../src/core/fit.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -207,6 +209,47 @@ test('glyph-sized strokes in a translucent family’s own color are masked; dots
     }
     for (const p of points)
         assert.equal(mask[Math.floor(p.y) * 400 + Math.floor(p.x)], 0, `dot at ${p.x}, ${p.y}`);
+});
+
+test('clipped dots: where the plot cuts the dots at the axis and the x axis line\'s end, beyond is masked and they are found whole', () => {
+    // before (autocor1): the cut read as the dots' edge; at the right end the fit moved them in and stacked three
+    // where two were cut
+    const rng = createRng(5);
+    const points = scatterPoints(rng, { n: 24, box: [90, 40, 380, 260] });
+    const cut = [{ x: 63, y: 120 }, { x: 61, y: 200 }, { x: 403, y: 90 }, { x: 406, y: 170 }];
+    const spec = {
+        width: 440, height: 340, background: [255, 255, 255], blur: 0.5,
+        families: [{ color: [193, 59, 141], alpha: 1, radius: 9, points: [...points, ...cut] }],
+        axes: {
+            x: { pos: 290.5, from: 59, to: 405, ticks: [80, 140, 200, 260, 320, 380] },
+            y: { pos: 60.5, from: 20, to: 291.5, ticks: [270, 220, 170, 120, 70] },
+        },
+    };
+    const { image } = synthGraph(spec);
+    // the plot clips its dots: beyond the y axis line and the x axis line's end, the dots' pixels are the page
+    const { width, height, data } = image;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const p = 4 * (y * width + x);
+            const chroma = Math.max(data[p], data[p + 1], data[p + 2]) - Math.min(data[p], data[p + 1], data[p + 2]);
+            if (chroma > 30 && (x < 60 || x >= 405))
+                data.set([255, 255, 255], p);
+        }
+    }
+    const axes = detectAxes(image);
+    const est = estimateStyle(image);
+    const fit = opts => {
+        const layers = buildMask(image, est, opts);
+        return { layers, dots: fitDots({ image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT }).dots };
+    };
+    const clipped = fit({ bounds: plotBounds(axes), clips: clipEdges(axes) });
+    assert.deepEqual(clipped.layers.stats.clipped.map(c => [c.dir, c.out]).sort(), [['v', -1], ['v', 1]]);
+    for (const c of cut)
+        assert.ok(clipped.dots.some(d => Math.hypot(d.x - c.x, d.y - c.y) <= 1.5), `cut dot at ${c.x}, ${c.y}: ${JSON.stringify(clipped.dots.filter(d => Math.abs(d.y - c.y) < 15).map(d => [+d.x.toFixed(1), +d.y.toFixed(1)]))}`);
+    assert.equal(clipped.dots.length, points.length + cut.length);
+    // without the cut, the dots at the right end were moved in
+    const plain = fit({ bounds: plotBounds(axes) });
+    assert.ok(cut.slice(2).some(c => !plain.dots.some(d => Math.hypot(d.x - c.x, d.y - c.y) <= 1.5)), 'unclipped, a cut dot is misplaced');
 });
 
 test('bounds: pixels more than a dot radius beyond the axes are masked, nothing nearer changes', () => {

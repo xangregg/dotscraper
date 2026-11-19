@@ -670,6 +670,42 @@ export function plotBounds(axes) {
 }
 
 /**
+ * Lines where a plot may clip its dots: each bounding axis line (plotBounds' sides) and the far end of each such line
+ * (autocor1: dots cut straight where the x axis line ends, at the plot's right, with no line there). Whether dots are
+ * cut there is the mask's to read (layers.js buildMask), from a family's coverage.
+ *
+ * @param {{x: object|null, y: object|null}} axes  from detectAxes
+ * @returns {{dir: 'h'|'v', pos: number, out: number, thickness: number, from: number|null, to: number|null}[]}
+ *   dir: the cut's direction (a vertical cut runs down a column); pos px, its position; out: +1 when beyond is
+ *   right or down, −1 when left or up; thickness: the line's there, px (0 at an end); from, to: its extent along,
+ *   px (the other axis line's, when known)
+ */
+export function clipEdges(axes) {
+    const bounds = plotBounds(axes);
+    const edges = [];
+    const x = axes.x?.line;
+    const y = axes.y?.line;
+    if (x && (bounds.bottom !== null || bounds.top !== null)) {
+        const out = bounds.bottom !== null ? 1 : -1;
+        edges.push({ dir: 'h', pos: x.pos, out, thickness: x.thickness, from: x.from, to: x.to });
+        // the far end: away from the y axis
+        if (y) {
+            const right = Math.abs(x.to - y.pos) > Math.abs(x.from - y.pos);
+            edges.push({ dir: 'v', pos: right ? x.to : x.from, out: right ? 1 : -1, thickness: 0, from: y.from, to: y.to });
+        }
+    }
+    if (y && (bounds.left !== null || bounds.right !== null)) {
+        const out = bounds.left !== null ? -1 : 1;
+        edges.push({ dir: 'v', pos: y.pos, out, thickness: y.thickness, from: y.from, to: y.to });
+        if (x) {
+            const down = Math.abs(y.to - x.pos) > Math.abs(y.from - x.pos);
+            edges.push({ dir: 'h', pos: down ? y.to : y.from, out: down ? 1 : -1, thickness: 0, from: x.from, to: x.to });
+        }
+    }
+    return edges;
+}
+
+/**
  * Fit a scale to ticks with known values.
  *
  * Linear: value = a + b·px. Log: log10(value) = a + b·px (values must be positive). Least squares; with more than two
