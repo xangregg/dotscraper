@@ -17,7 +17,7 @@ import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { createOutlineModel } from '../core/outline.js';
 import { detectAxes } from '../core/axes.js';
-import { excludedBoxes, maskOptions, fitInput, dotFills } from '../core/extract.js';
+import { excludedBoxes, familyClips, maskOptions, fitInput, dotFills } from '../core/extract.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
@@ -184,7 +184,9 @@ function analysisImage() {
 }
 
 function maskOpts(k) {
-    return { ...maskOptions(state.axes, annotations(styleOf(k)?.radius)), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+    // (the clip edges ask every family, each at the radius in effect: read again whenever a mask is built)
+    const clips = familyClips(state.axes, state.families.map((f, i) => ({ D: f.estimate.D, radius: styleOf(i)?.radius })), state.work.width, state.work.height);
+    return { ...maskOptions(state.axes, annotations(styleOf(k)?.radius), clips[k]), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
 }
 
 // text and legend markers to mask (extract.js excludedBoxes), read once per analyzed image and radius

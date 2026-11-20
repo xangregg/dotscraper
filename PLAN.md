@@ -2748,3 +2748,45 @@ outlined dots and, for the two presets with noise, scans a second time with nois
 moved, `extract` is deleted, and tools/compare-fits.mjs takes each image's first family from extractAll (dog-ages
 against its actual-size rendering: 95 dots each, all matched, as before). A one-family graph that extractAll reads
 as several families is now scored by family, and its row's name says how many.
+
+**phase1: the plot's clip edges, read on all the families together** (2026-11-20)
+
+The reading of phase1's refits in "The review's three speed items, measured" above (a radius measured 1 to 1.5 px
+small) was a guess from the refits, and wrong. Measured on the pixels, an isolated dot's outline is 38.0 px across, r 19.0; the estimates are 19.1 to 19.5.
+(The radii in the hand truth, 18.3 to 19.5, are a fit's at the time it was saved, not a measurement.)
+
+What the refits came from: 27 of the 45 extra dots were on the colorbar, a strip of the five grays at the image's
+right edge, beyond where the x axis line ends. Those packed false dots are close pairs, and an opaque fit with over
+40% of its dots in close pairs is fitted again at a larger radius. The plot clips its dots where the x axis line
+ends, one dot of each of four families cut in half there, and layers.js already masks what lies beyond such a cut;
+but it asked each family alone for 2 r of cut rows, and one half dot gives 1.9 to 2.0 r: one family passed (39
+rows for 2 × 19.24), three didn't (37, 37, and black's 42 of 81, its rows shared with a tick).
+
+- **The rule** (layers.js plotClips; extract.js familyClips for the app and extractAll): an edge clips a family
+  where its own coverage is cut, as before, or where the coverage of all the families together is. A plot clips
+  every series alike. Together phase1's families show 7.6 r at the x axis line's end, and 5.0 r at the y axis
+  line, where dots of the first x value are cut in half and no family alone showed it.
+- **Not the sum over families.** engagement1's four families share a dark stroke, the color of its text, and the
+  top of the line "Post-sipper" reads as 1.9 r of cut in each family's coverage: 104 of 104 rows summed, a false
+  clip. In the union those pixels count once, 1.9 r, no clip.
+- **Surveyed on the 118 local images**: the union clips nowhere that every family doesn't already clip alone, but
+  in phase1. (The other clipped images have one family: autocor1, comment1, adults1.)
+
+Tried and left: accepting a "doubled" refit only when the objective improves. The refits that remain in phase1
+(its top row, five families' dots drawn over one another) mostly make it worse, but so does delta1's, which is
+plainly right (52 dots, 51 in close pairs, to 26): the rule is for what the objective can't tell.
+
+Results. phase1: 128 found for 97, P 0.625, R 0.825, RMSE 1.30 px, becomes 101, P 0.812, R 0.845, RMSE 1.15, and no
+dot on the colorbar; 112 s alone becomes 74 s. Of the 16 extras left, most are doubles in the top row, where the
+five families' dots lie over one another, and two families' radii still end at 20.2 and 20.4 px after the refit
+for close pairs. Every other image of the 118: the same dots and estimates, by digest (phase1's estimates too: only
+its masks changed). 227 tests pass (1 standing skip). In the app phase1 fits to the same 101 dots (20 + 19 + 24 +
+19 + 19), none on the colorbar, and dog-ages to 95, with no console errors.
+
+RESULTS.md is regenerated at the bench's default, 10 images at a time, in 172 s: every row as before but phase1's,
+and the times, which are now those of a 10-job run (10% more in all than the serial run's) and say so in the header.
+
+Tests: plotClips on planes made by hand (two families with one cut dot each, 1.5 r alone and 3 r together; a
+family with no dot at the edge gets the cut too; the same cut dot in two families' coverage is no cut; a family
+without a radius; a large dot lying across the edge) in test/layers.test.js; phase1's regression now asks for P
+0.75, no more than 108 dots and none beyond x 1300; test/extract.test.js takes the app's steps with familyClips.

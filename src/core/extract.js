@@ -1,5 +1,5 @@
 // From an image to its dots. The app takes the steps one at a time, with the user's changes between them: the scan
-// in a worker (scanFamilies), each family's mask on the page (excludedBoxes, maskOptions), the fit in another worker
+// in a worker (scanFamilies), each family's mask on the page (excludedBoxes, familyClips, maskOptions), the fit in another worker
 // (fitInput), and the dots' fill colors after it (dotFills). The bench and the tests take them all at once
 // (extractAll). Both take them from here, so that the bench measures what the app does.
 
@@ -7,7 +7,7 @@ import { estimateFamilies } from './families.js';
 import { restoreChroma, jpegNoise } from './jpeg.js';
 import { detectAxes, plotBounds, clipEdges, backgroundColors } from './axes.js';
 import { annotationBoxes } from './annotations.js';
-import { buildMask } from './layers.js';
+import { buildMask, plotClips } from './layers.js';
 import { fitDots } from './fit.js';
 import { dotFamilies } from './outline.js';
 import { paletteColors, paletteFamilies } from './colormap.js';
@@ -73,15 +73,32 @@ export function excludedBoxes(work, radius) {
 }
 
 /**
+ * The edges at which the plot clips each family's dots: the axis lines and their far ends (axes.js clipEdges), where
+ * a family's coverage, or all the families' together, is cut straight (layers.js plotClips).
+ *
+ * @param {object} axes  axes.js detectAxes' result
+ * @param {{D: ArrayLike<number>|undefined, radius: number|undefined}[]} families  every family of the image: its
+ *   coverage or count image and the radius in effect, px
+ * @param {number} width  px, the image's
+ * @param {number} height
+ * @returns {object[][]}  per family, its clip edges, each with `cut`
+ */
+export function familyClips(axes, families, width, height) {
+    return plotClips(families, width, height, clipEdges(axes));
+}
+
+/**
  * What layers.js buildMask is told to mask around a family, besides other ink: what lies beyond the axes, the edges
  * the plot clips its dots at, and the boxes to leave out.
  *
  * @param {object} axes  axes.js detectAxes' result
  * @param {number[][]} exclude  boxes [x0, y0, x1, y1) px (excludedBoxes)
+ * @param {object[]} [clips]  the family's clip edges (familyClips); without them the mask reads the cuts from the
+ *   family's own coverage alone
  * @returns {{bounds: object, clips: object[], exclude: number[][]}}
  */
-export function maskOptions(axes, exclude) {
-    return { bounds: plotBounds(axes), clips: clipEdges(axes), exclude };
+export function maskOptions(axes, exclude, clips = clipEdges(axes)) {
+    return { bounds: plotBounds(axes), clips, exclude };
 }
 
 /**
@@ -143,8 +160,9 @@ export function extractAll(source, jpeg = false) {
     // values the user types. Read on the image as analyzed instead, the plot's sides moved by up to 0.08 px on six
     // PNGs with JPEG noise, and no dot of any test image changed.
     const axes = detectAxes(source);
-    return prepared.estimates.flatMap(est => {
-        const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius)));
+    const clips = familyClips(axes, prepared.estimates.map(e => ({ D: e.D, radius: e.style.radius })), work.width, work.height);
+    return prepared.estimates.flatMap((est, k) => {
+        const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius), clips[k]));
         const fit = fitDots(fitInput(est.image, est, layers.mask));
         return byFill(work, { est, layers, fit });
     }).map(r => ({ ...r, jpegAuto: switched }));

@@ -432,6 +432,41 @@ function clipAt(D, width, height, edge, radius) {
     return best.cut >= CLIP_MIN_RADII * radius && best.cut >= CLIP_MIN_SHARE * best.full ? best.at : null;
 }
 
+/**
+ * Where the plot clips each family's dots: at an edge where the family's own coverage is cut (clipAt), or where the
+ * coverage of all the families together is. A plot clips every series alike, and one family seldom has the two radii
+ * of cut rows that clipAt asks of it: phase1's five families each have one dot cut in half where the x axis line
+ * ends, 1.9 to 2.0 r of rows, so only one passed, and the other four were fitted on the colorbar beyond (27 false
+ * dots, whose close pairs then had the fit raise their radii). Together they show 7.6 r, and 5 r at the y axis
+ * line, where no family passed. The union, not a sum over families: ink in a color the families share is counted
+ * once (engagement1: the top of a line of text in the stroke color read as 1.9 r of cut in each of four families).
+ *
+ * @param {{D: ArrayLike<number>|undefined, radius: number|undefined}[]} families  each one's coverage or count
+ *   image and radius, px
+ * @param {number} width
+ * @param {number} height
+ * @param {object[]} edges  where a plot may clip (axes.clipEdges)
+ * @returns {object[][]}  per family, the edges its dots are clipped at, each with `cut`: the first pixel row or
+ *   column beyond, px. None for a family without a radius.
+ */
+export function plotClips(families, width, height, edges) {
+    const measured = families.filter(f => f.D && f.radius > 0);
+    const union = new Float32Array(width * height);
+    for (const f of measured) {
+        for (let p = 0; p < union.length; p++) {
+            if (f.D[p] > union[p])
+                union[p] = f.D[p];
+        }
+    }
+    const largest = Math.max(0, ...measured.map(f => f.radius));
+    const together = edges.map(edge => (measured.length > 1 ? clipAt(union, width, height, edge, largest) : null));
+    return families.map(f => {
+        if (!measured.includes(f))
+            return [];
+        return edges.map((edge, i) => ({ ...edge, cut: clipAt(f.D, width, height, edge, f.radius) ?? together[i] })).filter(e => e.cut !== null);
+    });
+}
+
 // mask every pixel at or beyond a cut (the first row or column beyond, from clipAt), in place; returns the count
 function maskBeyond(mask, width, height, edge, cut) {
     let n = 0;
@@ -521,7 +556,8 @@ function overInk(fm) {
  *   plot area's sides (axes.plotBounds); pixels more than OUTSIDE_MARGIN_RADII × radius beyond them are masked
  * @param {number[][]} [opts.exclude]  boxes [x0, y0, x1, y1) px masked as other ink: text and legend markers
  *   (annotations.annotationBoxes)
- * @param {object[]} [opts.clips]  lines where the plot may clip its dots (axes.clipEdges); beyond one that cuts this
+ * @param {object[]} [opts.clips]  lines where the plot may clip its dots (axes.clipEdges), or, with `cut`, lines
+ *   where it does (plotClips, which also asks the other families); beyond one that cuts this
  *   family's coverage, everything is masked
  * @returns {{classes: Uint8Array, thin: Uint8Array, mask: Uint8Array, dilate: number,
  *            stats: {background: number, family: number, other: number, thin: number, masked: number,
@@ -614,7 +650,7 @@ export function buildMask(image, estimate, opts = {}) {
     let outside = opts.bounds && style.radius ? maskOutside(mask, width, height, opts.bounds, OUTSIDE_MARGIN_RADII * style.radius) : 0;
     const clipped = [];
     for (const edge of opts.clips ?? []) {
-        const cut = style.radius ? clipAt(D, width, height, edge, style.radius) : null;
+        const cut = edge.cut ?? (style.radius ? clipAt(D, width, height, edge, style.radius) : null);
         if (cut === null)
             continue;
         clipped.push({ ...edge, cut });

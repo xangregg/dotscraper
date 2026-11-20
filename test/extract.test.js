@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scanFamilies, excludedBoxes, maskOptions, fitInput, dotFills, extractAll } from '../src/core/extract.js';
+import { scanFamilies, excludedBoxes, familyClips, maskOptions, fitInput, dotFills, extractAll } from '../src/core/extract.js';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { detectAxes, plotBounds, clipEdges } from '../src/core/axes.js';
 import { buildMask } from '../src/core/layers.js';
@@ -52,6 +52,9 @@ test('maskOptions and fitInput: the axes\' bounds and clip edges with the boxes 
     const axes = detectAxes(sparse.image);
     const boxes = [[1, 2, 3, 4]];
     assert.deepEqual(maskOptions(axes, boxes), { bounds: plotBounds(axes), clips: clipEdges(axes), exclude: boxes });
+    // with the family's clip edges (familyClips), those instead of the candidates
+    const cuts = [{ ...clipEdges(axes)[0], cut: 7 }];
+    assert.equal(maskOptions(axes, boxes, cuts).clips, cuts);
     const est = scanFamilies(sparse.image).prepared.estimates[0];
     const mask = new Uint8Array(sparse.image.width * sparse.image.height);
     const input = fitInput(est.image, est, mask);
@@ -79,15 +82,17 @@ test('extractAll finds the dots of a synthetic graph', () => {
     assert.ok(m.precision >= 0.95 && m.recall >= 0.95, `P ${m.precision} R ${m.recall}`);
 });
 
-test('extractAll is the app\'s steps taken in turn: scan, mask each family, fit it', () => {
+test('extractAll is the app\'s steps taken in turn: scan, the clip edges, mask each family, fit it', () => {
     // three opaque families: each is masked against the others and fitted on its own
     const { image } = swarm;
     const all = extractAll(image);
     assert.equal(all.length, 3);
     const { work, prepared } = scanFamilies(image);
     const axes = detectAxes(image);
+    const clips = familyClips(axes, prepared.estimates.map(e => ({ D: e.D, radius: e.style.radius })), work.width, work.height);
+    assert.equal(clips.length, 3);
     prepared.estimates.forEach((est, k) => {
-        const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius)));
+        const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius), clips[k]));
         const fit = fitDots(fitInput(est.image, est, layers.mask));
         assert.deepEqual(all[k].est.style, est.style);
         assert.deepEqual(all[k].layers.mask, layers.mask);

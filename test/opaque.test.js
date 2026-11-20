@@ -590,10 +590,16 @@ test('regression: phase1, all five families: four grays in black outlines and bl
     const black = estimates.filter(e => !e.style?.outline && e.style && Math.max(...e.style.color) < 40);
     assert.equal(black.length, 1, names);
     near(black[0].style.radius, 19.4, 0.8, 'radius of black');
-    // against the hand truth: measured P 0.606, R 0.825 (most extras on the colorbar, outside the plot)
+    // Against the hand truth. Before: 128 found for 97, P 0.625, 27 of the extras on the colorbar, beyond where the
+    // x axis line ends: each family has one dot cut in half there, short of what a family must show to be clipped
+    // (one passed). The cut is now read on the families together (layers.js plotClips). Measured: 101, P 0.812, R 0.845.
     const truth = readTruthJson(`${NATURE}truth/${PHASE1.replace('.png', '.json')}`);
     const r = groupRow('phase1', truth.dots, results, 0);
-    assert.ok(r.recall >= 0.8 && r.precision >= 0.55, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
+    assert.ok(r.recall >= 0.8 && r.precision >= 0.75, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
+    const found = results.flatMap(q => q.fit.dots);
+    assert.ok(found.length <= 108, `${found.length} found`);
+    // (the x axis line ends at 1289; the colorbar begins at 1313)
+    assert.deepEqual(found.filter(d => d.x > 1300).map(d => [Math.round(d.x), Math.round(d.y)]), [], 'no dot on the colorbar');
 });
 
 test('regression: engagement1, five blues in one dark stroke are stroked families, not a scale; text is no family', { skip: !existsSync(`${NATURE}${ENGAGEMENT}.png`) && 'bench-nature engagement1 absent' }, () => {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { distanceTransform, dilate, opening, buildMask, components8, CLASS_FAMILY, CLASS_OTHER, CLASS_BACKGROUND } from '../src/core/layers.js';
+import { distanceTransform, dilate, opening, buildMask, components8, plotClips, CLASS_FAMILY, CLASS_OTHER, CLASS_BACKGROUND } from '../src/core/layers.js';
 import { estimateStyle } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readImage, readPng } from '../tools/png.mjs';
@@ -337,4 +337,53 @@ test('components8: pixels joined at a corner are one component; boxes include th
     assert.deepEqual(comps.map(c => [c.x0, c.y0, c.x1, c.y1, c.pixels.length]), [[0, 0, 2, 2, 3], [5, 1, 6, 2, 4], [0, 4, 0, 4, 1]]);
     assert.deepEqual([...comps[0].pixels].sort((a, b) => a - b), [0, 8, 16]);
     assert.deepEqual(components8(new Uint8Array(12), 4, 3), []);
+});
+
+test('plotClips: a cut that the families show together is every family\'s; ink they share is counted once', () => {
+    const width = 200;
+    const height = 160;
+    const r = 10;
+    const cutAt = 150;
+    // a disc of radius r, cut straight at the column cutAt (nothing of it from there on)
+    const plane = discs => {
+        const D = new Float32Array(width * height);
+        for (const [cx, cy] of discs) {
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < Math.min(width, cutAt); x++) {
+                    if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r * r)
+                        D[y * width + x] = 1;
+                }
+            }
+        }
+        return D;
+    };
+    const edge = { dir: 'v', pos: cutAt, out: 1, thickness: 0, from: null, to: null };
+    // each family: whole dots, and one cut 8 px past its middle, a chord of 1.5 r: less than the 2 r a family must show
+    const a = { D: plane([[40, 30], [142, 40]]), radius: r };
+    const b = { D: plane([[60, 120], [142, 90]]), radius: r };
+    // (the cut is the last column of the dots: the boundary pixel may be antialiased, so it is masked too)
+    const cut = cutAt - 1;
+    const inside = { D: plane([[80, 80]]), radius: r };
+    assert.deepEqual(plotClips([a], width, height, [edge]), [[]], 'one family alone: 1.5 r of cut rows is not enough');
+    const clips = plotClips([a, b, inside], width, height, [edge]);
+    assert.deepEqual(clips.map(c => c.map(e => e.cut)), [[cut], [cut], [cut]], 'together 3 r: cut, also for the family with no dot there');
+    assert.equal(clips[0][0].dir, 'v');
+    // buildMask's own reading is kept for a family that shows the cut alone
+    const two = { D: plane([[142, 40], [142, 90]]), radius: r };
+    assert.deepEqual(plotClips([two], width, height, [edge]).map(c => c.map(e => e.cut)), [[cut]]);
+    assert.deepEqual(plotClips([two, inside], width, height, [edge]).map(c => c.map(e => e.cut)), [[cut], [cut]]);
+    // the same cut dot in two families' coverage (ink in a color they share) is one dot, 1.5 r: no cut
+    const shared = plotClips([{ D: a.D, radius: r }, { D: a.D, radius: r }], width, height, [edge]);
+    assert.deepEqual(shared, [[], []]);
+    // a family without a radius has no clip, and gives none
+    assert.deepEqual(plotClips([a, { D: b.D, radius: undefined }], width, height, [edge]), [[], []]);
+    // whole dots at the edge are no cut: the union only adds rows that go on beyond it
+    const through = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if ((x + 0.5 - 150) ** 2 + (y + 0.5 - 130) ** 2 <= 30 * 30)
+                through[y * width + x] = 1;
+        }
+    }
+    assert.deepEqual(plotClips([a, b, { D: through, radius: 30 }], width, height, [edge]), [[], [], []], 'a large dot across the edge: under 70% of the full rows are cut');
 });
