@@ -7,11 +7,17 @@
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
 // Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose] [--json file]
+//                             [--jobs n]
 //   --json  also write every row, and every image that fails, as JSON (tools/results.mjs builds RESULTS.md from it)
+//   --jobs  fit n images at a time, in worker threads (default 10, or the machine's cores if fewer; 1 for one at a
+//           time, in this process). The rows are the same; each image's time is longer than alone, so compare times
+//           only between runs at one job count.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { availableParallelism } from 'node:os';
 import { readImage } from './png.mjs';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { estimateStyle } from '../src/core/style.js';
@@ -30,13 +36,16 @@ const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 // directories of images with a CSV each (data units, ticks in the header), mapped through the detected ticks
 const CSV_SETS = ['testgraphs', 'bench-nature', 'bench-plos'];
 const MATCH_TOL_RADII = 0.5;
+// Images fitted at a time unless --jobs says otherwise. Measured on 12 performance cores, the full bench: 1,115 s one
+// at a time, 269 s at 6, 207 s at 10, where the slowest image (about 2 minutes) begins to set the time.
+const DEFAULT_JOBS = 10;
 // Jittered truth (a test image's CSV with "with jitter"): the truth is each dot's cell, and a dot matches a cell
 // within this box. Measured on pathogen: x up to about ±1 year (12.2 px; dots reach 0.83 year left of the first
 // year), y ±25 px about rows 0–2.
 const JITTER_BOX = { x: 14, y: 27 }; // px, half-widths
 
 function parseArgs(argv) {
-    const opts = { seeds: 5, preset: null, set: null, only: null, verbose: false, json: null };
+    const opts = { seeds: 5, preset: null, set: null, only: null, verbose: false, json: null, jobs: Math.min(DEFAULT_JOBS, availableParallelism()) };
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === '--seeds')
             opts.seeds = Number(argv[++i]);
@@ -50,6 +59,8 @@ function parseArgs(argv) {
             opts.verbose = true;
         else if (argv[i] === '--json')
             opts.json = argv[++i];
+        else if (argv[i] === '--jobs')
+            opts.jobs = Math.max(1, Math.floor(Number(argv[++i])) || 1);
     }
     return opts;
 }
@@ -235,40 +246,18 @@ function print(rows) {
         console.log(`${r.name.padEnd(30)} ${String(r.n).padStart(5)} ${String(r.found).padStart(5)} ${f(r.precision)} ${f(r.recall)} ${String(r.countError).padStart(6)} ${f(r.rmse).padStart(8)}  ${f(r.houghPrecision, 2)}/${f(r.houghRecall, 2)}  ${String(r.flagged).padStart(7)} ${f(r.radius, 2).padStart(7)} ${String(r.ms).padStart(5)}`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    const opts = parseArgs(process.argv.slice(2));
-    const rows = [];
-    // for --json: what each row is, and what failed
-    const record = (row, meta) => {
-        rows.push(row);
-        row.meta = meta;
-        return row;
-    };
-    const failures = [];
-    const fail = (meta, message) => {
-        console.log(`${meta.set}/${meta.image}: ${message}`);
-        failures.push({ ...meta, error: message });
-    };
-    const modeOf = (results, jpeg) => (jpeg ? 'jpeg' : results[0]?.jpegAuto ? 'noisy' : 'exact');
+/**
+ * The benchmark's jobs, in the order of its rows: one per synthetic graph, then one per image of each truth set, per
+ * image with a CSV of its own, and per image with truth placed by hand. A job is a plain object, so that it can be
+ * sent to a worker; a truth set whose data.csv can't be read is one job that only reports it.
+ */
+function listJobs(opts) {
+    const jobs = [];
     for (const name of Object.keys(SYNTH_PRESETS)) {
         if (opts.preset && name !== opts.preset)
             continue;
-        for (let seed = 1; seed <= opts.seeds; seed++) {
-            const spec = SYNTH_PRESETS[name](seed);
-            const { image, truth } = synthGraph(spec);
-            const t0 = Date.now();
-            if (spec.families.length > 1) {
-                const results = extractWithHough(image);
-                record(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0), { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' });
-                continue;
-            }
-            const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
-            const r = record(row(`${name} #${seed}`, truth, res, Date.now() - t0), { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' });
-            if (opts.verbose) {
-                console.log(r.name, 'missed', r.m.missed.map(i => `${truth[i].x.toFixed(1)},${truth[i].y.toFixed(1)}`).join(' '), 'extra', r.m.extra.map(j => `${res.fit.dots[j].x.toFixed(1)},${res.fit.dots[j].y.toFixed(1)}`).join(' '));
-                console.log('   log', JSON.stringify(res.fit.log));
-            }
-        }
+        for (let seed = 1; seed <= opts.seeds; seed++)
+            jobs.push({ kind: 'preset', name, seed });
     }
     for (const set of opts.set ? [opts.set] : TRUTH_SETS) {
         const dir = join(ROOT, set);
@@ -276,31 +265,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             continue;
         const px = truthPixels(readTruthCsv(join(dir, 'data.csv')));
         if (px.error) {
-            fail({ set, image: 'data.csv', truth: 'data' }, px.error);
+            jobs.push({ kind: 'failed', meta: { set, image: 'data.csv', truth: 'data' }, message: px.error });
             continue;
         }
         for (const file of readdirSync(dir).filter(f => /\.(png|jpe?g)$/i.test(f)).sort()) {
-            if (opts.only && !`${set}/${file}`.includes(opts.only))
-                continue;
-            const image = readImage(join(dir, file));
-            const label = `${set}/${file.replace(/\.png$/, '')}`;
-            const meta = { set, image: file, truth: 'exact' };
-            const t0 = Date.now();
-            let results;
-            try {
-                results = extractWithHough(image, /\.jpe?g$/i.test(file));
-            }
-            catch (e) {
-                fail(meta, e.message);
-                continue;
-            }
-            const ms = Date.now() - t0;
-            const r = record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms) : groupRow(label, px.dots, results, ms),
-                { ...meta, mode: modeOf(results, /\.jpe?g$/i.test(file)) });
-            if (opts.verbose) {
-                console.log(label, results.map(q => `${q.est.style.alpha < 1 ? 'translucent' : 'opaque'} ${q.est.style.color.map(Math.round)} r ${q.fit.radius.toFixed(2)}`).join('; '));
-                console.log('   missed', r.missed.map(t => `${t.x.toFixed(1)},${t.y.toFixed(1)}`).join(' '), ' extra', r.extra.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' '));
-            }
+            if (!opts.only || `${set}/${file}`.includes(opts.only))
+                jobs.push({ kind: 'set', set, file });
         }
     }
     // test images with a CSV of their own (data units, ticks in the header)
@@ -311,42 +281,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         for (const file of readdirSync(testDir).filter(f => f.endsWith('.csv')).sort()) {
             const name = basename(file, '.csv');
             const img = ['.png', '.jpg', '.jpeg'].map(e => join(testDir, name + e)).find(existsSync);
-            if (!img || (opts.only && !`${set}/${name}`.includes(opts.only)))
-                continue;
-            // the app's dot export isn't data-unit truth: hand truth belongs in truth/<name>.json (tools/truth-json.mjs)
-            if (isDotsExport(readFileSync(join(testDir, file), 'utf8'))) {
-                console.log(`${set}/${name}: a dots export, not truth in data units; skipped (truth/${name}.json is scored)`);
-                continue;
-            }
-            const jpeg = /\.jpe?g$/i.test(img);
-            const meta = { set, image: basename(img), truth: 'data' };
-            const image = readImage(img);
-            const t0 = Date.now();
-            const px = truthPixelsByTicks(readTruthCsv(join(testDir, file)), detectAxes(jpeg ? restoreChroma(image) : image));
-            if (px.error) {
-                fail(meta, px.error);
-                continue;
-            }
-            let results;
-            try {
-                results = extractWithHough(image, jpeg);
-            }
-            catch (e) {
-                fail(meta, e.message);
-                continue;
-            }
-            const mark = results[0]?.jpegAuto ? ' (J)' : '';
-            const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
-            const ms = Date.now() - t0;
-            if (px.lanesFromDots) {
-                px.laneCenters = laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), new Set(px.dots.map(d => d.lane)).size);
-                if (!px.laneCenters) {
-                    fail(meta, 'fewer dots found than lanes');
-                    continue;
-                }
-            }
-            record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
-                : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms), { ...meta, mode: modeOf(results, jpeg) });
+            if (img && (!opts.only || `${set}/${name}`.includes(opts.only)))
+                jobs.push({ kind: 'csv', set, file, img });
         }
     }
     // truth placed by hand (Save truth JSON, px): every family fitted, scored by group (each truth family, and fill)
@@ -355,41 +291,222 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         if (!existsSync(truthDir) || opts.preset || (opts.set && opts.set !== set))
             continue;
         for (const file of readdirSync(truthDir).filter(f => f.endsWith('.json')).sort()) {
-            const name = basename(file, '.json');
-            if (opts.only && !`${set}/${name}`.includes(opts.only))
-                continue;
-            const truth = readTruthJson(join(truthDir, file));
-            const img = join(ROOT, set, truth.image ?? name + '.png');
-            const meta = { set, image: basename(img), truth: 'hand' };
-            if (!existsSync(img)) {
-                fail(meta, `image ${truth.image} absent`);
-                continue;
-            }
-            const jpeg = /\.jpe?g$/i.test(img);
-            const image = readImage(img);
-            // JPEG decoders differ, so only a PNG's hash can be checked
-            if (!jpeg && truth.hash && pixelHash(image) !== truth.hash) {
-                fail(meta, `the image's pixel hash ${pixelHash(image)} isn't the truth's ${truth.hash}; skipped`);
-                continue;
-            }
-            const t0 = Date.now();
-            let results;
-            try {
-                results = extractWithHough(image, jpeg);
-            }
-            catch (e) {
-                fail(meta, e.message);
-                continue;
-            }
-            const mark = results[0]?.jpegAuto ? ' (J)' : '';
-            const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
-            record(groupRow(label, truth.dots, results, Date.now() - t0), { ...meta, mode: modeOf(results, jpeg) });
+            if (!opts.only || `${set}/${basename(file, '.json')}`.includes(opts.only))
+                jobs.push({ kind: 'hand', set, file });
         }
     }
+    return jobs;
+}
+
+/**
+ * One job: the image read, its dots extracted and scored against its truth. Returns the rows it adds to the table
+ * (each with `meta`: what it is, for --json), the failures, and the lines to print, so that the jobs can run in any
+ * order, or in workers, and be reported in the table's order.
+ */
+function runJob(job, opts) {
+    const rows = [];
+    const failures = [];
+    const lines = [];
+    const out = { rows, failures, lines };
+    const record = (row, meta) => {
+        rows.push(row);
+        row.meta = meta;
+        return row;
+    };
+    const fail = (meta, message) => {
+        lines.push(`${meta.set}/${meta.image}: ${message}`);
+        failures.push({ ...meta, error: message });
+        return out;
+    };
+    const modeOf = (results, jpeg) => (jpeg ? 'jpeg' : results[0]?.jpegAuto ? 'noisy' : 'exact');
+    if (job.kind === 'failed')
+        return fail(job.meta, job.message);
+    if (job.kind === 'preset') {
+        const { name, seed } = job;
+        const spec = SYNTH_PRESETS[name](seed);
+        const { image, truth } = synthGraph(spec);
+        const meta = { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' };
+        const t0 = Date.now();
+        if (spec.families.length > 1) {
+            const results = extractWithHough(image);
+            record(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0), meta);
+            return out;
+        }
+        const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
+        const r = record(row(`${name} #${seed}`, truth, res, Date.now() - t0), meta);
+        if (opts.verbose) {
+            lines.push(`${r.name} missed ${r.m.missed.map(i => `${truth[i].x.toFixed(1)},${truth[i].y.toFixed(1)}`).join(' ')} extra ${r.m.extra.map(j => `${res.fit.dots[j].x.toFixed(1)},${res.fit.dots[j].y.toFixed(1)}`).join(' ')}`);
+            lines.push(`   log ${JSON.stringify(res.fit.log)}`);
+        }
+        return out;
+    }
+    if (job.kind === 'set') {
+        const { set, file } = job;
+        const dir = join(ROOT, set);
+        const px = truthPixels(readTruthCsv(join(dir, 'data.csv')));
+        const jpeg = /\.jpe?g$/i.test(file);
+        const image = readImage(join(dir, file));
+        const label = `${set}/${file.replace(/\.png$/, '')}`;
+        const meta = { set, image: file, truth: 'exact' };
+        const t0 = Date.now();
+        let results;
+        try {
+            results = extractWithHough(image, jpeg);
+        }
+        catch (e) {
+            return fail(meta, e.message);
+        }
+        const ms = Date.now() - t0;
+        const r = record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms) : groupRow(label, px.dots, results, ms),
+            { ...meta, mode: modeOf(results, jpeg) });
+        if (opts.verbose) {
+            lines.push(`${label} ${results.map(q => `${q.est.style.alpha < 1 ? 'translucent' : 'opaque'} ${q.est.style.color.map(Math.round)} r ${q.fit.radius.toFixed(2)}`).join('; ')}`);
+            lines.push(`   missed ${r.missed.map(t => `${t.x.toFixed(1)},${t.y.toFixed(1)}`).join(' ')}  extra ${r.extra.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' ')}`);
+        }
+        return out;
+    }
+    if (job.kind === 'csv') {
+        const { set, file, img } = job;
+        const testDir = join(ROOT, set);
+        const name = basename(file, '.csv');
+        // the app's dot export isn't data-unit truth: hand truth belongs in truth/<name>.json (tools/truth-json.mjs)
+        if (isDotsExport(readFileSync(join(testDir, file), 'utf8'))) {
+            lines.push(`${set}/${name}: a dots export, not truth in data units; skipped (truth/${name}.json is scored)`);
+            return out;
+        }
+        const jpeg = /\.jpe?g$/i.test(img);
+        const meta = { set, image: basename(img), truth: 'data' };
+        const image = readImage(img);
+        const t0 = Date.now();
+        const px = truthPixelsByTicks(readTruthCsv(join(testDir, file)), detectAxes(jpeg ? restoreChroma(image) : image));
+        if (px.error)
+            return fail(meta, px.error);
+        let results;
+        try {
+            results = extractWithHough(image, jpeg);
+        }
+        catch (e) {
+            return fail(meta, e.message);
+        }
+        const mark = results[0]?.jpegAuto ? ' (J)' : '';
+        const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
+        const ms = Date.now() - t0;
+        if (px.lanesFromDots) {
+            px.laneCenters = laneCentersFromDots(results.flatMap(r => r.fit.dots.map(d => d.x)), new Set(px.dots.map(d => d.lane)).size);
+            if (!px.laneCenters)
+                return fail(meta, 'fewer dots found than lanes');
+        }
+        record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
+            : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms), { ...meta, mode: modeOf(results, jpeg) });
+        return out;
+    }
+    const { set, file } = job;
+    const name = basename(file, '.json');
+    const truth = readTruthJson(join(ROOT, set, 'truth', file));
+    const img = join(ROOT, set, truth.image ?? name + '.png');
+    const meta = { set, image: basename(img), truth: 'hand' };
+    if (!existsSync(img))
+        return fail(meta, `image ${truth.image} absent`);
+    const jpeg = /\.jpe?g$/i.test(img);
+    const image = readImage(img);
+    // JPEG decoders differ, so only a PNG's hash can be checked
+    if (!jpeg && truth.hash && pixelHash(image) !== truth.hash)
+        return fail(meta, `the image's pixel hash ${pixelHash(image)} isn't the truth's ${truth.hash}; skipped`);
+    const t0 = Date.now();
+    let results;
+    try {
+        results = extractWithHough(image, jpeg);
+    }
+    catch (e) {
+        return fail(meta, e.message);
+    }
+    const mark = results[0]?.jpegAuto ? ' (J)' : '';
+    const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
+    record(groupRow(label, truth.dots, results, Date.now() - t0), { ...meta, mode: modeOf(results, jpeg) });
+    return out;
+}
+
+/**
+ * Run the jobs, `opts.jobs` at a time, and hand each one's result to `report` in the jobs' order. One at a time they
+ * run here; more, in that many worker threads (this file again, in its worker role below), each taking the next job
+ * as it finishes one. The images are independent, so the rows are the same either way; the times are not: a fit
+ * shares the machine's memory and caches with the others, so compare times only between runs at one job count.
+ */
+function runJobs(jobs, opts, report) {
+    if (opts.jobs <= 1 || jobs.length <= 1) {
+        for (const job of jobs)
+            report(runJob(job, opts));
+        return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+        const results = new Array(jobs.length);
+        const workers = [];
+        let next = 0;
+        let reported = 0;
+        const stop = err => {
+            for (const w of workers)
+                w.terminate();
+            if (err)
+                reject(err);
+            else
+                resolve();
+        };
+        for (let k = 0; k < Math.min(opts.jobs, jobs.length); k++) {
+            const worker = new Worker(new URL(import.meta.url), { workerData: { benchOpts: opts } });
+            let current = -1;
+            const take = () => {
+                current = next++;
+                worker.postMessage(jobs[current]);
+            };
+            worker.on('message', ({ result, error }) => {
+                if (error) {
+                    stop(new Error(error));
+                    return;
+                }
+                results[current] = result;
+                while (reported < jobs.length && results[reported])
+                    report(results[reported++]);
+                if (reported === jobs.length)
+                    stop();
+                else if (next < jobs.length)
+                    take();
+            });
+            worker.on('error', stop);
+            workers.push(worker);
+            take();
+        }
+    });
+}
+
+async function main() {
+    const opts = parseArgs(process.argv.slice(2));
+    const rows = [];
+    const failures = [];
+    await runJobs(listJobs(opts), opts, result => {
+        for (const line of result.lines)
+            console.log(line);
+        rows.push(...result.rows);
+        failures.push(...result.failures);
+    });
     print(rows);
     if (opts.json) {
         const keep = ({ name, n, found, precision, recall, countError, rmse, flagged, radius, ms, families, meta }) =>
             ({ ...meta, name, n, found, precision, recall, countError, rmse, flagged, radius, ms, families });
-        writeFileSync(opts.json, JSON.stringify({ seeds: opts.seeds, rows: rows.map(keep), failures }, null, 1) + '\n');
+        writeFileSync(opts.json, JSON.stringify({ seeds: opts.seeds, jobs: opts.jobs, rows: rows.map(keep), failures }, null, 1) + '\n');
     }
+}
+
+if (!isMainThread && workerData?.benchOpts) {
+    // a worker of runJobs: one job at a time, as they are sent
+    parentPort.on('message', job => {
+        try {
+            parentPort.postMessage({ result: runJob(job, workerData.benchOpts) });
+        }
+        catch (e) {
+            parentPort.postMessage({ error: `${job.set ?? job.name}/${job.file ?? job.seed}: ${e.stack}` });
+        }
+    });
+}
+else if (isMainThread && process.argv[1] === fileURLToPath(import.meta.url)) {
+    main();
 }

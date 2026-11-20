@@ -2705,3 +2705,36 @@ with no console errors. Tests: lineOpening against its definition, every tap tes
 bit (360 cases: sizes from 1 × 1, lengths 1 to 51, 12 directions, zeros of both signs and NaN) in
 test/outline.test.js; suppressNear against testing every kept peak (random peaks at four densities, and a lattice
 exactly the distance apart, where "closer than" decides) in test/fit.test.js.
+
+**The benchmark, several images at a time** (2026-11-20)
+
+`npm run bench -- --jobs n` (and `npm run results -- --jobs n`) fits n images at a time. tools/bench.mjs's main
+loop, four nested loops that read, extracted, scored and printed as they went, is now a list of jobs (listJobs: one
+per synthetic graph and per image with truth, in the order of the rows), a function that runs one (runJob: the rows
+it adds, the failures, the lines to print) and a runner (runJobs) that takes them one at a time in the process, as
+before, or n at a time in worker threads, each worker taking the next job as it finishes one. Results are reported
+in the jobs' order whatever order they finish in, so the table, the --json rows and the messages are the same. The
+default is 10 at a time (or the machine's cores, if fewer), chosen from the measurements below; `--jobs 1` is the
+serial run. No dependency: node:worker_threads, with the file itself as the worker.
+
+Measured, on the full bench (144 rows; 12 performance and 4 efficiency cores):
+
+| Jobs | Wall clock | RESULTS.md's times, summed |
+|---|---|---|
+| 1 | 1,115 s | 1,058 s |
+| 6 | 269 s | 1,166 s |
+| 10 | 207 s | 1,205 s |
+
+- 4.1 times as fast at 6 jobs and 5.4 at 10. The floor on the wall clock is the slowest image, phase1 (117 s at 6
+  jobs).
+- The rows are identical: 1, 6 and 10 jobs, every number of RESULTS.md's 128 table rows but the time (and the 144
+  --json rows of 6 against 10).
+- The times are not: an image's time grows with what runs beside it, 10% in all at 6 jobs and 14% at 10. So times
+  compare only between runs at one job count, and RESULTS.md's header now says how its images were fitted.
+
+RESULTS.md is regenerated from the serial run (`--jobs 1`): every row as before but the times, which sum to 1,058 s
+against 1,111 s before the two speed-ups of the last entry, 5% less. The next `npm run results` without `--jobs 1`
+will give times at 10 jobs, about 14% longer, and say so in its header.
+
+Test: test/bench.test.js runs the bench as a program on four synthetic graphs, alone and with three workers, and
+compares the rows, their order and the printed table apart from the times.

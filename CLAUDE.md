@@ -83,12 +83,16 @@ test/*.test.js          node:test + node:assert/strict
   --until 'window.renderCheckResult' --eval 'JSON.stringify(window.renderCheckResult)' --screenshot out.png`.
 - Measure a dot family: `npm run measure -- testgraphs/<image> [--seed r,g,b] [--out dir]` (writes the overlap
   count image D to `dir`).
-- Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose]` runs style, mask and
+- Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose --jobs n]` runs style, mask and
   fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
   sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
-  time. `--set none` runs the synthetic presets alone. Record results in PLAN.md.
-- Results table: `npm run results` runs the full benchmark and rewrites RESULTS.md, a table per set with every
-  image's counts, precision, recall and notes (`--json file` on the bench gives its rows). The numbers are
+  time. `--set none` runs the synthetic presets alone. It fits 10 images at a time in worker threads (`--jobs n`
+  for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
+  (14% in all at 10), so compare times only between runs at one job count.
+  Record results in PLAN.md.
+- Results table: `npm run results [-- --jobs n]` runs the full benchmark (about 3.5 minutes at the default 10 jobs,
+  18.5 at `--jobs 1`) and rewrites RESULTS.md, a table per set with every image's counts, precision, recall and
+  notes (`--json file` on the bench gives its rows); its header says how many images were fitted at a time. The numbers are
   regenerated; the Notes column is hand-written and kept. Regenerate it after a change that moves bench numbers, and
   keep each image's note current (what it shows, what fails and why).
 
