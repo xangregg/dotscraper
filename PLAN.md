@@ -2585,3 +2585,31 @@ the same 118.
 pathogen to the same 468 (78 flagged), with no console errors. No speed change was looked for or claimed. Tests:
 test/stats.test.js (both medians, quantile, the argument left as it was), colorDistance against the three old
 spellings and sub, dot and unit in test/image.test.js, components8 in test/layers.test.js.
+
+**The long family functions, as named stages** (2026-11-20)
+
+The three functions that decide what an image's families are had grown by a rule at a time, each rule a block of
+code under its comment in one long body. They are now a list of stages, each a function named for what it decides,
+with its comment above it. No rule changed, and the stages run in the same order on the same values.
+
+- **opaqueFamilies** (opaque.js, 217 lines → 33). The search's state is one object passed through the stages: what
+  is given (the scan, the translucent families and their level colors, other ink, the color clusters) and what is
+  found (`out`, `rejected`, `blendInk`). The stages: `tryCluster` for each cluster (the screens, cheapest first:
+  `onLevelLine`, a found family's outline or color, `interiorShare`, `isBlend`, `throughLayer`; then
+  `outlineReadings`, the plain measure and readings (1) to (4)); the three retries of the rejected clusters,
+  `fillsInFoundOutlines`, `solidsInOutlineColor` and `siblingFills`; the page-colored fill; specks; and
+  `measuredForFit`. The screens were closures over `out` before; they still read the families found so far, through
+  the state.
+- **findCandidates** (style.js, 41 → 10): `translucentFamilies` (`levelCandidates`, `withoutSolidBands`, the box
+  bands, the blends), then the opaque families, then the translucent ones that are an opaque family's outlines.
+- **estimateFamilies** (families.js, 98 → 41): the three readings that can settle an image (outlined dots,
+  `scaleReading`, no family by color), then `shadedRegions`, `familyEstimates` and `withRingFits`.
+
+The files are longer for it (opaque.js 1,863 → 1,930, style.js 421 → 439, families.js 450 → 485: function
+headers, and a line or two above each stage saying what it takes and gives).
+
+Results: every fitted dot and every family estimate of the 118 local images identical, by digest; 216 tests pass
+(1 standing skip). In the app, where the scan runs in its worker with progress reported by stage, Laser fits to 73
+dots, bench1 group-smoother-ci to 100 in two families with its band divided out and noted, and dog-ages to 95,
+with no console errors. No test was added: the stages are private to their modules, and the tests of
+opaqueFamilies, findCandidates and estimateFamilies through real and synthetic images cover them as before.

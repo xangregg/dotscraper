@@ -1536,53 +1536,153 @@ export function isDotFamily(f) {
  * (levels of rejected translucent candidates): other ink for every family but one of their own color. `onProgress`
  * gets the share of color clusters examined (0–1).
  *
+ * The stages, in order: each color cluster is screened, measured and read as a plain, outlined or stroked fill
+ * (tryCluster); the clusters that failed are tried again with what the families found since can tell about them
+ * (fillsInFoundOutlines, solidsInOutlineColor, siblingFills); a fill in the page's color is looked for; specks go;
+ * and every family is measured again against the others for the fit (measuredForFit).
+ *
  * @param {Scan} scan  its image, backgrounds (the page first, then regions under the dots) and tolerances
  */
 export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
-    const { image, backgrounds } = scan;
-    const onTranslucent = c => translucent.some(f => {
+    // The search's state, passed through its stages. `out` is the families found so far, which the screens of later
+    // clusters ask about; `rejected` the clusters measured and found no family, for the stages after the loop.
+    const search = {
+        scan, translucent, ink,
+        // translucent families' level colors are theirs (see measureOpaque's `others`)
+        levelColors: translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color)),
+        // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and
+        // so count as a background color; the dot test tells it from a panel.
+        clusters: colorClusters(scan.image, scan.backgrounds.slice(0, 1)),
+        out: [],
+        rejected: [],
+        // ink in a blend of a family's color and the page (BLEND_INK_MIN_INTERIOR): other ink for the final measure
+        blendInk: [],
+    };
+    for (const [i, cl] of search.clusters.entries()) {
+        onProgress?.(i / search.clusters.length);
+        tryCluster(search, cl.color);
+    }
+    // (after the loop: clusters are taken largest first, so the family that explains a cluster may come later)
+    fillsInFoundOutlines(search);
+    solidsInOutlineColor(search);
+    siblingFills(search);
+    const paged = pageFilledFamily(scan);
+    if (paged)
+        search.out.push(paged);
+    // Specks go before the others are measured again: a speck family's color can be a real family's stroke (hair3:
+    // the black of the decimal points is the pink dots' outline, which excluded left their radius 18 for 28)
+    const final = measuredForFit(search, withoutSpecks(search.out, translucent.length > 0));
+    for (const f of final)
+        f.under = final.filter(g => g !== f && drawnUnder(f, g, scan.image.width)).map(g => g.seed);
+    return final.sort((a, b) => b.dots - a.dots);
+}
+
+function sameCluster(a, b) {
+    return colorDistance(a, b) <= CLUSTER_TOL;
+}
+
+// the colors of other marks that aren't a seed's own
+function otherInk(search, seed) {
+    return search.ink.filter(c => colorDistance(c, seed) > CLUSTER_TOL);
+}
+
+// whether a color lies on a translucent family's color line
+function onLevelLine(translucent, c) {
+    return translucent.some(f => {
         const { B, u } = f.line;
         const e = B.map((v, ch) => v - c[ch]);
         const t = e[0] * u[0] + e[1] * u[1] + e[2] * u[2];
         return Math.hypot(e[0] - t * u[0], e[1] - t * u[1], e[2] - t * u[2]) <= CLUSTER_ON_LINE_TOL;
     });
+}
+
+// One color cluster: the screens, cheapest first, then the measure and the outline readings. A family goes to
+// search.out; a cluster measured and found none to search.rejected.
+function tryCluster(search, c) {
+    const { scan, out } = search;
+    if (onLevelLine(search.translucent, c) || out.some(f => f.outline && sameCluster(f.outline, c)))
+        return;
+    // a second peak of one family's color (two bins' peaks over one pure gray, 5 units apart: two families of the
+    // same dots)
+    if (out.some(f => colorDistance(f.seed, c) <= INK_TOL))
+        return;
+    // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
+    const { count, share } = interiorShare(scan.image, c);
+    if (isBlend(search, c, share)) {
+        // (not near the page or a family's color: those pixels are the page's, or the family's own shading)
+        if (count && share >= BLEND_INK_MIN_INTERIOR && ![...scan.backgrounds, ...out.map(f => f.seed)].some(P => sameCluster(P, c)))
+            search.blendInk.push(c);
+        return;
+    }
+    if (throughLayer(search, c))
+        return;
+    if (!count || share < DOT_MIN_INTERIOR)
+        return;
+    const { fam, plain, found } = outlineReadings(search, c);
+    fam.interior = share;
+    if (found)
+        out.push(fam);
+    else
+        search.rejected.push(Object.assign(plain, { interior: share }));
+}
+
+// A color's pixels (within CLUSTER_TOL, off the image's border) and the share of them whose eight neighbors are its
+// color too (0 when it has none).
+function interiorShare(image, color) {
     const { width, height, data } = image;
-    let out = [];
-    const rejected = [];
-    // ink in a blend of a family's color and the page (BLEND_INK_MIN_INTERIOR): other ink for the final measure
-    const blendInk = [];
-    // a cluster between a family found already and that family's background, its outline or a page color is an
-    // antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family"). Between a fill and
-    // its outline, only if it is mostly edge, as a rim is: other fills of an outlined scale sit there too (phase1:
-    // grays 136 and 82 between gray 187 and the black outline, 62% interior; a rim is 1–2 px wide, unless the fill's
-    // own tolerance takes in fill pixels: a synthetic rim at 149, 6, 220 was 39 units from its fill)
-    const isOutline = c => out.some(f => f.outline && colorDistance(f.outline, c) <= CLUSTER_TOL);
-    const near = (a, b) => colorDistance(a, b) <= CLUSTER_TOL;
-    const rimOf = (f, c, interiorShare) => interiorShare < BLEND_OUTLINE_MAX_INTERIOR || near(c, f.seed) || near(c, f.outline);
+    const member = nearColor(data, color, CLUSTER_TOL);
+    let count = 0;
+    let interior = 0;
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const p = y * width + x;
+            if (!member(p))
+                continue;
+            count++;
+            let all = true;
+            for (let dy = -1; dy <= 1 && all; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (!member(p + dy * width + dx)) {
+                        all = false;
+                        break;
+                    }
+                }
+            }
+            if (all)
+                interior++;
+        }
+    }
+    return { count, share: count ? interior / count : 0 };
+}
+
+// A cluster between a family found already and that family's background, its outline or a page color is an
+// antialiased rim, not a family (synthetic swarm: maroon's blend with white made a "family"). Between a fill and
+// its outline, only if it is mostly edge, as a rim is: other fills of an outlined scale sit there too (phase1:
+// grays 136 and 82 between gray 187 and the black outline, 62% interior; a rim is 1–2 px wide, unless the fill's
+// own tolerance takes in fill pixels: a synthetic rim at 149, 6, 220 was 39 units from its fill)
+function isBlend(search, c, interiorShare) {
+    const rimOf = f => interiorShare < BLEND_OUTLINE_MAX_INTERIOR || sameCluster(c, f.seed) || sameCluster(c, f.outline);
     // (an outlined family's background is often its outline's color, all around its dots: as the outline, a rim only
     // when rimOf says; else every gray between a gray fill and its black outline was a blend: a synthetic copy of
     // phase1 without curves, its 82 gray dots beside 187s)
-    const bases = (f, c, interiorShare) => {
-        const rim = f.outline && rimOf(f, c, interiorShare);
-        const ownOutline = f.outline && near(f.background, f.outline);
-        return [...(ownOutline && !rim ? [] : [f.background]), ...(rim ? [f.outline] : []), ...backgrounds];
+    const bases = f => {
+        const rim = f.outline && rimOf(f);
+        const ownOutline = f.outline && sameCluster(f.background, f.outline);
+        return [...(ownOutline && !rim ? [] : [f.background]), ...(rim ? [f.outline] : []), ...search.scan.backgrounds];
     };
-    const isBlend = (c, interiorShare) => out.some(f => bases(f, c, interiorShare).some(P => isMixOf(c, P, f.seed)));
-    // translucent families' level colors are theirs (see measureOpaque's `others`)
-    const levelColors = translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color));
-    const inkFor = seed => ink.filter(c => colorDistance(c, seed) > CLUSTER_TOL);
-    // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and so
-    // count as a background color; the dot test tells it from a panel.
-    const clusters = colorClusters(image, backgrounds.slice(0, 1));
-    // A family's dots seen through a translucent layer of another color P (a band drawn over them) are no family of
-    // their own: c' − P = s·(c − page), with c a found family's color or a translucent family's level. Their dots
-    // share the family's radius by construction, and as a candidate they keep the band from being divided out
-    // (background.js). bench3 ANOVA: pink under a lavender band, 197, 106, 136; bench1 group-smoother-ci: the red
-    // levels under the CI band, 197, 106, 135, a family of 10 once the levels' pixels stopped counting as its own.
-    const page = backgrounds[0];
+    return search.out.some(f => bases(f).some(P => isMixOf(c, P, f.seed)));
+}
+
+// A family's dots seen through a translucent layer of another color P (a band drawn over them) are no family of
+// their own: c' − P = s·(c − page), with c a found family's color or a translucent family's level. Their dots
+// share the family's radius by construction, and as a candidate they keep the band from being divided out
+// (background.js). bench3 ANOVA: pink under a lavender band, 197, 106, 136; bench1 group-smoother-ci: the red
+// levels under the CI band, 197, 106, 135, a family of 10 once the levels' pixels stopped counting as its own.
+function throughLayer(search, c) {
+    const page = search.scan.backgrounds[0];
     // (P is neither color, and off the family's line from the page: see LAYER_MIN_OFF)
-    const throughLayer = c => [...levelColors, ...out.map(g => g.seed)].some(F => clusters.some(({ color: P }) => {
-        if (near(P, F) || near(P, c))
+    return [...search.levelColors, ...search.out.map(g => g.seed)].some(F => search.clusters.some(({ color: P }) => {
+        if (sameCluster(P, F) || sameCluster(P, c))
             return false;
         const w = F.map((v, ch) => v - page[ch]);
         if (alongLine(P.map((x, ch) => x - page[ch]), w).off < LAYER_MIN_OFF)
@@ -1590,115 +1690,79 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
         const { m, off } = alongLine(c.map((x, ch) => x - P[ch]), w);
         return m > MIX_SHARE[0] && m < MIX_SHARE[1] && off <= CLUSTER_ON_LINE_TOL;
     }));
-    for (const [i, cl] of clusters.entries()) {
-        onProgress?.(i / clusters.length);
-        if (onTranslucent(cl.color) || isOutline(cl.color))
-            continue;
-        // a second peak of one family's color (two bins' peaks over one pure gray, 5 units apart: two families of the
-        // same dots)
-        if (out.some(f => colorDistance(f.seed, cl.color) <= INK_TOL))
-            continue;
-        // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
-        const c = cl.color;
-        const member = nearColor(data, c, CLUSTER_TOL);
-        let count = 0;
-        let interior = 0;
-        for (let y = 1; y < height - 1; y++) {
-            for (let x = 1; x < width - 1; x++) {
-                const p = y * width + x;
-                if (!member(p))
-                    continue;
-                count++;
-                let all = true;
-                for (let dy = -1; dy <= 1 && all; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (!member(p + dy * width + dx)) {
-                            all = false;
-                            break;
-                        }
-                    }
-                }
-                if (all)
-                    interior++;
+}
+
+// A cluster's color measured as a plain fill, and when that is no dot family, as an outlined or stroked one.
+// Returns the reading that stands (`fam`), the plain one, and whether it is a family.
+//
+// Outlined or stroked fills, in order: (1) a ring whose color is thin over the whole image is an outline that
+// shows its own color (JMP's 1.7 px outlines); (2) else a fill inside a stroke too thin to show its color, off
+// the line from the page to the fill (engagement1, cells1: it places colored fills better than the outline
+// model, rmse 0.28 px against 0.95); (3) else an outline whose color is also other ink, counted only next to
+// the fill (measureOpaque's OUTLINE_REACH), for a fill that is thick as an outline is not (phase1: black
+// outlines around grays, which the stroke model can't read, white, gray and black being on one line, with
+// text, axes and a black colorbar block in the outline's color; hair2's pink, one strong arc as stroked).
+// Not around a translucent family's level (economist: a red–blue lens inside red dots made a phantom
+// "outlined" family). In (3) the outline is darker than the fill, as ink shared with text is: a lighter ring is
+// a band or region the dots lie under (bench3 ANOVA: pink under a pale blue band read as fills "outlined" in
+// the band's color, a second family of 31). That guard and the thick fill stop economist's lens, so (3) may
+// take a ring on a translucent family's line: gray outlines and a gray line can read as one (degradation1:
+// outline 136 and line 166 as two levels of a "family" with no dots).
+function outlineReadings(search, color) {
+    const { scan } = search;
+    const { image, backgrounds } = scan;
+    const plain = measureOpaque(scan, color, [...search.levelColors, ...otherInk(search, color)]);
+    let fam = plain;
+    const ring = plain.background;
+    const notPage = !backgrounds.some(P => colorDistance(P, ring) <= CLUSTER_TOL);
+    const ringable = !onLevelLine(search.translucent, ring) && notPage;
+    const outlinedFamily = () => {
+        const outlined = measureOpaque(scan, color, [], ring);
+        return isDotFamily(outlined) ? { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius } : null;
+    };
+    if (!isDotFamily(fam) && ringable && isThin(scan, ring))
+        fam = outlinedFamily() ?? fam;
+    if (!isDotFamily(fam))
+        fam = strokedFamily(scan, color, plain) ?? fam;
+    if (!isDotFamily(fam) && notPage && !isThin(scan, color) && luminance(ring) < luminance(color))
+        fam = outlinedFamily() ?? fam;
+    // (4) else a ring in a darker shade of the fill's own hue, when the fill's surroundings are the page: a line
+    // in nearly the fill's color, joined to it, can border the page longer than the dots' rings do (kite2: a curve
+    // at 211, 136, 88 beside fills at 209, 131, 82 in rings of 193, 88, 32, the ring on the line from the page
+    // through the fill, 6 units off it; text and axes are far off an orange fill's line)
+    // The fill is the commonest color just inside the rings, not the cluster's mean, which the line pulls off it
+    // (kite2: 210, 134, 85; read against it the fills came out 0.94 inside and failed as round). The round fills
+    // in rings of their darker shade are the evidence, so the coverage need only be DOT_MIN_COVERAGE_ANY: the line
+    // is the fill's color too (kite2: 0.32, half its fill-colored pixels the curve's; 8 strong centers at 19.3 px)
+    let byHueRing = false;
+    if (!isDotFamily(fam) && !notPage) {
+        for (const hue of hueRings(image, color, search.clusters, backgrounds[0])) {
+            const fill = ringFill(image, color, hue);
+            const outlined = fill && measureOpaque(scan, fill, [], hue);
+            if (outlined && (isDotFamily(outlined) || (outlined.fillRadius && radiusPlausible(outlined.radius, outlined.isolated.length)
+                && outlined.strongDots >= DOT_MIN_STRONG && outlined.coverage >= DOT_MIN_COVERAGE_ANY))) {
+                fam = { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius };
+                byHueRing = true;
+                break;
             }
         }
-        if (isBlend(cl.color, count ? interior / count : 0)) {
-            // (not near the page or a family's color: those pixels are the page's, or the family's own shading)
-            if (count && interior / count >= BLEND_INK_MIN_INTERIOR && ![...backgrounds, ...out.map(f => f.seed)].some(P => near(P, c)))
-                blendInk.push(c);
-            continue;
-        }
-        if (throughLayer(cl.color))
-            continue;
-        if (!count || interior / count < DOT_MIN_INTERIOR)
-            continue;
-        let fam = measureOpaque(scan, cl.color, [...levelColors, ...inkFor(cl.color)]);
-        // Outlined or stroked fills, in order: (1) a ring whose color is thin over the whole image is an outline that
-        // shows its own color (JMP's 1.7 px outlines); (2) else a fill inside a stroke too thin to show its color, off
-        // the line from the page to the fill (engagement1, cells1: it places colored fills better than the outline
-        // model, rmse 0.28 px against 0.95); (3) else an outline whose color is also other ink, counted only next to
-        // the fill (measureOpaque's OUTLINE_REACH), for a fill that is thick as an outline is not (phase1: black
-        // outlines around grays, which the stroke model can't read, white, gray and black being on one line, with
-        // text, axes and a black colorbar block in the outline's color; hair2's pink, one strong arc as stroked).
-        // Not around a translucent family's level (economist: a red–blue lens inside red dots made a phantom
-        // "outlined" family). In (3) the outline is darker than the fill, as ink shared with text is: a lighter ring is
-        // a band or region the dots lie under (bench3 ANOVA: pink under a pale blue band read as fills "outlined" in
-        // the band's color, a second family of 31). That guard and the thick fill stop economist's lens, so (3) may
-        // take a ring on a translucent family's line: gray outlines and a gray line can read as one (degradation1:
-        // outline 136 and line 166 as two levels of a "family" with no dots).
-        const plain = fam;
-        const ring = plain.background;
-        const notPage = !backgrounds.some(P => colorDistance(P, ring) <= CLUSTER_TOL);
-        const ringable = !onTranslucent(ring) && notPage;
-        const outlinedFamily = () => {
-            const outlined = measureOpaque(scan, cl.color, [], ring);
-            return isDotFamily(outlined) ? { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius } : null;
-        };
-        if (!isDotFamily(fam) && ringable && isThin(scan, ring))
-            fam = outlinedFamily() ?? fam;
-        if (!isDotFamily(fam))
-            fam = strokedFamily(scan, cl.color, plain) ?? fam;
-        if (!isDotFamily(fam) && notPage && !isThin(scan, cl.color) && luminance(ring) < luminance(cl.color))
-            fam = outlinedFamily() ?? fam;
-        // (4) else a ring in a darker shade of the fill's own hue, when the fill's surroundings are the page: a line
-        // in nearly the fill's color, joined to it, can border the page longer than the dots' rings do (kite2: a curve
-        // at 211, 136, 88 beside fills at 209, 131, 82 in rings of 193, 88, 32, the ring on the line from the page
-        // through the fill, 6 units off it; text and axes are far off an orange fill's line)
-        // The fill is the commonest color just inside the rings, not the cluster's mean, which the line pulls off it
-        // (kite2: 210, 134, 85; read against it the fills came out 0.94 inside and failed as round). The round fills
-        // in rings of their darker shade are the evidence, so the coverage need only be DOT_MIN_COVERAGE_ANY: the line
-        // is the fill's color too (kite2: 0.32, half its fill-colored pixels the curve's; 8 strong centers at 19.3 px)
-        let byHueRing = false;
-        if (!isDotFamily(fam) && !notPage) {
-            for (const hue of hueRings(image, cl.color, clusters, backgrounds[0])) {
-                const fill = ringFill(image, cl.color, hue);
-                const outlined = fill && measureOpaque(scan, fill, [], hue);
-                if (outlined && (isDotFamily(outlined) || (outlined.fillRadius && radiusPlausible(outlined.radius, outlined.isolated.length)
-                    && outlined.strongDots >= DOT_MIN_STRONG && outlined.coverage >= DOT_MIN_COVERAGE_ANY))) {
-                    fam = { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius };
-                    byHueRing = true;
-                    break;
-                }
-            }
-        }
-        fam.interior = interior / count;
-        if (byHueRing || isDotFamily(fam))
-            out.push(fam);
-        else
-            rejected.push(Object.assign(plain, { interior: interior / count }));
     }
-    // Fills in a found family's outline (after the loop, for the same reason): a plot draws every family's outline
-    // alike, so a fill whose surroundings read as the page, its line of its own color outweighing its rings, is
-    // tried in it (phase1: gray 228's 13 px curve made its ring white; in the 187s' black, 18 strong dots). Darker
-    // than the fill, as reading (3) asks.
+    return { fam, plain, found: byHueRing || isDotFamily(fam) };
+}
+
+// Fills in a found family's outline: a plot draws every family's outline alike, so a fill whose surroundings read
+// as the page, its line of its own color outweighing its rings, is tried in it (phase1: gray 228's 13 px curve made
+// its ring white; in the 187s' black, 18 strong dots). Darker than the fill, as reading (3) asks.
+function fillsInFoundOutlines(search) {
+    const { scan, out, rejected } = search;
     const outlines = [];
     for (const f of out) {
-        if (f.outline && !f.pageFill && !outlines.some(O => near(O, f.outline)))
+        if (f.outline && !f.pageFill && !outlines.some(O => sameCluster(O, f.outline)))
             outlines.push(f.outline);
     }
     for (const [i, f] of [...rejected.entries()].reverse()) {
         for (const O of outlines) {
-            if (near(O, f.seed) || luminance(O) >= luminance(f.seed) || isThin(scan, f.seed))
+            if (sameCluster(O, f.seed) || luminance(O) >= luminance(f.seed) || isThin(scan, f.seed))
                 continue;
             const outlined = measureOpaque(scan, f.seed, [], O);
             if (isDotFamily(outlined)) {
@@ -1708,13 +1772,17 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
             }
         }
     }
-    // Dots filled with a found family's outline color (phase1's black: fill and outline one color, beside grays in
-    // black outlines). That color is also the other dots' rings and, usually, text and axes: its own components give
-    // text's radius (periods, 4.9) and its coverage is tiny (0.01). So it is measured at the outlined families' radius,
-    // their rings theirs (within their outline's width and RING_SLACK of their fills), and its evidence is centers
-    // filled with it at that radius; a glyph holds no filled disc that size.
+}
+
+// Dots filled with a found family's outline color (phase1's black: fill and outline one color, beside grays in
+// black outlines). That color is also the other dots' rings and, usually, text and axes: its own components give
+// text's radius (periods, 4.9) and its coverage is tiny (0.01). So it is measured at the outlined families' radius,
+// their rings theirs (within their outline's width and RING_SLACK of their fills), and its evidence is centers
+// filled with it at that radius; a glyph holds no filled disc that size.
+function solidsInOutlineColor(search) {
+    const { scan, out, rejected } = search;
     for (const [i, f] of [...rejected.entries()].reverse()) {
-        const owners = out.filter(g => g.outline && !g.pageFill && g.fillRadius && near(g.outline, f.seed));
+        const owners = out.filter(g => g.outline && !g.pageFill && g.fillRadius && sameCluster(g.outline, f.seed));
         if (!owners.length)
             continue;
         const rings = out.filter(g => g.outline && g.fillRadius).map(g => ({ fill: g.seed, reach: g.radius - g.fillRadius + RING_SLACK }));
@@ -1725,35 +1793,34 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
             rejected.splice(i, 1);
         }
     }
-    // plain fills at a found family's radius (after the loop: clusters are taken largest first, so the sibling with
-    // strong arcs may come later); each needs its own centers, filled and seen over half their edge
-    const sibling = f => f.radius && out.some(g => !g.pageFill && Math.abs(f.radius - g.radius) <= SIBLING_RADIUS_TOL * g.radius) && !throughLayer(f.seed);
-    for (const f of rejected) {
+}
+
+// Plain fills at a found family's radius (the sibling with strong arcs may come later in the clusters); each needs
+// its own centers, filled and seen over half their edge.
+function siblingFills(search) {
+    const { out } = search;
+    const sibling = f => f.radius && out.some(g => !g.pageFill && Math.abs(f.radius - g.radius) <= SIBLING_RADIUS_TOL * g.radius) && !throughLayer(search, f.seed);
+    for (const f of search.rejected) {
         if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE)
             out.push(f);
     }
-    const paged = pageFilledFamily(scan);
-    if (paged)
-        out.push(paged);
-    // Specks go before the others are measured again: a speck family's color can be a real family's stroke (hair3:
-    // the black of the decimal points is the pink dots' outline, which excluded left their radius 18 for 28)
-    out = withoutSpecks(out, translucent.length > 0);
-    // Measure again with the other families' colors excluded from each, now that they are known, for the fit. The
-    // first measurement decides what is a family: a small one surrounded by others (nicest language's red and dark
-    // blue, about 10 dots each) can fail the test once its neighbors' colors are excluded.
-    const colors = out.map(f => f.seed);
+}
+
+// Each family measured again with the other families' colors excluded, now that they are known, for the fit. The
+// first measurement decides what is a family: a small one surrounded by others (nicest language's red and dark
+// blue, about 10 dots each) can fail the test once its neighbors' colors are excluded.
+function measuredForFit(search, families) {
+    const { scan } = search;
+    const colors = families.map(f => f.seed);
     // with stroked families, every family's coverage gives the other fills' rings to their dots (strokes are usually
     // drawn on every dot, also those whose fill passed as plain: engagement1's navy took the others' rings)
     // (the reach is from the fill's color mask, as strokeColor reads the ring)
-    const stroked = out.some(f => f.stroke);
-    const final = out.map(f => {
-        const rings = f.solidRings ?? (stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
-        const g = measureOpaque(scan, f.seed, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
+    const stroked = families.some(f => f.stroke);
+    return families.map(f => {
+        const rings = f.solidRings ?? (stroked ? families.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
+        const g = measureOpaque(scan, f.seed, [...colors.filter(c => c !== f.seed), ...search.levelColors, ...otherInk(search, f.seed), ...search.blendInk], f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
-    for (const f of final)
-        f.under = final.filter(g => g !== f && drawnUnder(f, g, image.width)).map(g => g.seed);
-    return final.sort((a, b) => b.dots - a.dots);
 }
 
 // Whether opaque family f is drawn under g, from their seam: the pixels of g's ink next to f's dots (f's edgeInk).

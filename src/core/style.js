@@ -164,27 +164,23 @@ export function estimateStyle(image, opts = {}) {
  * @param {Scan} scan
  */
 export function findCandidates(scan, onProgress = null) {
-    const { B } = scan;
-    // A translucent family's first level fills the insides of single dots, so it is thick. A first level that is
-    // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
-    // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
-    // dots as an opaque family).
-    // A candidate whose level 2 lies outside its level 1 is no family (levelsNest); its colors stay other ink for the
-    // opaque families, as when it was dropped later as text (engagement1: black text and the blues' strokes; without
-    // them the blues' fit gave 55 dots for 49, P 0.873)
-    const nesting = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c)
-        .filter(c => c.translucent && !isThin(scan, c.levels[0].color))
-        .map(c => withoutBand(scan, c));
-    const measured = nesting.filter(c => levelsNest(scan, c));
-    const ink = nesting.filter(c => !measured.includes(c)).flatMap(c => c.levels.filter(L => !L.inferred).map(L => L.color));
-    // A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with
-    // a few pixels of other ink on its line for a weak second level (step1: the red band, 9359 flat pixels, and 2 at
-    // a red ring's core); dropped, it is a region (background.js)
+    const { translucent, ink } = translucentFamilies(scan);
+    onProgress?.(TRANSLUCENT_SHARE);
+    const opaque = opaqueFamilies(scan, translucent, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f));
+    // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
+    // gray outlines and the gray line as two levels, no isolated dot, no radius)
+    const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
+    const real = translucent.filter(t => !t.levels.some(L => rims.some(c => colorDistance(c, L.color) <= CLUSTER_TOL)));
+    return [...real, ...opaque];
+}
+
+// The translucent families, and `ink`: the level colors of the candidates that weren't families, other ink for the
+// opaque ones. The stages: the candidates whose levels can be a family's (levelCandidates), less those that are a
+// solid band (withoutSolidBands), each read with a box under its dots if it has one (boxBand), less the blends of two.
+function translucentFamilies(scan) {
+    const { measured, ink } = levelCandidates(scan);
     const lone = measured.map(c => lonelyDots(scan, c));
-    const radii = lone.filter(l => l.length >= DOT_MIN_ISOLATED).map(l => median(l.map(d => d.r)));
-    const kept = radii.length
-        ? measured.filter((c, i) => lone[i].length || !solidRegion(scan, c.levels[0].color, Math.max(...radii)))
-        : measured;
+    const kept = withoutSolidBands(scan, measured, lone);
     // a box under the dots in their hue, read as a level (boxBand), at the family's own lone dots' radius or else
     // the other families', or none
     const anyLone = lone.flat();
@@ -195,14 +191,36 @@ export function findCandidates(scan, onProgress = null) {
     });
     for (const c of translucent)
         c.kind = 'translucent';
-    dropBlends(translucent, B);
-    onProgress?.(TRANSLUCENT_SHARE);
-    const opaque = opaqueFamilies(scan, translucent, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f));
-    // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
-    // gray outlines and the gray line as two levels, no isolated dot, no radius)
-    const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
-    const real = translucent.filter(t => !t.levels.some(L => rims.some(c => colorDistance(c, L.color) <= CLUSTER_TOL)));
-    return [...real, ...opaque];
+    dropBlends(translucent, scan.B);
+    return { translucent, ink };
+}
+
+// The color lines whose levels can be a translucent family's (`measured`), and the level colors of those that
+// can't (`ink`).
+// A translucent family's first level fills the insides of single dots, so it is thick. A first level that is
+// only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
+// 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
+// dots as an opaque family).
+// A candidate whose level 2 lies outside its level 1 is no family (levelsNest); its colors stay other ink for the
+// opaque families, as when it was dropped later as text (engagement1: black text and the blues' strokes; without
+// them the blues' fit gave 55 dots for 49, P 0.873)
+function levelCandidates(scan) {
+    const nesting = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c)
+        .filter(c => c.translucent && !isThin(scan, c.levels[0].color))
+        .map(c => withoutBand(scan, c));
+    const measured = nesting.filter(c => levelsNest(scan, c));
+    const ink = nesting.filter(c => !measured.includes(c)).flatMap(c => c.levels.filter(L => !L.inferred).map(L => L.color));
+    return { measured, ink };
+}
+
+// A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with
+// a few pixels of other ink on its line for a weak second level (step1: the red band, 9359 flat pixels, and 2 at
+// a red ring's core); dropped, it is a region (background.js). `lone` is each candidate's lone dots.
+function withoutSolidBands(scan, measured, lone) {
+    const radii = lone.filter(l => l.length >= DOT_MIN_ISOLATED).map(l => median(l.map(d => d.r)));
+    return radii.length
+        ? measured.filter((c, i) => lone[i].length || !solidRegion(scan, c.levels[0].color, Math.max(...radii)))
+        : measured;
 }
 
 // A translucent candidate's first level can be a band in the family's own hue under or over the dots (step1: the

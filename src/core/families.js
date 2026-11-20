@@ -304,6 +304,13 @@ function familiesExplainInk(image, candidates) {
 }
 
 /**
+ * An image's dot families. Three readings come first, each of which can settle the image and end the scan:
+ * outlined dots whose fills vary (outlineEstimate); dots colored by a scale (scaleReading); and, when no family is
+ * found by its color (estimateStyle), hollow rings. Then, for the families found by color: the shaded regions over
+ * and under the dots (shadedRegions), each family's estimate on the image without the layers over it
+ * (familyEstimates), the outlined ones fitted by their rings (withRingFits), and hollow rings in colors no family
+ * has.
+ *
  * @param {import('./image.js').RgbaImage} image  as analyzed (a JPEG's chroma already restored)
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]
@@ -316,44 +323,75 @@ function familiesExplainInk(image, candidates) {
 export function estimateFamilies(image, opts = {}) {
     const jpeg = !!opts.jpeg;
     const stage = scanStages(opts.onProgress);
+    const settled = estimates => ({ image, layers: null, estimates });
     // a dark ring off the fill plane decides for outlined dots even when the fills also read as a translucent
     // scale (their overlaps show levels too); JMP's outlines, in the fill's own hue, never pass
     stage('outlines');
     const outlined = outlineEstimate(image);
     if (outlined)
-        return { image, layers: null, estimates: [outlined] };
-    let first = null;
+        return settled([outlined]);
     stage('scale');
     // the page, the flat mask and what is asked about the image's colors, once for every estimate of this image
     const scan = scanOf(image, { jpeg });
+    const scaled = scaleReading(image, scan, jpeg, stage);
+    if (scaled.estimate)
+        return settled([scaled.estimate]);
+    let first = scaled.first ?? estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
+    if (!first.candidates.length) {
+        const hollow = hollowEstimates(image, first.background, []);
+        return settled(hollow.length ? hollow : [{ ...first, image }]);
+    }
+    const radius = first.style?.radius ?? first.candidates.find(c => c.radius)?.radius ?? DEFAULT_RADIUS;
+    stage('regions');
+    const { B, layers, overlays, regions } = shadedRegions(image, scan, first, radius);
+    const work = overlays.length ? removeOverlays(image, B, layers) : image;
+    const workScan = work === image ? scan : scanOf(work, { jpeg });
+    if (overlays.length || regions)
+        first = estimateStyle(work, { jpeg, regions, scan: workScan, onProgress: stage('colors again') });
+    const each = stage('families');
+    const merged = mergeAcrossRegions(workScan, B, first.candidates, layers.regions);
+    if (merged)
+        first = estimateStyle(work, { family: 0, candidates: merged, jpeg, scan: workScan });
+    const separated = familyEstimates(work, workScan, first, layers, jpeg, each);
+    const ring = stage('rings');
+    const ringed = withRingFits(work, workScan, withoutSpeckLevels(withSiblingRadii(work, separated)), ring);
+    // hollow rings of a color no family found has (its fill, outline or stroke)
+    const known = ringed.filter(e => e.style).flatMap(e => [e.style.color, e.familyMeasure?.outline, e.familyMeasure?.stroke].filter(Boolean));
+    const hollow = hollowEstimates(work, first.background, known);
+    stage('done');
+    return { image: work, layers, estimates: [...ringed, ...hollow] };
+}
+
+// Dots colored by a scale: `estimate` when the scale settles the image, `first` (the families by their colors, which
+// the caller needs next) when a few families explain it instead, neither when there is no scale.
+function scaleReading(image, scan, jpeg, stage) {
     const scaled = colormapEstimate(scan, jpeg);
-    if (scaled?.scale === 'opaque') {
+    if (!scaled)
+        return {};
+    if (scaled.scale === 'opaque') {
         // opaque fills on a scale whose outlines are a darker shade of each fill: the rings place the dots where
         // the union of discs can't (bench2 gradient-opaque-stroke's dense stacks); unless a few stroked families
         // found one at a time explain the fills (engagement1: five blues in one dark stroke)
         stage('hue outlines');
         const hue = findHueOutlines(image);
         if (hue) {
-            first = estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
-            if (!familiesExplainInk(image, first.candidates))
-                return { image, layers: null, estimates: [outlinedEstimate(image, scan.background, hue)] };
+            const first = estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
+            return familiesExplainInk(image, first.candidates) ? { first } : { estimate: outlinedEstimate(image, scan.background, hue) };
         }
     }
-    if (scaled && !first)
-        return { image, layers: null, estimates: [scaled] };
-    first ??= estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
-    if (!first.candidates.length) {
-        const hollow = hollowEstimates(image, first.background, []);
-        return { image, layers: null, estimates: hollow.length ? hollow : [{ ...first, image }] };
-    }
-    const radius = first.style?.radius ?? first.candidates.find(c => c.radius)?.radius ?? DEFAULT_RADIUS;
-    // A layer over the dots is divided out against the page, so regions are first told from the page. An opaque
-    // family's background is its dots' surroundings, and a band most of them lie in (kite1: the red dots inside the
-    // red band, 254, 227, 225) made the page a "region" under the dots and the band none, so the cyan dots under it
-    // were never seen. Without a layer over the dots, regions are told from the first family's background as before:
-    // the regions under the dots are read against their own colors either way, and the fits were tuned with it
-    // (from the page, violin-beeswarm's violins under the dots gave 18 more extras, P 0.985 to 0.960).
-    stage('regions');
+    return { estimate: scaled };
+}
+
+// The shaded regions of the image: `layers` (background.js), the color B they were told from, the `overlays` (layers
+// over the dots, to divide out) and `regions` (the colors of solid regions under opaque dots, or undefined).
+//
+// A layer over the dots is divided out against the page, so regions are first told from the page. An opaque
+// family's background is its dots' surroundings, and a band most of them lie in (kite1: the red dots inside the
+// red band, 254, 227, 225) made the page a "region" under the dots and the band none, so the cyan dots under it
+// were never seen. Without a layer over the dots, regions are told from the first family's background as before:
+// the regions under the dots are read against their own colors either way, and the fits were tuned with it
+// (from the page, violin-beeswarm's violins under the dots gave 18 more extras, P 0.985 to 0.960).
+function shadedRegions(image, scan, first, radius) {
     const page = scan.B;
     let B = page;
     let layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
@@ -366,20 +404,19 @@ export function estimateFamilies(image, opts = {}) {
     // other ink and the mask around it takes the dots' edges (boxdots1: black dots over a red box, recall 0.74)
     const under = layers.regions.filter(r => r.mode === 'under' && solidRegion(scan, r.color, radius)).map(r => r.color);
     const regions = under.length && first.candidates.some(c => c.kind === 'opaque') ? under : undefined;
-    const work = overlays.length ? removeOverlays(image, B, layers) : image;
-    const workScan = work === image ? scan : scanOf(work, { jpeg });
-    if (overlays.length || regions)
-        first = estimateStyle(work, { jpeg, regions, scan: workScan, onProgress: stage('colors again') });
-    const each = stage('families');
-    const merged = mergeAcrossRegions(workScan, B, first.candidates, layers.regions);
-    if (merged)
-        first = estimateStyle(work, { family: 0, candidates: merged, jpeg, scan: workScan });
+    return { B, layers, overlays, regions };
+}
+
+// One estimate per family candidate (`first` is the first family's), overlapping translucent families separated
+// (unmix.js), each with a note of the layers divided out of the image. `each` gets the share of the families done.
+function familyEstimates(work, workScan, first, layers, jpeg, each) {
     const estimates = [first];
     for (let k = 1; k < first.candidates.length; k++) {
         each(k / first.candidates.length);
         estimates.push(estimateStyle(work, { family: k, candidates: first.candidates, jpeg, scan: workScan }));
     }
     const separated = unmixEstimates(work, estimates, workScan.tol, layers);
+    const overlays = layers.regions.filter(r => r.mode === 'over');
     if (overlays.length) {
         const rgb = c => c.map(Math.round).join(', ');
         const note = overlays.map(r => (r.stack
@@ -388,9 +425,11 @@ export function estimateFamilies(image, opts = {}) {
         for (const e of separated)
             e.notes = [...e.notes, ...note];
     }
-    const ring = stage('rings');
-    const kept = withoutSpeckLevels(withSiblingRadii(work, separated));
-    // outlined opaque families are fitted by their rings (ringEstimate)
+    return separated;
+}
+
+// Outlined opaque families are fitted by their rings (ringEstimate). `ring` gets the share done.
+function withRingFits(work, workScan, kept, ring) {
     const backgrounds = workScan.pageBackgrounds;
     // (a fill in the page's color is no other family's ring owner: it can't be told from the page)
     const fills = kept.filter(e => e.style && !e.familyMeasure?.pageFill).map(e => e.style.color);
@@ -405,11 +444,7 @@ export function estimateFamilies(image, opts = {}) {
             : e;
     });
     ring(kept.length / (kept.length + 1));
-    // hollow rings of a color no family found has (its fill, outline or stroke)
-    const known = ringed.filter(e => e.style).flatMap(e => [e.style.color, e.familyMeasure?.outline, e.familyMeasure?.stroke].filter(Boolean));
-    const hollow = hollowEstimates(work, first.background, known);
-    stage('done');
-    return { image: work, layers, estimates: [...ringed, ...hollow] };
+    return ringed;
 }
 
 // estimateFamilies' progress: stage(name) reports the stage's label at the share of the whole where it starts, and
