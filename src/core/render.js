@@ -265,6 +265,159 @@ export function fromRgba(image) {
     return { width: image.width, height: image.height, data };
 }
 
+/** The smallest rectangle [x0, y0, x1, y1) holding two. */
+export function unionRect(a, b) {
+    return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+}
+
+/**
+ * What an incremental model keeps beside its pixels: the dots' records by id, a spatial grid that finds the dots near
+ * a rectangle, and snapshots of both over a rectangle, so that a rejected trial is undone by a copy instead of a
+ * second render. createDotModel and outline.createOutlineModel differ in what a record holds and in how a rectangle
+ * is rendered from the records; the rest is this.
+ *
+ * A record is any object with x and y (px); the models add what they render from (rect, stamps, z). A grid cell
+ * lists its dots in the order they were put there, which is the order `near` returns them in and so the order a
+ * model composites them in: put, drop and restore keep to one sequence of grid changes for that reason.
+ *
+ * @param {number} width  px
+ * @param {number} height  px
+ * @param {number} radius  px, the dots'
+ * @param {number} kHalf  px, the blur kernel's half-width (0 without blur)
+ * @param {{data: Float32Array, stride: number, blurred: boolean}[]} buffers  the model's planes that a snapshot
+ *   saves: `stride` values per pixel; a `blurred` one is saved over the rectangle grown by kHalf
+ */
+export function createDotStore(width, height, radius, kHalf, buffers) {
+    const cell = Math.max(1, GRID_CELL_RADII * radius);
+    const gw = Math.ceil(width / cell) + 1;
+    const gh = Math.ceil(height / cell) + 1;
+    const grid = Array.from({ length: gw * gh }, () => new Set());
+    const dots = new Map();
+    let nextId = 0;
+
+    function cellOf(x, y) {
+        const gx = Math.min(gw - 1, Math.max(0, Math.floor(x / cell)));
+        const gy = Math.min(gh - 1, Math.max(0, Math.floor(y / cell)));
+        return gy * gw + gx;
+    }
+
+    // ids of the dots whose rectangles can reach the rectangle, in grid order
+    function idsNear(rect) {
+        const [x0, y0, x1, y1] = rect;
+        const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
+        const gy0 = Math.max(0, Math.floor((y0 - radius) / cell));
+        const gx1 = Math.min(gw - 1, Math.floor((x1 + radius) / cell));
+        const gy1 = Math.min(gh - 1, Math.floor((y1 + radius) / cell));
+        const out = [];
+        for (let gy = gy0; gy <= gy1; gy++) {
+            for (let gx = gx0; gx <= gx1; gx++) {
+                for (const id of grid[gy * gw + gx])
+                    out.push(id);
+            }
+        }
+        return out;
+    }
+
+    function blurredRect(rect) {
+        const [x0, y0, x1, y1] = rect;
+        return [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
+    }
+
+    function copyRect(src, stride, rect) {
+        const [x0, y0, x1, y1] = rect;
+        const w = Math.max(0, x1 - x0);
+        const out = new Float32Array(w * Math.max(0, y1 - y0) * stride);
+        for (let y = y0; y < y1; y++)
+            out.set(src.subarray(stride * (y * width + x0), stride * (y * width + x1)), stride * (y - y0) * w);
+        return out;
+    }
+
+    function pasteRect(dst, stride, rect, saved) {
+        const [x0, y0, x1, y1] = rect;
+        const w = Math.max(0, x1 - x0);
+        for (let y = y0; y < y1; y++)
+            dst.set(saved.subarray(stride * (y - y0) * w, stride * (y - y0 + 1) * w), stride * (y * width + x0));
+    }
+
+    return {
+        /** @returns {number} an id no dot has had */
+        newId() {
+            return nextId++;
+        },
+
+        get(id) {
+            return dots.get(id);
+        },
+
+        /** Set a dot's record, new or in place of its old one (which is returned). */
+        put(id, rec) {
+            const old = dots.get(id);
+            if (old)
+                grid[cellOf(old.x, old.y)].delete(id);
+            dots.set(id, rec);
+            grid[cellOf(rec.x, rec.y)].add(id);
+            return old;
+        },
+
+        /** Take a dot out; returns its record. */
+        drop(id) {
+            const d = dots.get(id);
+            grid[cellOf(d.x, d.y)].delete(id);
+            dots.delete(id);
+            return d;
+        },
+
+        /** The records of the dots whose rectangles can reach the rectangle, in grid order. */
+        near(rect) {
+            return idsNear(rect).map(id => dots.get(id));
+        },
+
+        /** @returns {[number, object][]}  every [id, record], in id order (restore can put a dot back at the Map's end) */
+        entries() {
+            return [...dots].sort((a, b) => a[0] - b[0]);
+        },
+
+        /** The pixel rectangle of the output that pixels in `rect` can affect, blur included. */
+        blurredRect,
+
+        /**
+         * Save the state a change within `rect` (a footprint) can alter: the records of the dots that can reach the
+         * rectangle and the buffers over it (grown by the blur for a blurred one). restore() puts it back without
+         * re-rendering, so a rejected trial costs a copy instead of a second render. Only the dots near the rectangle
+         * are saved (in id order, so restore() refills the grid cells in the order a full copy would): a trial's cost
+         * must not grow with the number of dots in the image. Every dot added, moved or removed between the two
+         * calls must have its footprint inside `rect`, before and after.
+         */
+        snapshot(rect) {
+            const outRect = blurredRect(rect);
+            return {
+                rect, outRect,
+                records: idsNear(rect).sort((a, b) => a - b).map(id => [id, dots.get(id)]),
+                saved: buffers.map(b => copyRect(b.data, b.stride, b.blurred ? outRect : rect)),
+            };
+        },
+
+        restore(snap) {
+            const saved = new Map(snap.records);
+            for (const id of idsNear(snap.rect)) {
+                const d = dots.get(id);
+                if (saved.get(id) === d)
+                    continue;
+                grid[cellOf(d.x, d.y)].delete(id);
+                if (!saved.has(id))
+                    dots.delete(id);
+            }
+            for (const [id, d] of snap.records) {
+                if (dots.get(id) !== d) {
+                    grid[cellOf(d.x, d.y)].add(id);
+                    dots.set(id, d);
+                }
+            }
+            buffers.forEach((b, k) => pasteRect(b.data, b.stride, b.blurred ? snap.outRect : snap.rect, snap.saved[k]));
+        },
+    };
+}
+
 /**
  * An incrementally updatable rendering of one dot family over a background. Adding, moving or removing a dot
  * recomputes only the pixels it touches (its bounding box, grown by the blur kernel), so a fit can try a change
@@ -317,20 +470,13 @@ export function createDotModel(background, style) {
         const frac = Math.min(1, Math.max(0, (tPow[k] - Tp) / (tPow[k] - tPow[k + 1])));
         return tableT[k] + frac * (tableT[k + 1] - tableT[k]);
     }
-    const cell = Math.max(1, GRID_CELL_RADII * radius);
-    const gw = Math.ceil(width / cell) + 1;
-    const gh = Math.ceil(height / cell) + 1;
-    const grid = Array.from({ length: gw * gh }, () => new Set());
-    // id → { x, y, rect, stamp }: each dot keeps its coverage over its rectangle, so re-rendering a patch costs a
-    // multiply per covered pixel for the dots that didn't change instead of recomputing their coverage
-    const dots = new Map();
-    let nextId = 0;
-
-    function cellOf(x, y) {
-        const gx = Math.min(gw - 1, Math.max(0, Math.floor(x / cell)));
-        const gy = Math.min(gh - 1, Math.max(0, Math.floor(y / cell)));
-        return gy * gw + gx;
-    }
+    // a record is { x, y, rect, stamp }: each dot keeps its coverage over its rectangle, so re-rendering a patch costs
+    // a multiply per covered pixel for the dots that didn't change instead of recomputing their coverage
+    const store = createDotStore(width, height, radius, kHalf, [
+        { data: T, stride: 1, blurred: false },
+        { data: composite.data, stride: CH, blurred: false },
+        ...(kernel ? [{ data: output.data, stride: CH, blurred: true }] : []),
+    ]);
 
     // pixel rectangle [x0, y0, x1, y1) a dot at (x, y) can touch, clipped to the image
     function dotRect(x, y) {
@@ -361,39 +507,13 @@ export function createDotModel(background, style) {
         return { x, y, rect, stamp };
     }
 
-    // ids of the dots whose rectangles can reach the rectangle, in grid order
-    function idsNear(rect) {
-        const [x0, y0, x1, y1] = rect;
-        const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
-        const gy0 = Math.max(0, Math.floor((y0 - radius) / cell));
-        const gx1 = Math.min(gw - 1, Math.floor((x1 + radius) / cell));
-        const gy1 = Math.min(gh - 1, Math.floor((y1 + radius) / cell));
-        const out = [];
-        for (let gy = gy0; gy <= gy1; gy++) {
-            for (let gx = gx0; gx <= gx1; gx++) {
-                for (const id of grid[gy * gw + gx])
-                    out.push(id);
-            }
-        }
-        return out;
-    }
-
-    function dotsNear(rect) {
-        return idsNear(rect).map(id => dots.get(id));
-    }
-
-    function blurredRect(rect) {
-        const [x0, y0, x1, y1] = rect;
-        return [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
-    }
-
     function recompute(rect) {
         const [x0, y0, x1, y1] = rect;
         if (x0 >= x1 || y0 >= y1)
             return;
         for (let y = y0; y < y1; y++)
             T.fill(1, y * width + x0, y * width + x1);
-        for (const d of dotsNear(rect)) {
+        for (const d of store.near(rect)) {
             const [dx0, dy0, dx1] = d.rect;
             const dw = dx1 - dx0;
             const ya = Math.max(y0, dy0);
@@ -422,27 +542,7 @@ export function createDotModel(background, style) {
             }
         }
         if (kernel)
-            blurRect(composite, output, kernel, blurredRect(rect));
-    }
-
-    function union(a, b) {
-        return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
-    }
-
-    function copyRect(src, stride, rect) {
-        const [x0, y0, x1, y1] = rect;
-        const w = Math.max(0, x1 - x0);
-        const out = new Float32Array(w * Math.max(0, y1 - y0) * stride);
-        for (let y = y0; y < y1; y++)
-            out.set(src.subarray(stride * (y * width + x0), stride * (y * width + x1)), stride * (y - y0) * w);
-        return out;
-    }
-
-    function pasteRect(dst, stride, rect, saved) {
-        const [x0, y0, x1, y1] = rect;
-        const w = Math.max(0, x1 - x0);
-        for (let y = y0; y < y1; y++)
-            dst.set(saved.subarray(stride * (y - y0) * w, stride * (y - y0 + 1) * w), stride * (y * width + x0));
+            blurRect(composite, output, kernel, store.blurredRect(rect));
     }
 
     return {
@@ -462,10 +562,9 @@ export function createDotModel(background, style) {
          * @returns {number} the new dot's id
          */
         add(x, y) {
-            const id = nextId++;
+            const id = store.newId();
             const rec = makeRecord(x, y);
-            dots.set(id, rec);
-            grid[cellOf(x, y)].add(id);
+            store.put(id, rec);
             recompute(rec.rect);
             return id;
         },
@@ -474,9 +573,8 @@ export function createDotModel(background, style) {
         addAll(points) {
             const ids = [];
             for (const { x, y } of points) {
-                const id = nextId++;
-                dots.set(id, makeRecord(x, y));
-                grid[cellOf(x, y)].add(id);
+                const id = store.newId();
+                store.put(id, makeRecord(x, y));
                 ids.push(id);
             }
             recompute([0, 0, width, height]);
@@ -484,65 +582,22 @@ export function createDotModel(background, style) {
         },
 
         remove(id) {
-            const d = dots.get(id);
-            grid[cellOf(d.x, d.y)].delete(id);
-            dots.delete(id);
-            recompute(d.rect);
+            recompute(store.drop(id).rect);
         },
 
         move(id, x, y) {
-            const d = dots.get(id);
-            grid[cellOf(d.x, d.y)].delete(id);
             const rec = makeRecord(x, y);
-            dots.set(id, rec);
-            grid[cellOf(x, y)].add(id);
-            recompute(union(d.rect, rec.rect));
+            const old = store.put(id, rec);
+            recompute(unionRect(old.rect, rec.rect));
         },
 
-        /**
-         * Save the state a change within `rect` (a footprint) can alter: the records of the dots that can reach the
-         * rectangle and the buffers over it (grown by the blur for the output). restore() puts it back without
-         * re-rendering, so a rejected trial costs a copy instead of a second render. Only the dots near the rectangle
-         * are saved (in id order, so restore() refills the grid cells in the order a full copy would): a trial's cost
-         * must not grow with the number of dots in the image. Every dot added, moved or removed between the two
-         * calls must have its footprint inside `rect`, before and after.
-         */
-        snapshot(rect) {
-            const outRect = blurredRect(rect);
-            return {
-                rect, outRect,
-                records: idsNear(rect).sort((a, b) => a - b).map(id => [id, dots.get(id)]),
-                T: copyRect(T, 1, rect),
-                comp: copyRect(composite.data, CH, rect),
-                out: kernel ? copyRect(output.data, CH, outRect) : null,
-            };
-        },
+        /** Save and put back the state a change within a rectangle can alter (createDotStore's snapshot). */
+        snapshot: store.snapshot,
+        restore: store.restore,
 
-        restore(snap) {
-            const saved = new Map(snap.records);
-            for (const id of idsNear(snap.rect)) {
-                const d = dots.get(id);
-                if (saved.get(id) === d)
-                    continue;
-                grid[cellOf(d.x, d.y)].delete(id);
-                if (!saved.has(id))
-                    dots.delete(id);
-            }
-            for (const [id, d] of snap.records) {
-                if (dots.get(id) !== d) {
-                    grid[cellOf(d.x, d.y)].add(id);
-                    dots.set(id, d);
-                }
-            }
-            pasteRect(T, 1, snap.rect, snap.T);
-            pasteRect(composite.data, CH, snap.rect, snap.comp);
-            if (kernel)
-                pasteRect(output.data, CH, snap.outRect, snap.out);
-        },
-
-        /** @returns {{id: number, x: number, y: number}[]} in id order (restore() can put a dot back at the Map's end) */
+        /** @returns {{id: number, x: number, y: number}[]} in id order */
         dots() {
-            return [...dots].sort((a, b) => a[0] - b[0]).map(([id, d]) => ({ id, x: d.x, y: d.y }));
+            return store.entries().map(([id, d]) => ({ id, x: d.x, y: d.y }));
         },
 
         /** The pixel rectangle [x0, y0, x1, y1) a dot at (x, y) covers (before blur). */
@@ -550,7 +605,7 @@ export function createDotModel(background, style) {
 
         /** The pixel rectangle [x0, y0, x1, y1) of the output a dot at (x, y) can affect, blur included. */
         influenceRect(x, y) {
-            return blurredRect(dotRect(x, y));
+            return store.blurredRect(dotRect(x, y));
         },
     };
 }

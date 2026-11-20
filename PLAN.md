@@ -2527,3 +2527,27 @@ opaque.js → style.js.
 Results: every fitted dot and every family estimate of the 118 local images identical, by digest. Full bench
 1110.0 → 1110.8 s, every row unchanged but for its time. 208 tests pass (1 standing skip). In the app Laser fits
 to the same 73 dots and dog-ages to the same 95.
+
+**One store under both incremental models** (2026-11-20)
+
+createDotModel (render.js) and createOutlineModel (outline.js) each had their own copy of the records Map, the
+spatial grid, the lookup of dots near a rectangle, rectangle copy and paste, and snapshot and restore: about 75
+lines apiece, kept alike by hand (the local-snapshot change of this review was made twice). They now share
+createDotStore (render.js): newId, get, put, drop, near, entries, blurredRect, snapshot and restore, over the
+buffers each model names (T, the composite, the blurred output, with their strides). A model is what differs:
+what a record holds (a stamp; or z, a fill value and two coverages) and how a rectangle is rendered from the
+records. The outline model's snapshot adds the top of its drawing order.
+
+- put, drop and restore make the same grid changes in the same order as before: a grid cell lists its dots in the
+  order they were put there, which is the order the dot model multiplies their stamps in, and the fit is sensitive
+  to that at ties.
+- render.js 570 → 625 lines, outline.js 1155 → 1080: 20 fewer in all, and one copy of the part that is easy to get
+  wrong.
+
+Results: every fitted dot and every family estimate of the 118 local images identical, by digest; 209 tests pass
+(1 standing skip). The full bench run that followed read 6% slower on every image, scan-heavy ones included, with
+other load on the machine; run back to back, three rounds each, the committed code and this take the same time
+(bench2 gradient-dots-stroke 24.0 and 24.2 s, pathogen 24.2 and 24.3, dog-ages 11.1 and 11.1), so RESULTS.md
+keeps the earlier run's times. In the app pathogen fits to the same 468 dots and dog-ages to the same 95. Test:
+createDotStore directly (records, near, a trial with a move, a drop and an add undone, buffers of each kind
+restored, ids never reused) in test/render.test.js.

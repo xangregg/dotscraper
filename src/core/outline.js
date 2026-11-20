@@ -13,7 +13,7 @@
 // dot's own fill (findHueOutlines) are off any plane by an amount that depends on the fill, so there P is read
 // against the local fill instead.
 
-import { pixelCoverage, gaussianKernel, blurRect, createDotModel, solidImage } from './render.js';
+import { pixelCoverage, gaussianKernel, blurRect, createDotModel, createDotStore, unionRect, solidImage } from './render.js';
 import { ringCenters } from './fit.js';
 
 const RING_EDGE_MARGIN = 1; // px around a dot's rectangle for antialiasing
@@ -114,15 +114,13 @@ export function createOutlineModel(base, width, height, style) {
     const T = new Float32Array(n).fill(1);
     const composite = { width, height, data: Float32Array.from(base) };
     const output = kernel ? { width, height, data: Float32Array.from(base) } : composite;
-    const cell = Math.max(1, 2 * radius);
-    const gw = Math.ceil(width / cell) + 1;
-    const gh = Math.ceil(height / cell) + 1;
-    const grid = Array.from({ length: gw * gh }, () => new Set());
-    const dots = new Map(); // id → { x, y, z, rect, fill, ring }
-    let nextId = 0;
+    // a record is { x, y, z, f, rect, fill, ring }
+    const store = createDotStore(width, height, radius, kHalf, [
+        { data: T, stride: 1, blurred: false },
+        { data: composite.data, stride: 1, blurred: false },
+        ...(kernel ? [{ data: output.data, stride: 1, blurred: true }] : []),
+    ]);
     let topZ = 0;
-
-    const cellOf = (x, y) => Math.min(gh - 1, Math.max(0, Math.floor(y / cell))) * gw + Math.min(gw - 1, Math.max(0, Math.floor(x / cell)));
 
     function dotRect(x, y) {
         return [
@@ -151,30 +149,6 @@ export function createOutlineModel(base, width, height, style) {
         return { x, y, z, f, rect, fill, ring: rg };
     }
 
-    // ids of the dots whose rectangles can reach the rectangle, in grid order
-    function idsNear(rect) {
-        const [x0, y0, x1, y1] = rect;
-        const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
-        const gy0 = Math.max(0, Math.floor((y0 - radius) / cell));
-        const gx1 = Math.min(gw - 1, Math.floor((x1 + radius) / cell));
-        const gy1 = Math.min(gh - 1, Math.floor((y1 + radius) / cell));
-        const out = [];
-        for (let gy = gy0; gy <= gy1; gy++) {
-            for (let gx = gx0; gx <= gx1; gx++) {
-                for (const id of grid[gy * gw + gx])
-                    out.push(id);
-            }
-        }
-        return out;
-    }
-
-    function dotsNear(rect) {
-        return idsNear(rect).map(id => dots.get(id));
-    }
-
-    const blurredRect = ([x0, y0, x1, y1]) => [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
-    const union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
-
     // Dots are applied in z order, each to all of its pixels in the rectangle: per pixel that is the composite in
     // drawing order.
     function recompute(rect) {
@@ -186,7 +160,7 @@ export function createOutlineModel(base, width, height, style) {
             v.set(base.subarray(y * width + x0, y * width + x1), y * width + x0);
             T.fill(1, y * width + x0, y * width + x1);
         }
-        const near = dotsNear(rect).sort((a, b) => a.z - b.z);
+        const near = store.near(rect).sort((a, b) => a.z - b.z);
         const aK = ring.alpha;
         for (const d of near) {
             const [dx0, dy0, dx1, dy1] = d.rect;
@@ -207,33 +181,12 @@ export function createOutlineModel(base, width, height, style) {
             }
         }
         if (kernel)
-            blurRect(composite, output, kernel, blurredRect(rect));
-    }
-
-    function copyRect(src, rect) {
-        const [x0, y0, x1, y1] = rect;
-        const w = Math.max(0, x1 - x0);
-        const out = new Float32Array(w * Math.max(0, y1 - y0));
-        for (let y = y0; y < y1; y++)
-            out.set(src.subarray(y * width + x0, y * width + x1), (y - y0) * w);
-        return out;
-    }
-
-    function pasteRect(dst, rect, saved) {
-        const [x0, y0, x1, y1] = rect;
-        const w = Math.max(0, x1 - x0);
-        for (let y = y0; y < y1; y++)
-            dst.set(saved.subarray((y - y0) * w, (y - y0 + 1) * w), y * width + x0);
+            blurRect(composite, output, kernel, store.blurredRect(rect));
     }
 
     function place(id, rec) {
-        const old = dots.get(id);
-        if (old)
-            grid[cellOf(old.x, old.y)].delete(id);
-        dots.set(id, rec);
-        grid[cellOf(rec.x, rec.y)].add(id);
         topZ = Math.max(topZ, rec.z);
-        return old;
+        return store.put(id, rec);
     }
 
     return {
@@ -254,7 +207,7 @@ export function createOutlineModel(base, width, height, style) {
          * @returns {number} the new dot's id
          */
         add(x, y, z = topZ + 1) {
-            const id = nextId++;
+            const id = store.newId();
             const rec = makeRecord(x, y, z);
             place(id, rec);
             recompute(rec.rect);
@@ -265,7 +218,7 @@ export function createOutlineModel(base, width, height, style) {
         addAll(points) {
             const ids = [];
             for (const p of points) {
-                const id = nextId++;
+                const id = store.newId();
                 place(id, makeRecord(p.x, p.y, p.z ?? topZ + 1, p.f ?? 0));
                 ids.push(id);
             }
@@ -274,81 +227,53 @@ export function createOutlineModel(base, width, height, style) {
         },
 
         remove(id) {
-            const d = dots.get(id);
-            grid[cellOf(d.x, d.y)].delete(id);
-            dots.delete(id);
-            recompute(d.rect);
+            recompute(store.drop(id).rect);
         },
 
         move(id, x, y) {
-            const old = dots.get(id);
+            const old = store.get(id);
             const rec = makeRecord(x, y, old.z, old.f);
             place(id, rec);
-            recompute(union(old.rect, rec.rect));
+            recompute(unionRect(old.rect, rec.rect));
         },
 
         zOf(id) {
-            return dots.get(id).z;
+            return store.get(id).z;
         },
 
         /** Set a dot's own fill value f, in t units. */
         setFill(id, f) {
-            const old = dots.get(id);
+            const old = store.get(id);
             place(id, { ...old, f });
             recompute(old.rect);
         },
 
         fillOf(id) {
-            return dots.get(id).f;
+            return store.get(id).f;
         },
 
         /** The fill's radius (the ring's mid-radius), px. */
         fillRadius,
 
-        // as createDotModel's: the records of the dots near the rectangle only, in id order
+        // createDotStore's snapshot, with the top of the drawing order
         snapshot(rect) {
-            const outRect = blurredRect(rect);
-            return {
-                rect, outRect, topZ,
-                records: idsNear(rect).sort((a, b) => a - b).map(id => [id, dots.get(id)]),
-                T: copyRect(T, rect),
-                comp: copyRect(composite.data, rect),
-                out: kernel ? copyRect(output.data, outRect) : null,
-            };
+            return { ...store.snapshot(rect), topZ };
         },
 
         restore(snap) {
-            const saved = new Map(snap.records);
-            for (const id of idsNear(snap.rect)) {
-                const d = dots.get(id);
-                if (saved.get(id) === d)
-                    continue;
-                grid[cellOf(d.x, d.y)].delete(id);
-                if (!saved.has(id))
-                    dots.delete(id);
-            }
-            for (const [id, d] of snap.records) {
-                if (dots.get(id) !== d) {
-                    grid[cellOf(d.x, d.y)].add(id);
-                    dots.set(id, d);
-                }
-            }
+            store.restore(snap);
             topZ = snap.topZ;
-            pasteRect(T, snap.rect, snap.T);
-            pasteRect(composite.data, snap.rect, snap.comp);
-            if (kernel)
-                pasteRect(output.data, snap.outRect, snap.out);
         },
 
         /** @returns {{id: number, x: number, y: number, z: number, f: number}[]} in id order */
         dots() {
-            return [...dots].sort((a, b) => a[0] - b[0]).map(([id, d]) => ({ id, x: d.x, y: d.y, z: d.z, f: d.f }));
+            return store.entries().map(([id, d]) => ({ id, x: d.x, y: d.y, z: d.z, f: d.f }));
         },
 
         footprint: dotRect,
 
         influenceRect(x, y) {
-            return blurredRect(dotRect(x, y));
+            return store.blurredRect(dotRect(x, y));
         },
     };
 }

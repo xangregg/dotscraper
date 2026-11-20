@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../src/core/rng.js';
 import {
-    pixelCoverage, gaussianKernel, blurRect, solidImage, toRgba, fromRgba, createDotModel, renderDots,
+    pixelCoverage, gaussianKernel, blurRect, solidImage, toRgba, fromRgba, createDotModel, createDotStore, unionRect, renderDots,
 } from '../src/core/render.js';
 
 function supersampled(cx, cy, r, px, py, n) {
@@ -212,6 +212,57 @@ test('level table with opaque dots (α = 1) interpolates between B and c at edge
     const b = renderDots(bg, [{ x: 15, y: 15 }], { color: c, alpha: 1, radius: 6.4, levels: [B, c, c] });
     for (let i = 0; i < a.data.length; i++)
         assert.ok(Math.abs(a.data[i] - b.data[i]) < 1e-3);
+});
+
+test('createDotStore: records by id, the dots near a rectangle, and snapshots of records and buffers', () => {
+    const W = 100;
+    const H = 80;
+    const plain = new Float32Array(W * H).fill(1);
+    const rgb = new Float32Array(3 * W * H).fill(2);
+    const blurred = new Float32Array(W * H).fill(3);
+    const store = createDotStore(W, H, 5, 2, [
+        { data: plain, stride: 1, blurred: false },
+        { data: rgb, stride: 3, blurred: false },
+        { data: blurred, stride: 1, blurred: true },
+    ]);
+    const a = store.newId();
+    const b = store.newId();
+    const c = store.newId();
+    assert.deepEqual([a, b, c], [0, 1, 2]);
+    assert.equal(store.put(a, { x: 20, y: 20 }), undefined);
+    store.put(b, { x: 24, y: 22 });
+    store.put(c, { x: 80, y: 60 });
+    // near: the two beside the rectangle, not the one across the image
+    const rect = [14, 14, 30, 30];
+    assert.deepEqual(store.near(rect).map(d => d.x).sort(), [20, 24]);
+    assert.deepEqual(store.near([70, 50, 90, 70]).map(d => d.x), [80]);
+    assert.deepEqual(unionRect([1, 2, 5, 6], [3, 0, 9, 4]), [1, 0, 9, 6]);
+    assert.deepEqual(store.blurredRect([0, 10, 99, 80]), [0, 8, 100, 80]);
+    // a trial: one dot moved, one dropped, one added, every buffer scribbled on; restore undoes all of it
+    const snap = store.snapshot(rect);
+    const moved = { x: 26, y: 18 };
+    assert.deepEqual(store.put(a, moved), { x: 20, y: 20 });
+    assert.deepEqual(store.drop(b), { x: 24, y: 22 });
+    const d = store.newId();
+    store.put(d, { x: 22, y: 24 });
+    for (let y = 12; y < 32; y++) {
+        for (let x = 12; x < 32; x++) {
+            const p = y * W + x;
+            const inside = x >= 14 && x < 30 && y >= 14 && y < 30;
+            if (inside) {
+                plain[p] = 9;
+                rgb.fill(9, 3 * p, 3 * p + 3);
+            }
+            blurred[p] = 9; // the blurred plane is saved 2 px farther out
+        }
+    }
+    store.restore(snap);
+    assert.deepEqual(store.entries(), [[a, { x: 20, y: 20 }], [b, { x: 24, y: 22 }], [c, { x: 80, y: 60 }]]);
+    assert.equal(store.get(d), undefined);
+    assert.deepEqual(store.near(rect).map(e => e.x).sort(), [20, 24]);
+    assert.ok(plain.every(v => v === 1) && rgb.every(v => v === 2) && blurred.every(v => v === 3), 'buffers restored');
+    // an id is never reused
+    assert.equal(store.newId(), 4);
 });
 
 test('snapshot and restore undo moves, adds and removes exactly', () => {
