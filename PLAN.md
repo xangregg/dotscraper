@@ -2738,3 +2738,13 @@ will give times at 10 jobs, about 14% longer, and say so in its header.
 
 Test: test/bench.test.js runs the bench as a program on four synthetic graphs, alone and with three workers, and
 compares the rows, their order and the printed table apart from the times.
+
+**Every bench image through extractAll** (2026-11-20)
+
+The synthetic one-family presets (sparse, dense, curve) still went through the bench's own `extract`: estimateStyle,
+a mask with the plot's bounds only, the fit. Measured first: through extractAll all 15 graphs (3 presets × 5 seeds)
+give the same dots and the same mask, pixel for pixel, 15 to 30% slower, since the full path also looks for
+outlined dots and, for the two presets with noise, scans a second time with noisy color matching. So they are
+moved, `extract` is deleted, and tools/compare-fits.mjs takes each image's first family from extractAll (dog-ages
+against its actual-size rendering: 95 dots each, all matched, as before). A one-family graph that extractAll reads
+as several families is now scored by family, and its row's name says how many.

@@ -6,7 +6,7 @@
 // Usage: node tools/compare-fits.mjs first.png second.png
 
 import { readPng } from './png.mjs';
-import { extract } from './bench.mjs';
+import { extractAll } from '../src/core/extract.js';
 import { matchDots } from '../src/core/metrics.js';
 
 const OFFSET_RANGE = 12; // px of the first image, coarse search either way
@@ -18,8 +18,9 @@ const REFINE_ITERATIONS = 5;
 const [fileA, fileB] = process.argv.slice(2);
 const imA = readPng(fileA);
 const imB = readPng(fileB);
-const A = extract(imA).fit;
-const B = extract(imB).fit;
+// the first family of each, as the app finds and fits it
+const A = extractAll(imA)[0].fit;
+const B = extractAll(imB)[0].fit;
 const t = [imA.width / imB.width, 0, imA.height / imB.height, 0];
 const mapped = () => B.dots.map(d => ({ x: t[0] * d.x + t[1], y: t[2] * d.y + t[3] }));
 let best = null;

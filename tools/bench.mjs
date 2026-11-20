@@ -20,13 +20,11 @@ import { Worker, isMainThread, parentPort, workerData } from 'node:worker_thread
 import { availableParallelism } from 'node:os';
 import { readImage } from './png.mjs';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
-import { estimateStyle } from '../src/core/style.js';
-import { buildMask } from '../src/core/layers.js';
-import { fitDots, houghCenters } from '../src/core/fit.js';
+import { houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';
-import { detectAxes, plotBounds } from '../src/core/axes.js';
-import { extractAll, fitInput } from '../src/core/extract.js';
+import { detectAxes } from '../src/core/axes.js';
+import { extractAll } from '../src/core/extract.js';
 import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 import { readTruthJson, isDotsExport } from './truth-json.mjs';
 import { pixelHash } from '../src/core/image.js';
@@ -65,27 +63,13 @@ function parseArgs(argv) {
     return opts;
 }
 
-/**
- * Style, mask and fit for one family of an image (the first by default), by estimateStyle alone: no overlays, no
- * text or legend boxes, no other families. The synthetic one-family presets and compare-fits use it; every other
- * image goes through extract.js extractAll, as in the app. For a JPEG, pass the image through restoreChroma first
- * and set `jpeg` (scan.js JPEG_TOLERANCES). `bounds` masks what lies beyond the axes (axes.plotBounds).
- */
-export function extract(image, family = 0, candidates = undefined, jpeg = false, bounds = undefined) {
-    const est = estimateStyle(image, { family, candidates, jpeg });
-    if (!est.style)
-        throw new Error(est.notes.join(' '));
-    const layers = buildMask(image, est, { bounds });
-    const fit = fitDots(fitInput(image, est, layers.mask));
-    return { est, layers, fit, hough: houghOnly(image, est, layers) };
-}
-
 // the Hough candidates alone, for the Hough-only precision and recall
 function houghOnly(image, est, layers) {
     return houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
 }
 
-// extractAll (extract.js) with each result's Hough candidates; a family split by fill color has none of its own
+// Every image, synthetic ones too, goes through extract.js extractAll, as in the app; here each result also gets its
+// Hough candidates. A family split by fill color has none of its own.
 function extractWithHough(image, jpeg = false) {
     return extractAll(image, jpeg).map(r => ({ ...r, hough: r.fill === undefined ? houghOnly(r.est.image, r.est, r.layers) : [] }));
 }
@@ -327,12 +311,13 @@ function runJob(job, opts) {
         const { image, truth } = synthGraph(spec);
         const meta = { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' };
         const t0 = Date.now();
-        if (spec.families.length > 1) {
-            const results = extractWithHough(image);
+        const results = extractWithHough(image);
+        // by family when the graph has several, or when one was read as several: the row's name then says how many
+        if (spec.families.length > 1 || results.length !== 1) {
             record(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0), meta);
             return out;
         }
-        const res = extract(image, 0, undefined, false, plotBounds(detectAxes(image)));
+        const [res] = results;
         const r = record(row(`${name} #${seed}`, truth, res, Date.now() - t0), meta);
         if (opts.verbose) {
             lines.push(`${r.name} missed ${r.m.missed.map(i => `${truth[i].x.toFixed(1)},${truth[i].y.toFixed(1)}`).join(' ')} extra ${r.m.extra.map(j => `${res.fit.dots[j].x.toFixed(1)},${res.fit.dots[j].y.toFixed(1)}`).join(' ')}`);
