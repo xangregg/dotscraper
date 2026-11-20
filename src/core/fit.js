@@ -35,6 +35,7 @@ const HOUGH_SMOOTH = 1; // px, Gaussian smoothing of the accumulator before peak
 const HOUGH_PEAK_RADIUS = 2.5; // px: votes within this of a peak are its mass
 const HOUGH_MIN_ARC = 0.2; // fraction of the circumference a peak's mass must reach
 const HOUGH_NMS_RADII = 0.3; // × r: of two peaks closer than this, the smaller is dropped
+const NMS_CELL = 1.01; // × that distance: the width of the grid cells the kept peaks are looked up in
 // Outline-only dots (ringCenters): the ring's mid-radius circle is sampled at this many points, and a center needs
 // this mean count on it: a ring a quarter seen for births, on the residual; the first candidates need more, since
 // in a dense stack the arcs of neighbors add up to spurious centers (pathogen at 0.25: 1125 candidates for 583
@@ -228,12 +229,56 @@ export function houghCenters(D, weight, width, height, r, grad = houghGradient(D
         }
     }
     peaks.sort((a, b) => b.v - a.v);
+    const kept = suppressNear(peaks, nms, width);
+    return kept.map(k => ({ x: k.x, y: k.y, arc: k.mass / (2 * Math.PI * r) }));
+}
+
+/**
+ * Non-maximum suppression: of the peaks, in the order given, each is kept unless one kept before it lies closer than
+ * `nms`.
+ *
+ * The kept peaks are held in a grid, so a peak is tested only against those of its own cell and the eight around it,
+ * the only ones that can be that close: the same answers as testing it against every kept peak, O(n²), which took
+ * 8 s over the test images. The cells are NMS_CELL × nms wide, a little more than the distance, so that rounding in
+ * the division can't put two peaks closer than nms two cells apart.
+ *
+ * @param {{x: number, y: number}[]} peaks  px, inside the image, strongest first
+ * @param {number} nms  px
+ * @param {number} width  px, the image's
+ * @returns {object[]}  the peaks kept, in order
+ */
+export function suppressNear(peaks, nms, width) {
+    const size = NMS_CELL * nms;
+    const cols = Math.floor(width / size) + 1;
+    const cells = new Map();
     const kept = [];
     for (const pk of peaks) {
-        if (kept.every(k => Math.hypot(k.x - pk.x, k.y - pk.y) >= nms))
-            kept.push(pk);
+        const cx = Math.floor(pk.x / size);
+        const cy = Math.floor(pk.y / size);
+        let clear = true;
+        for (let dy = -1; dy <= 1 && clear; dy++) {
+            for (let dx = -1; dx <= 1 && clear; dx++) {
+                // (beyond the grid's sides there is no cell: the key would be one of another row)
+                if (cx + dx < 0 || cx + dx >= cols)
+                    continue;
+                for (const k of cells.get((cy + dy) * cols + cx + dx) ?? []) {
+                    if (!(Math.hypot(k.x - pk.x, k.y - pk.y) >= nms)) {
+                        clear = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!clear)
+            continue;
+        kept.push(pk);
+        const key = cy * cols + cx;
+        if (cells.has(key))
+            cells.get(key).push(pk);
+        else
+            cells.set(key, [pk]);
     }
-    return kept.map(k => ({ x: k.x, y: k.y, arc: k.mass / (2 * Math.PI * r) }));
+    return kept;
 }
 
 /**
@@ -317,11 +362,7 @@ export function ringCenters(D, weight, width, height, r, inner, minArc = RING_MI
         }
     }
     peaks.sort((a, b) => b.v - a.v);
-    const kept = [];
-    for (const pk of peaks) {
-        if (kept.every(k => Math.hypot(k.x - pk.x, k.y - pk.y) >= nms))
-            kept.push(pk);
-    }
+    const kept = suppressNear(peaks, nms, width);
     return kept.map(k => ({ x: k.x, y: k.y, arc: k.v }));
 }
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { pixelCoverage } from '../src/core/render.js';
-import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness, findHollowRings } from '../src/core/outline.js';
+import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness, findHollowRings, lineOpening } from '../src/core/outline.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
 import { createRng } from '../src/core/rng.js';
@@ -418,4 +418,60 @@ test('findHollowRings: red rings with nothing inside, over gridlines and beside 
 test('findHollowRings: outlined dots with fills are not hollow', () => {
     const image = outlinedImage(scene(), { ringColor: HOLLOW_RED, fillAlpha: 1 });
     assert.equal(findHollowRings(image, WHITE).length, 0);
+});
+
+test('lineOpening is the minimum, then the maximum, over the rounded segment, to the bit: at the edges, with zeros of both signs and NaN', () => {
+    // the definition, as the function was first written: every tap tested against the image's bounds
+    const plain = (src, width, height, ang, len) => {
+        const h = (len - 1) / 2;
+        const taps = [];
+        for (let k = -h; k <= h; k++)
+            taps.push([Math.round(k * Math.cos(ang)), Math.round(k * Math.sin(ang))]);
+        const pass = (a, sign, pick, start) => {
+            const out = new Float32Array(a.length);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    let m = start;
+                    for (const [dx, dy] of taps) {
+                        const xx = x + sign * dx;
+                        const yy = y + sign * dy;
+                        if (xx >= 0 && xx < width && yy >= 0 && yy < height)
+                            m = pick(m, a[yy * width + xx]);
+                    }
+                    out[y * width + x] = m;
+                }
+            }
+            return out;
+        };
+        return pass(pass(src, 1, Math.min, Infinity), -1, Math.max, -Infinity);
+    };
+    const rng = createRng(11);
+    const bytes = a => Buffer.from(a.buffer, a.byteOffset, a.byteLength);
+    let cases = 0;
+    // sizes smaller than the segment, one pixel, and wide enough to have an interior
+    for (const [width, height] of [[1, 1], [3, 7], [7, 3], [40, 31], [5, 60], [60, 5]]) {
+        for (const len of [1, 5, 9, 21, 51]) {
+            const src = new Float32Array(width * height);
+            for (let p = 0; p < src.length; p++) {
+                const u = rng.uniform();
+                src[p] = u < 0.1 ? 0 : u < 0.2 ? -0 : u < 0.21 ? NaN : Math.round(40 * rng.uniform() - 20) / 4;
+            }
+            for (let k = 0; k < 12; k++) {
+                const ang = Math.PI * k / 12;
+                assert.ok(bytes(lineOpening(src, width, height, ang, len)).equals(bytes(plain(src, width, height, ang, len))),
+                    `${width} × ${height}, ${len} px, direction ${k}`);
+                cases++;
+            }
+        }
+    }
+    assert.equal(cases, 360);
+    // an opening removes what is narrower than the segment and keeps what is longer
+    const width = 30;
+    const P = new Float32Array(width * 9);
+    for (let x = 5; x < 25; x++)
+        P[4 * width + x] = 1;
+    P[1 * width + 3] = 1;
+    const o = lineOpening(P, width, 9, 0, 7);
+    assert.equal(o[4 * width + 12], 1);
+    assert.equal(o[1 * width + 3], 0);
 });

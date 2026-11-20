@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../src/core/rng.js';
-import { houghCenters, fitDots, refitNear, flagClose, createFit } from '../src/core/fit.js';
+import { houghCenters, fitDots, refitNear, flagClose, createFit, suppressNear } from '../src/core/fit.js';
 import { estimateStyle } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { synthGraph, scatterPoints } from '../src/core/synth.js';
@@ -184,4 +184,35 @@ test('flagClose marks both dots of a pair closer than 0.35 r, and clears the fla
     dots[1].y = 60;
     flagClose(dots, r);
     assert.deepEqual(dots.map(d => d.flags), [['weak'], [], [], []]);
+});
+
+test('suppressNear keeps what testing every kept peak keeps: random peaks, and a lattice exactly the distance apart', () => {
+    const every = (peaks, nms) => {
+        const kept = [];
+        for (const pk of peaks) {
+            if (kept.every(k => Math.hypot(k.x - pk.x, k.y - pk.y) >= nms))
+                kept.push(pk);
+        }
+        return kept;
+    };
+    const rng = createRng(5);
+    for (const [width, height, n, nms] of [[200, 150, 3000, 2], [200, 150, 3000, 7.3], [64, 900, 2000, 3.1], [50, 40, 500, 60], [300, 300, 1, 2]]) {
+        const peaks = Array.from({ length: n }, () => ({ x: width * rng.uniform(), y: height * rng.uniform(), v: rng.uniform() }));
+        const kept = suppressNear(peaks, nms, width);
+        assert.deepEqual(kept, every(peaks, nms), `${n} peaks in ${width} × ${height}, ${nms} px`);
+        assert.ok(kept.length >= 1 && kept.length <= n);
+    }
+    // neighbors exactly nms apart are both kept (the test is "closer than"); a point between two is dropped
+    const lattice = [];
+    for (let j = 0; j < 20; j++) {
+        for (let i = 0; i < 20; i++)
+            lattice.push({ x: 0.5 + 3 * i, y: 0.5 + 3 * j });
+    }
+    const between = lattice.map(p => ({ x: p.x + 1.5, y: p.y }));
+    const all = [...lattice, ...between];
+    const kept = suppressNear(all, 3, 62);
+    assert.deepEqual(kept, every(all, 3));
+    assert.deepEqual(kept, lattice);
+    // the order given decides: the same points, the others first, keeps the others
+    assert.deepEqual(suppressNear([...between, ...lattice], 3, 62), between);
 });

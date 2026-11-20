@@ -2651,3 +2651,57 @@ scan wins and turns noisy matching on), bench2 group-smoother.jpg 200 (a JPEG fi
 (fills told apart after the fit), wages2025 670 (a palette), pathogen 468. Tests: test/extract.test.js, among them
 the app's steps taken in turn (scanFamilies, buildMask with maskOptions and excludedBoxes, fitDots with fitInput)
 giving extractAll's masks and dots on a synthetic graph of three families, and the progress of the two scans.
+
+**The review's three speed items, measured** (2026-11-20)
+
+Measured on the 118 local images through extractAll, six at a time: 1,040 s summed (464 s the scan for families,
+500 s the fits, by CPU profile; refits timed in an instrumented copy of the code). Nothing in the repository changed.
+
+1. **Radius bumps refit from scratch: 98 s (9%), no remedy in the fit.** fitDots fits an opaque family again at
+   r + 0.5 px when most of its dots come in close pairs ("doubled") or enough coincide ("coincident", kept only if
+   the objective improves), up to three times. 18 refits in 8 images: 9 doubled (70.8 s) and 9 coincident (27.3 s;
+   2 kept, 7 rejected, 21.2 s). phase1 alone is 76 s, 10 refits over its families, one of 37 s that starts from no
+   Hough candidate and builds 28 dots by births; the other seven images total 22 s (beeswarm-boxplot 7.6, adults1
+   5.1, delta1 4.3). Starting a refit from the previous fit's dots instead of the Hough candidates was tried: 93.8 s
+   cold, 93.2 s warm on the eight images (phase1 72.1 → 73.6 s), and the dots changed in three of them (phase1 128
+   → 132, kite1 26 → 27, delta1's positions). The time is in the rounds, not in the start. What phase1 pays for is
+   a radius measured 1 to 1.5 px small for several families: a question of the estimate, not of speed.
+2. **Linear openings: 112 s (11%), halved exactly by a plain change.** outline.js underRings (12 directions, a
+   segment longer than a ring) takes 56 s and localFill (12 directions, 5 px, three channels) 56 s. A prototype of
+   lineOpening that visits each offset of the segment once and skips the bounds tests away from the image's edges
+   gives the same bytes (504 random planes with zeros of both signs and NaN, sizes down to 1 × 1; three real images
+   at lengths 5, 21 and 41 in all 12 directions) and runs 1.8 to 2.3 times as fast (score2, 2404 × 2088: 0.91 →
+   0.46 s at 5 px, 6.25 → 2.73 s at 41). About 58 s of the 1,040, 5–6%. Not tried: a running minimum along the
+   segment, exact only in the four directions where the rounded segment is a straight run of pixels.
+3. **Math.hypot at the remaining sites: 43 s (4%) on every line that calls it, as an upper bound.** 21 s are color
+   tests per pixel (levels.js projectOnLine's distance off the line 4.7, opaque.js mixReader 1.7, axes.js isInk 1.5,
+   annotations.js 1.4, colorDistance 1.3, and smaller); 19 s are geometry. Of the color tests, those that compare
+   with a whole tolerance could become squared comparisons with the same result, about 6 s (0.6%); the rest store
+   the distance or compare two of them with fractional colors, where a square root in place of hypot can differ in
+   the last bit. Left as they are. The largest line is none of these: houghCenters' peak selection (fit.js, `kept.
+   every(k => Math.hypot(…) >= nms)`, 7.9 s, and ringCenters' 0.6 s) tests each peak against every peak kept, O(n²);
+   a grid of the kept peaks, cells of the suppression distance, asks the same question of the same pairs.
+
+For scale, the largest self times in the same profiles: render.js blurPlaneRect 97 s and recompute 95 s (the fit's
+re-rendering), layers.js distanceTransform 92 s, fit.js houghCenters 66 s.
+
+**The two exact speed-ups from those measurements** (2026-11-20)
+
+- **lineOpening** (outline.js, under underRings and localFill): each pixel of the rounded segment is visited once,
+  and the bounds are tested only in the band near the image's edges, where a tap can fall outside; elsewhere a
+  loop for the minimum and one for the maximum read the taps unchecked. Math.min and Math.max are kept, since
+  comparisons would order −0 and 0 differently and drop NaN.
+- **Hough peak selection** (fit.js, houghCenters and ringCenters): `suppressNear` keeps the kept peaks in a grid
+  and tests a peak against its own cell and the eight around it, instead of against every kept peak. The cells are
+  1.01 × the suppression distance wide, so rounding in the division can't put two peaks closer than the distance
+  two cells apart; the grid is a Map of the occupied cells (a 4000 px image at 2 px would be 4 million cells).
+
+Results: every fitted dot and every family estimate of the 118 local images identical, by digest. The same run,
+six images at a time: 1,037.9 s summed before, 978.0 s after, 5.8% less (four earlier runs of the unchanged code
+under the same load gave 1,037 to 1,040 s). Most on the images with outlined or ringed dots at full size:
+beeswarm-boxplot 66.5 → 60.1 s, violin-beeswarm 40.0 → 35.2, score2 56.6 → 51.9, kite2 16.7 → 13.3, degradation1
+18.5 → 15.3. In the app dog-ages fits to the same 95 dots, pathogen to 468 and bench1 group-graystroke to 100,
+with no console errors. Tests: lineOpening against its definition, every tap tested against the bounds, to the
+bit (360 cases: sizes from 1 × 1, lengths 1 to 51, 12 directions, zeros of both signs and NaN) in
+test/outline.test.js; suppressNear against testing every kept peak (random peaks at four densities, and a lattice
+exactly the distance apart, where "closer than" decides) in test/fit.test.js.
