@@ -260,11 +260,6 @@ export function edgeBlur(D, width, dots) {
     return { sigma: best.sigma, offset: best.offset, profile };
 }
 
-export function quantile(a, q) {
-    const s = [...a].sort((x, y) => x - y);
-    return s[Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))))];
-}
-
 /**
  * Edge blur from a family's boundaries, for families without isolated dots: D against the signed distance to the
  * D = ½ boundary, pooled within BOUNDARY_PROFILE_REACH px, fitted with the same erf as edgeBlur.
@@ -324,9 +319,4 @@ export function discShare(v, width, height, cx, cy, r) {
         }
     }
     return count ? on / count : 0;
-}
-
-export function median(a) {
-    const s = [...a].sort((x, y) => x - y);
-    return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 }

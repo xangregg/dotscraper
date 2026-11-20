@@ -7,6 +7,7 @@
 // rounding drifts with depth and some images have an odd first step, so the level colors used by the forward
 // model are the measured ones; a geometric fit gives α and c and extrapolates beyond the deepest measured level.
 
+import { sub, unit } from './image.js';
 import { LEVEL_SEPARATION, EXACT_TOLERANCES, isThin } from './scan.js';
 
 /** @typedef {import('./scan.js').Scan} Scan */
@@ -78,9 +79,7 @@ export function alongLine(v, w) {
 }
 
 export function colorLine(B, seed) {
-    const d = [B[0] - seed[0], B[1] - seed[1], B[2] - seed[2]];
-    const len = Math.hypot(...d);
-    return { B, u: d.map(v => v / len) };
+    return { B, u: unit(sub(B, seed)) };
 }
 
 /**

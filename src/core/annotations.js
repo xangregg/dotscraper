@@ -12,7 +12,9 @@
 //
 // Images enter as { width, height, data } RGBA; boxes are [x0, y0, x1, y1) px.
 
-import { distanceTransform } from './layers.js';
+import { colorDistance } from './image.js';
+import { distanceTransform, components8 } from './layers.js';
+import { upperMedian } from './stats.js';
 
 const INK_TOL = 15; // 0–255 units from the page for a pixel to be ink
 const GLYPH_MIN_HEIGHT = 6; // px: smaller pieces are specks or the dots of i and j, which join no line by themselves
@@ -115,50 +117,18 @@ function inkPieces(image, page) {
         onPage[p] = isPage ? 1 : 0;
     }
     const d2 = distanceTransform(onPage, width, height);
-    const seen = new Uint8Array(n);
-    const stack = new Int32Array(n);
-    const pieces = [];
-    for (let s = 0; s < n; s++) {
-        if (!ink[s] || seen[s])
-            continue;
-        const c = { x0: width, y0: height, x1: 0, y1: 0, n: 0, r: 0, color: null };
-        let maxD = -1;
-        let at = s;
-        let top = 0;
-        stack[top++] = s;
-        seen[s] = 1;
-        while (top) {
-            const p = stack[--top];
-            const x = p % width;
-            const y = (p - x) / width;
-            c.n++;
-            c.x0 = Math.min(c.x0, x);
-            c.x1 = Math.max(c.x1, x + 1);
-            c.y0 = Math.min(c.y0, y);
-            c.y1 = Math.max(c.y1, y + 1);
-            if (d2[p] > maxD) {
-                maxD = d2[p];
+    return components8(ink, width, height).map(c => {
+        // the first of the piece's deepest pixels
+        let at = c.pixels[0];
+        for (const p of c.pixels) {
+            if (d2[p] > d2[at])
                 at = p;
-            }
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    const xx = x + dx;
-                    const yy = y + dy;
-                    if (xx < 0 || yy < 0 || xx >= width || yy >= height)
-                        continue;
-                    const q = yy * width + xx;
-                    if (ink[q] && !seen[q]) {
-                        seen[q] = 1;
-                        stack[top++] = q;
-                    }
-                }
-            }
         }
-        c.r = Math.sqrt(maxD);
-        c.color = [data[4 * at], data[4 * at + 1], data[4 * at + 2]];
-        pieces.push(c);
-    }
-    return pieces;
+        return {
+            x0: c.x0, y0: c.y0, x1: c.x1 + 1, y1: c.y1 + 1, n: c.pixels.length, r: Math.sqrt(d2[at]),
+            color: [data[4 * at], data[4 * at + 1], data[4 * at + 2]],
+        };
+    });
 }
 
 // glyphs joined into lines (union-find over neighbors along a row); lines of TEXT_MIN_GLYPHS or more, as boxes
@@ -186,7 +156,7 @@ function textLines(glyphs) {
             const overlap = Math.min(g.y1, o.y1) - Math.max(g.y0, o.y0);
             const gap = Math.max(g.x0, o.x0) - Math.min(g.x1, o.x1);
             if (overlap >= GLYPH_OVERLAP * shorter && gap <= GLYPH_GAP_HEIGHTS * taller && taller <= GLYPH_HEIGHT_RATIO * shorter
-                && Math.hypot(g.color[0] - o.color[0], g.color[1] - o.color[1], g.color[2] - o.color[2]) <= GLYPH_COLOR_TOL)
+                && colorDistance(g.color, o.color) <= GLYPH_COLOR_TOL)
                 parent[find(order[a])] = find(order[b]);
         }
     }
@@ -197,17 +167,16 @@ function textLines(glyphs) {
             groups.set(k, []);
         groups.get(k).push(g);
     });
-    const median = a => [...a].sort((u, v) => u - v)[a.length >> 1];
     const lines = [];
     for (const gs of groups.values()) {
         if (gs.length < TEXT_MIN_GLYPHS)
             continue;
-        const h = median(gs.map(g => g.y1 - g.y0));
-        const w = median(gs.map(g => g.x1 - g.x0));
-        const bottom = median(gs.map(g => g.y1));
+        const h = upperMedian(gs.map(g => g.y1 - g.y0));
+        const w = upperMedian(gs.map(g => g.x1 - g.x0));
+        const bottom = upperMedian(gs.map(g => g.y1));
         const tol = Math.max(2, TEXT_BASELINE_TOL * h);
         const onBase = gs.filter(g => Math.abs(g.y1 - bottom) <= tol).length;
-        const n = median(gs.map(g => g.n));
+        const n = upperMedian(gs.map(g => g.n));
         const same = gs.filter(g => Math.abs(g.y1 - g.y0 - h) <= TEXT_SAME_TOL && Math.abs(g.x1 - g.x0 - w) <= TEXT_SAME_TOL
             && Math.abs(g.n - n) <= TEXT_SAME_PIXELS * n).length;
         if (onBase < TEXT_BASELINE_SHARE * gs.length || same >= TEXT_MAX_SAME_SHARE * gs.length)

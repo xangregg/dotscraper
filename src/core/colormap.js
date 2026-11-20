@@ -27,6 +27,9 @@
 // the outline's radius. A categorical palette (many colors, its votes in peaks) is fitted the same way, and its dots'
 // colors are read from their own pixels after the fit (paletteColors).
 
+import { colorDistance } from './image.js';
+import { upperMedian } from './stats.js';
+
 const WINDOW = 2; // px: half side of the window whose summed offsets give a pixel's direction
 const MIN_OFFSET = 15; // 0–255 units from B: flat pixels at least this far vote for the one-dot curve
 const CURVE_CELL = 0.02; // direction cell (unit-vector components)
@@ -183,7 +186,7 @@ function largestChain(points) {
             for (let j = 0; j < points.length; j++) {
                 const a = points[i];
                 const b = points[j];
-                if (label[j] >= 0 || Math.hypot(a.u[0] - b.u[0], a.u[1] - b.u[1], a.u[2] - b.u[2]) > LINK_DIST
+                if (label[j] >= 0 || colorDistance(a.u, b.u) > LINK_DIST
                     || Math.max(a.m, b.m) > LINK_MAX_RATIO * Math.min(a.m, b.m))
                     continue;
                 label[j] = chains.length;
@@ -197,7 +200,7 @@ function largestChain(points) {
     let spread = 0;
     for (const a of best) {
         for (const b of best)
-            spread = Math.max(spread, Math.hypot(a.u[0] - b.u[0], a.u[1] - b.u[1], a.u[2] - b.u[2]));
+            spread = Math.max(spread, colorDistance(a.u, b.u));
     }
     return { points: best, spread };
 }
@@ -225,7 +228,6 @@ function largestChain(points) {
 export function paletteColors(image, dots, radius, B) {
     const { width, height, data } = image;
     const rIn = radius - PALETTE_INSET;
-    const median = a => a.sort((u, v) => u - v)[a.length >> 1];
     const colors = [];
     for (const d of dots) {
         const others = dots.filter(o => o !== d && Math.hypot(o.x - d.x, o.y - d.y) < 2 * radius);
@@ -244,16 +246,16 @@ export function paletteColors(image, dots, radius, B) {
         const n = own[0].length;
         if (n < PALETTE_MIN_OWN)
             continue;
-        const c = own.map(a => median([...a]));
+        const c = own.map(upperMedian);
         let same = 0;
         for (let i = 0; i < n; i++) {
             if (Math.hypot(own[0][i] - c[0], own[1][i] - c[1], own[2][i] - c[2]) <= PALETTE_COLOR_TOL)
                 same++;
         }
-        if (same >= PALETTE_UNIFORM * n && Math.hypot(...c.map((x, ch) => x - B[ch])) >= MIN_OFFSET)
+        if (same >= PALETTE_UNIFORM * n && colorDistance(c, B) >= MIN_OFFSET)
             colors.push(c);
     }
-    const close = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= PALETTE_COLOR_TOL;
+    const close = (a, b) => colorDistance(a, b) <= PALETTE_COLOR_TOL;
     const out = [];
     let left = colors;
     while (left.length) {
@@ -266,7 +268,7 @@ export function paletteColors(image, dots, radius, B) {
         if (best.n < PALETTE_MIN_DOTS)
             break;
         const members = left.filter(o => close(o, best.c));
-        out.push([0, 1, 2].map(ch => median(members.map(c => c[ch]))));
+        out.push([0, 1, 2].map(ch => upperMedian(members.map(c => c[ch]))));
         left = left.filter(o => !close(o, best.c));
     }
     return out;
@@ -313,15 +315,15 @@ export function paletteFamilies(image, dots, radius, colors) {
         // no pixel shows a palette color: the nearest to their median, unsure
         if (!seen[0].length)
             return { family: 0, sure: false };
-        const med = seen.map(a => a.sort((u, v) => u - v)[a.length >> 1]);
-        const dist = c => Math.hypot(c[0] - med[0], c[1] - med[1], c[2] - med[2]);
+        const med = seen.map(upperMedian);
+        const dist = c => colorDistance(c, med);
         return { family: colors.reduce((best, c, k) => (dist(c) < dist(colors[best]) ? k : best), 0), sure: false };
     });
 }
 
 // points with the most votes within NEIGHBOR_DIST of them. O(points²).
 function peaksOf(points) {
-    const dist = (a, b) => Math.hypot(a.u[0] - b.u[0], a.u[1] - b.u[1], a.u[2] - b.u[2]);
+    const dist = (a, b) => colorDistance(a.u, b.u);
     return points.filter(q => points.every(o => o === q || o.votes < q.votes || dist(o, q) >= NEIGHBOR_DIST));
 }
 
@@ -425,14 +427,12 @@ export function findColormap(image, B, flat, tol) {
     for (const c of cells.values()) {
         if (c.ms.length < CELL_MIN_VOTES)
             continue;
-        c.ms.sort((a, b) => a - b);
         const l = Math.hypot(...c.sum);
-        points.push({ u: c.sum.map(v => v / l), m: c.ms[c.ms.length >> 1], votes: c.ms.length });
+        points.push({ u: c.sum.map(v => v / l), m: upperMedian(c.ms), votes: c.ms.length });
     }
     points = points.filter((q, i) => {
-        const near = points.filter((o, j) => j !== i && Math.hypot(o.u[0] - q.u[0], o.u[1] - q.u[1], o.u[2] - q.u[2]) < NEIGHBOR_DIST)
-            .map(o => o.m).sort((a, b) => a - b);
-        return !near.length || q.m <= MAX_NEIGHBOR_RATIO * near[near.length >> 1];
+        const near = points.filter((o, j) => j !== i && colorDistance(o.u, q.u) < NEIGHBOR_DIST).map(o => o.m);
+        return !near.length || q.m <= MAX_NEIGHBOR_RATIO * upperMedian(near);
     });
     if (!points.length)
         return null;
@@ -624,7 +624,7 @@ function lightest(m, width, height, x, y) {
  * @returns {object}
  */
 export function colormapCandidate(measured, B, P, alpha) {
-    const level = r => ({ t: r * Math.hypot(...P.map((v, ch) => v - B[ch])), color: B.map((v, ch) => v + r * (P[ch] - v)), count: 0 });
+    const level = r => ({ t: r * colorDistance(P, B), color: B.map((v, ch) => v + r * (P[ch] - v)), count: 0 });
     const c = B.map((v, ch) => v + (P[ch] - v) / alpha);
     return {
         ...measured,

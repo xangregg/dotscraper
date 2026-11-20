@@ -4,9 +4,10 @@
 // the dots' own levels; scan.js has the Scan they pass around, shape.js the measures of dots as shapes.
 
 import { distanceTransform } from './layers.js';
-import { nearColor } from './image.js';
+import { nearColor, colorDistance } from './image.js';
 import { LEVEL_SEPARATION, CLUSTER_TOL, BOX_COLOR_TOL, isThin, scanOf, solidRegion, straightShare } from './scan.js';
-import { components, isolatedDots, measureRing, edgeBlur, boundaryBlur, median } from './shape.js';
+import { components, isolatedDots, measureRing, edgeBlur, boundaryBlur } from './shape.js';
+import { median } from './stats.js';
 import {
     FIT_C_TOL, alongLine, colorLine, projectOnLine, levelTable, countImage, familyCandidates, measureFamily,
 } from './levels.js';
@@ -200,7 +201,7 @@ export function findCandidates(scan, onProgress = null) {
     // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
-    const real = translucent.filter(t => !t.levels.some(L => rims.some(c => Math.hypot(...c.map((v, ch) => v - L.color[ch])) <= CLUSTER_TOL)));
+    const real = translucent.filter(t => !t.levels.some(L => rims.some(c => colorDistance(c, L.color) <= CLUSTER_TOL)));
     return [...real, ...opaque];
 }
 
@@ -275,7 +276,7 @@ function levelsNest(scan, c) {
     if (!L2 || L1.inferred || L2.inferred)
         return true;
     const { width, height, data } = image;
-    const half = Math.hypot(...L1.color.map((v, ch) => v - L2.color[ch])) / 2;
+    const half = colorDistance(L1.color, L2.color) / 2;
     const in1 = new Uint8Array(width * height);
     const in2 = new Uint8Array(width * height);
     for (let p = 0; p < in1.length; p++) {
@@ -364,7 +365,7 @@ function dropBlends(translucent, B) {
             stacks = stacks.flatMap(s => kept.map(f => ({ color: over(f, s.color), used: new Set([...s.used, f]) })));
             mixed.push(...stacks.filter(s => s.used.size >= 2).map(s => s.color));
         }
-        const blend = mixed.length && X.levels.filter(L => !L.inferred).every(L => mixed.some(c => Math.hypot(...c.map((v, ch) => v - L.color[ch])) <= BLEND_TOL));
+        const blend = mixed.length && X.levels.filter(L => !L.inferred).every(L => mixed.some(c => colorDistance(c, L.color) <= BLEND_TOL));
         if (blend)
             translucent.splice(translucent.indexOf(X), 1);
         else
@@ -396,7 +397,7 @@ function opaqueEstimate(scan, fam, candidates, familyIndex) {
     // what the fit compares: coverage scaled to color units along the line from the family's background to its
     // color, which is what the renderer produces for the table [B, c] at α = 1 (NaN pixels are masked)
     const fitColor = fam.fitColor ?? fam.seed;
-    const span = Math.hypot(...fam.background.map((v, ch) => v - fitColor[ch]));
+    const span = colorDistance(fam.background, fitColor);
     const fitT = new Float32Array(fam.D.length);
     for (let p = 0; p < fitT.length; p++)
         fitT[p] = Number.isNaN(fam.D[p]) ? 0 : span * fam.D[p];

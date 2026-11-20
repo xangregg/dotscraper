@@ -20,8 +20,10 @@
 // were such stacks within 4 px; they were found once flat pixels had to be whole counts (FLAT_MAX_FRACTION), which
 // masks the stacks' fractional plateaus. Why that let the fit place them wasn't examined.
 
+import { colorDistance, dot } from './image.js';
 import { flatMask, EXACT_TOLERANCES } from './scan.js';
 import { isolatedDots, edgeBlur } from './shape.js';
+import { median } from './stats.js';
 import { countImage, projectOnLine, colorLine, findLevels } from './levels.js';
 import { shapeRadius } from './opaque.js';
 import { NO_ISOLATED_NOTE } from './style.js';
@@ -45,10 +47,6 @@ const REGION_SEED_STEPS = 0.5;
 const REGION_SEED_MIN_PIXELS = 50;
 const REGION_MIN_LEVEL_SHARE = 0.5; // of the first level's distance from B₂: nearer colors aren't read as levels
 const MAX_EXTRA_COUNT = 20; // dots beyond the deepest measured level, where the steps run out
-
-function dot(a, b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
 
 // distance of a transmittance from a whole number of dots: |n − round(n)| with n = ln T / ln q
 function fractional(T, q) {
@@ -187,7 +185,7 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
 export function regionLevels(image, flat, index, k, B2, family) {
     const { data } = image;
     const pred = family.color.map((v, ch) => v + (B2[ch] - v) * (1 - family.alpha));
-    const step = Math.hypot(...pred.map((v, ch) => v - B2[ch]));
+    const step = colorDistance(pred, B2);
     const own = new Uint8Array(flat.length);
     const counts = new Map();
     for (let p = 0; p < flat.length; p++) {
@@ -207,7 +205,7 @@ export function regionLevels(image, flat, index, k, B2, family) {
     const proj = projectOnLine(image, line);
     // other colors near B₂ are no dot over it (protrusion3: two dots on the page, 142, 178, 142, 12 units from the box,
     // in the region where dots cross its edge, read as level 1 at a quarter of the seed's distance)
-    const seedT = Math.hypot(...seed.map((v, ch) => v - B2[ch]));
+    const seedT = colorDistance(seed, B2);
     for (let p = 0; p < own.length; p++) {
         if (proj.t[p] < REGION_MIN_LEVEL_SHARE * seedT)
             own[p] = 0;
@@ -322,8 +320,7 @@ export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers 
             const isolated = isolatedDots(D, image.width, image.height, tol);
             if (isolated.length) {
                 const edge = edgeBlur(D, image.width, isolated);
-                const rs = isolated.map(d => d.r).sort((a, b) => a - b);
-                const radius = (rs[(rs.length - 1) >> 1] + rs[rs.length >> 1]) / 2;
+                const radius = median(isolated.map(d => d.r));
                 const style = { ...e.style, radius, blur: Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)) };
                 return { ...e, image: own, D, style, isolated, edge, notes: [...e.notes.filter(n => n !== NO_ISOLATED_NOTE), ...notes] };
             }

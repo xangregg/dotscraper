@@ -5,12 +5,13 @@
 
 import { houghCenters, houghGradient } from './fit.js';
 import { distanceTransform, dilate, nearestTransform, opening } from './layers.js';
-import { nearColor, nearAnyColor, colorMask } from './image.js';
+import { nearColor, nearAnyColor, colorMask, colorDistance } from './image.js';
 import { CLUSTER_TOL, isThin } from './scan.js';
 import {
-    ISOLATED_MIN_AREA, ISOLATED_MAX_ASPECT, ISOLATED_MAX_MOMENT_RATIO, components, isolatedDots, quantile,
-    boundaryBlur, discShare, median,
+    ISOLATED_MIN_AREA, ISOLATED_MAX_ASPECT, ISOLATED_MAX_MOMENT_RATIO, components, isolatedDots, boundaryBlur,
+    discShare,
 } from './shape.js';
+import { median, quantile } from './stats.js';
 import { alongLine, colorLine } from './levels.js';
 
 /** @typedef {import('./scan.js').Scan} Scan */
@@ -747,7 +748,7 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
         edgeInk, inkColors: ground.others, centers: found,
         ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
         ...(paged ? { pageFill: true, fitColor, fillCenters: paged.centers } : {}),
-        levels: [{ t: Math.hypot(...B.map((v, ch) => v - fitColor[ch])), color: fitColor, count: pixels }],
+        levels: [{ t: colorDistance(B, fitColor), color: fitColor, count: pixels }],
         beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
     };
 }
@@ -764,7 +765,7 @@ function opaqueGround(scan, color, others, outline, stroke, rings) {
     const isOutline = outline ? nearColor(data, outline, CLUSTER_TOL) : null;
     const page = backgrounds[0];
     // (the page's color itself: a light fill near it, as tumour1's 237 gray, is a color of its own)
-    const isPage = c => Math.hypot(c[0] - page[0], c[1] - page[1], c[2] - page[2]) <= INK_TOL;
+    const isPage = c => colorDistance(c, page) <= INK_TOL;
     // an outlined fill in the page's color is the page its outlines enclose (pageFills); for the fit it is the outline's
     // color on the page, as the fill shows no contrast
     const paged = outline && isPage(color) ? pageFills(image, color) ?? { mask: new Uint8Array(n), discs: [], centers: [] } : null;
@@ -811,9 +812,9 @@ function opaqueGround(scan, color, others, outline, stroke, rings) {
     }
     const offAbs = Math.max(OFF_MIX_ABS, OFF_MIX_NOISE * (noiseN ? Math.sqrt(noiseSum / noiseN) : 0));
     // background colors, but not this family's own (a dot color can be common enough to count as a background)
-    const pageColors = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL
-        && (!outline || Math.hypot(...P.map((v, ch) => v - outline[ch])) > CLUSTER_TOL)
-        && (!stroke || Math.hypot(...P.map((v, ch) => v - stroke[ch])) > CLUSTER_TOL));
+    const pageColors = [...backgrounds, B].filter(P => colorDistance(P, color) > CLUSTER_TOL
+        && (!outline || colorDistance(P, outline) > CLUSTER_TOL)
+        && (!stroke || colorDistance(P, stroke) > CLUSTER_TOL));
     const bg = localBackground(image, near, pageColors, others);
     // from the family's thick parts: a stroke near its color (engagement1's navy) is thin, and joins its color mask
     const theirs = ringOwners(image, thick.some(v => v) ? thick : own, ringFills);
@@ -1124,7 +1125,7 @@ function dotCenters(scan, ground, cover, shape, fillRadius) {
     // truth has 9.0, and at 8.2 the fit put a second dot in nearly every dot).
     // Only for a fill on the page: one surrounded by another ink is an outlined or stroked dot, measured whole by
     // those readings (hair3, cells1: the scan passed their fills alone, 26.4 px for 28.3)
-    const onBackground = scan.backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - B[ch])) <= INK_TOL);
+    const onBackground = scan.backgrounds.some(P => colorDistance(P, B) <= INK_TOL);
     if (fromDistance && !stroke && !outline && onBackground && strong(centers) < DOT_MIN_STRONG) {
         const tried = [];
         for (let r = radius + RADIUS_SCAN_STEP; r <= RADIUS_SCAN_MAX * radius; r += RADIUS_SCAN_STEP) {
@@ -1488,7 +1489,7 @@ function pageFilledFamily(scan) {
     if (!ink[0].length)
         return null;
     const outline = ink.map(median);
-    if (Math.hypot(...outline.map((v, ch) => v - page[ch])) <= CLUSTER_TOL)
+    if (colorDistance(outline, page) <= CLUSTER_TOL)
         return null;
     const fam = measureOpaque(scan, page, [], outline);
     const rf = median(fills.discs.map(d => d.r));
@@ -1555,8 +1556,8 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
     // its outline, only if it is mostly edge, as a rim is: other fills of an outlined scale sit there too (phase1:
     // grays 136 and 82 between gray 187 and the black outline, 62% interior; a rim is 1–2 px wide, unless the fill's
     // own tolerance takes in fill pixels: a synthetic rim at 149, 6, 220 was 39 units from its fill)
-    const isOutline = c => out.some(f => f.outline && Math.hypot(...f.outline.map((v, ch) => v - c[ch])) <= CLUSTER_TOL);
-    const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= CLUSTER_TOL;
+    const isOutline = c => out.some(f => f.outline && colorDistance(f.outline, c) <= CLUSTER_TOL);
+    const near = (a, b) => colorDistance(a, b) <= CLUSTER_TOL;
     const rimOf = (f, c, interiorShare) => interiorShare < BLEND_OUTLINE_MAX_INTERIOR || near(c, f.seed) || near(c, f.outline);
     // (an outlined family's background is often its outline's color, all around its dots: as the outline, a rim only
     // when rimOf says; else every gray between a gray fill and its black outline was a blend: a synthetic copy of
@@ -1569,7 +1570,7 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
     const isBlend = (c, interiorShare) => out.some(f => bases(f, c, interiorShare).some(P => isMixOf(c, P, f.seed)));
     // translucent families' level colors are theirs (see measureOpaque's `others`)
     const levelColors = translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color));
-    const inkFor = seed => ink.filter(c => Math.hypot(c[0] - seed[0], c[1] - seed[1], c[2] - seed[2]) > CLUSTER_TOL);
+    const inkFor = seed => ink.filter(c => colorDistance(c, seed) > CLUSTER_TOL);
     // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and so
     // count as a background color; the dot test tells it from a panel.
     const clusters = colorClusters(image, backgrounds.slice(0, 1));
@@ -1595,7 +1596,7 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
             continue;
         // a second peak of one family's color (two bins' peaks over one pure gray, 5 units apart: two families of the
         // same dots)
-        if (out.some(f => Math.hypot(...f.seed.map((v, ch) => v - cl.color[ch])) <= INK_TOL))
+        if (out.some(f => colorDistance(f.seed, cl.color) <= INK_TOL))
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
         const c = cl.color;
@@ -1647,7 +1648,7 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
         // outline 136 and line 166 as two levels of a "family" with no dots).
         const plain = fam;
         const ring = plain.background;
-        const notPage = !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL);
+        const notPage = !backgrounds.some(P => colorDistance(P, ring) <= CLUSTER_TOL);
         const ringable = !onTranslucent(ring) && notPage;
         const outlinedFamily = () => {
             const outlined = measureOpaque(scan, cl.color, [], ring);
@@ -1763,7 +1764,7 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
 function drawnUnder(f, g, width) {
     if (!f.radius || !g.radius || !f.edgeInk)
         return false;
-    const k = f.inkColors.findIndex(c => Math.hypot(c[0] - g.seed[0], c[1] - g.seed[1], c[2] - g.seed[2]) <= INK_TOL);
+    const k = f.inkColors.findIndex(c => colorDistance(c, g.seed) <= INK_TOL);
     if (k < 0)
         return false;
     const onCircle = (h, x, y) => h.centers.some(c => Math.abs(Math.hypot(x - c.x, y - c.y) - h.radius) <= ORDER_RING);
@@ -1795,7 +1796,7 @@ function hueRings(image, fill, clusters, page) {
     const u = fill.map((v, ch) => v - page[ch]);
     const shades = clusters.map(c => c.color).filter(c => {
         const { m, off } = alongLine(c.map((x, ch) => x - page[ch]), u);
-        return m > 1 && Math.hypot(...c.map((x, ch) => x - fill[ch])) > CLUSTER_TOL && off <= CLUSTER_ON_LINE_TOL;
+        return m > 1 && colorDistance(c, fill) > CLUSTER_TOL && off <= CLUSTER_ON_LINE_TOL;
     });
     if (!shades.length)
         return [];

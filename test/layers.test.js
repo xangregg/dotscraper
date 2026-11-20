@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { distanceTransform, dilate, opening, buildMask, CLASS_FAMILY, CLASS_OTHER, CLASS_BACKGROUND } from '../src/core/layers.js';
+import { distanceTransform, dilate, opening, buildMask, components8, CLASS_FAMILY, CLASS_OTHER, CLASS_BACKGROUND } from '../src/core/layers.js';
 import { estimateStyle } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readImage, readPng } from '../tools/png.mjs';
@@ -320,4 +320,21 @@ test('bounds: pixels more than a dot radius beyond the axes are masked, nothing 
         }
     }
     assert.equal(bounded.stats.outside, outside);
+});
+
+test('components8: pixels joined at a corner are one component; boxes include their last row and column', () => {
+    const width = 7;
+    const rows = [
+        '#......',
+        '.#...##',
+        '..#..##',
+        '.......',
+        '#......',
+    ];
+    const mask = Uint8Array.from(rows.join(''), c => (c === '#' ? 1 : 0));
+    const comps = components8(mask, width, rows.length);
+    // in the order of their first pixels
+    assert.deepEqual(comps.map(c => [c.x0, c.y0, c.x1, c.y1, c.pixels.length]), [[0, 0, 2, 2, 3], [5, 1, 6, 2, 4], [0, 4, 0, 4, 1]]);
+    assert.deepEqual([...comps[0].pixels].sort((a, b) => a - b), [0, 8, 16]);
+    assert.deepEqual(components8(new Uint8Array(12), 4, 3), []);
 });

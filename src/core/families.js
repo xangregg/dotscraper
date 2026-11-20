@@ -4,6 +4,7 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
+import { colorDistance, sub, unit } from './image.js';
 import { scanOf, backgroundColor, flatMask, solidRegion } from './scan.js';
 import { measureFamily, alongLine } from './levels.js';
 import { familyRings, siblingRadius, SPECK_RADIUS_RATIO } from './opaque.js';
@@ -50,8 +51,6 @@ function candidateStyle(c) {
     return c.kind === 'opaque' ? { color: c.seed, alpha: 1 } : { color: c.fit.c, alpha: c.fit.alpha, ...(c.band ? { band: c.band, box: !!c.box } : {}) };
 }
 
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-
 /**
  * Candidates that are one translucent family seen over the main background B and over a region under the dots:
  * an opaque candidate that is a translucent candidate's dot over a region color is dropped, and two opaque
@@ -74,7 +73,7 @@ function mergeAcrossRegions(scan, B, candidates, regions) {
         const covered = out.some(t => t.kind === 'translucent' && under.some(B2 => {
             const q = 1 - t.fit.alpha;
             const level1 = t.fit.c.map((v, ch) => v + (B2[ch] - v) * q);
-            return Math.hypot(...sub(c.seed, level1)) <= MERGE_TOL;
+            return colorDistance(c.seed, level1) <= MERGE_TOL;
         }));
         changed ||= covered;
         return !covered;
@@ -220,7 +219,7 @@ function ringEstimate(image, est, others, backgrounds) {
 // nothing inside. `colors`: the found families' colors, whose darkening directions are theirs.
 function hollowEstimates(image, background, colors) {
     const B = background.color;
-    const known = colors.map(c => sub(B, c)).filter(d => Math.hypot(...d) > 0).map(d => d.map(x => x / Math.hypot(...d)));
+    const known = colors.map(c => sub(B, c)).filter(d => Math.hypot(...d) > 0).map(d => unit(d));
     return findHollowRings(image, B, known).map(found => {
         const est = outlinedEstimate(image, background, found);
         const { ring, hollow } = found;

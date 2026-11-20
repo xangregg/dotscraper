@@ -2551,3 +2551,37 @@ other load on the machine; run back to back, three rounds each, the committed co
 keeps the earlier run's times. In the app pathogen fits to the same 468 dots and dog-ages to the same 95. Test:
 createDotStore directly (records, near, a trial with a move, a drop and an add undone, buffers of each kind
 restored, ids never reused) in test/render.test.js.
+
+**Small duplicates: medians, component labelers, color distance, the bounds mask** (2026-11-20)
+
+Four things the review found written more than once, each now in one place. No rule changed.
+
+- **Medians.** Eighteen places spelled a median, in two variants that differ at an even count: the mean of the
+  middle two (shape.js median, a local one in axes.js, inline in unmix.js, a copy in tools/measure-dots.mjs) and
+  the upper of the two (four local lambdas in annotations.js, colormap.js and outline.js, and inline after a sort
+  in ten more places of outline.js, colormap.js and fit.js). Both are kept, since the rules were measured with
+  them, and named: `median` and `upperMedian` in a new stats.js, with `quantile`. Neither sorts its argument (most
+  of the old spellings did, in place; nothing read the sorted array afterwards).
+- **Component labelers.** Four 8-neighbor flood fills (layers.js components8, outline.js components, axes.js
+  inkComponents, annotations.js inkPieces) are one: components8, exported from layers.js. The callers derive what
+  they need from its pixel lists and boxes: a count, a half-open box, the piece's deepest pixel. axes.js now tests
+  each pixel of a label rectangle for ink once instead of up to nine times. The 4-neighbor `components` of shape.js
+  stays: it labels the pieces of a coverage image, which mustn't join at corners.
+- **Color distance.** The distance between two colors was written three ways at 43 places
+  (`Math.hypot(a[0] - b[0], …)`, `Math.hypot(...a.map((v, ch) => v - b[ch]))`, `Math.hypot(...sub(a, b))`), with
+  local `dist`, `near` and `close` lambdas beside them. It is `colorDistance` in image.js, still Math.hypot, so the
+  values are the same to the last bit. The per-pixel tests on scalars stay as they are (nearColor has the hot
+  ones). `sub`, `dot` and `unit`, each defined in two or three of background.js, families.js and unmix.js, moved
+  there too.
+- **The bounds mask.** The loop masking pixels beyond the plot area was in buildMask and in outlineLayers; it is
+  `maskOutside` in layers.js.
+
+src/core is 42 lines shorter with stats.js and the new doc comments counted (10,766 → 10,724).
+
+Results: every fitted dot and every family estimate of the 118 local images identical, by digest; so are the axes
+(lines, ticks, label boxes) and the annotation boxes at three radii, compared with the code before the change on
+the same 118.
+216 tests pass (1 standing skip). In the app dog-ages fits to the same 95 dots with 6 ticks on each axis, and
+pathogen to the same 468 (78 flagged), with no console errors. No speed change was looked for or claimed. Tests:
+test/stats.test.js (both medians, quantile, the argument left as it was), colorDistance against the three old
+spellings and sub, dot and unit in test/image.test.js, components8 in test/layers.test.js.

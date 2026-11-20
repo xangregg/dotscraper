@@ -11,7 +11,7 @@
 
 import { nearestTransform, opening } from './layers.js';
 import { components } from './shape.js';
-import { colorMask } from './image.js';
+import { colorMask, colorDistance, sub, dot, unit } from './image.js';
 
 const REGION_MIN_PIXELS = 1500; // flat pixels of one color for a region (bench3's ANOVA band: two boxes of about 2600)
 const REGION_COLOR_TOL = 3; // 0–255 units (RGB distance): a pixel this close to a region's color is that color
@@ -51,23 +51,10 @@ const S_BIN = 0.02; // histogram bin for the overlay's s
 const S_MAX = 0.95; // an "overlay" that keeps more than this of what's under it isn't one (nicest language's white
                     // page read as one with s = 1)
 
-function sub(a, b) {
-    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
-function dot(a, b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
 // distance of the offset e from the line through 0 with unit direction u, and the position along it
 function offLine(e, u) {
     const t = dot(e, u);
     return { t, perp: Math.sqrt(Math.max(0, dot(e, e) - t * t)) };
-}
-
-function unit(v) {
-    const n = Math.hypot(...v);
-    return v.map(x => x / n);
 }
 
 /**
@@ -93,9 +80,9 @@ export function regionColors(image, B, families, flat, radius) {
     const dirs = families.map(f => unit(sub(f.color, B)));
     // (a band in a translucent family's own hue lies on its line but is no level of it: style.js withoutBand)
     const isFamily = c => families.some((f, k) => {
-        if (Math.hypot(...sub(c, f.color)) <= REGION_COLOR_TOL * 3)
+        if (colorDistance(c, f.color) <= REGION_COLOR_TOL * 3)
             return true;
-        if (f.band && Math.hypot(...sub(c, f.band)) <= BAND_COLOR_TOL)
+        if (f.band && colorDistance(c, f.band) <= BAND_COLOR_TOL)
             return false;
         if (f.alpha >= 1)
             return false;
@@ -112,7 +99,7 @@ export function regionColors(image, B, families, flat, radius) {
         if (count < REGION_MIN_PIXELS)
             break;
         const c = [key >> 16, (key >> 8) & 255, key & 255];
-        if (Math.hypot(...sub(c, B)) <= REGION_COLOR_TOL || isFamily(c) || out.some(o => Math.hypot(...sub(c, o)) <= REGION_COLOR_TOL || isDotOn(c, o)))
+        if (colorDistance(c, B) <= REGION_COLOR_TOL || isFamily(c) || out.some(o => colorDistance(c, o) <= REGION_COLOR_TOL || isDotOn(c, o)))
             continue;
         const mask = colorMask(image, c, REGION_COLOR_TOL);
         const wide = opening(mask, width, height, REGION_OPEN_RADII * radius);
@@ -157,7 +144,7 @@ export function backgroundRegions(image, B, families, flat, radius) {
     const inRegion = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
         const c = [data[4 * p], data[4 * p + 1], data[4 * p + 2]];
-        if (Math.hypot(...sub(c, B)) <= REGION_COLOR_TOL) {
+        if (colorDistance(c, B) <= REGION_COLOR_TOL) {
             seedOf[p] = 0;
             seeds[p] = 1;
             continue;
@@ -165,7 +152,7 @@ export function backgroundRegions(image, B, families, flat, radius) {
         let best = -1;
         let bestD = REGION_SEED_TOL;
         for (let k = 1; k < all.length; k++) {
-            const d = Math.hypot(...sub(c, all[k]));
+            const d = colorDistance(c, all[k]);
             if (d <= bestD) {
                 best = k;
                 bestD = d;
@@ -176,7 +163,7 @@ export function backgroundRegions(image, B, families, flat, radius) {
     }
     const body = opening(inRegion, width, height, REGION_RIM_OPENING);
     // a box's rectangle is the box's, whatever seed is nearer
-    const isBox = colors.map(c => families.some(f => f.box && Math.hypot(...sub(f.band, c)) <= BAND_COLOR_TOL));
+    const isBox = colors.map(c => families.some(f => f.box && colorDistance(f.band, c) <= BAND_COLOR_TOL));
     const rects = colors.map((c, i) => (isBox[i] ? boxRects(image, c, width, height) : []));
     for (let p = 0; p < n; p++) {
         if (body[p]) {
@@ -296,7 +283,7 @@ function stackedRegions(image, B, colors, flat) {
         const color = h.sum.map(v => v / h.count);
         // an overlap is a color of its own (kite1: its page and a white region made a "stack" whose overlap was the
         // page again, at s 0.13)
-        if ([B, ...colors].some(c => Math.hypot(...sub(c, color)) < STACK_MIN_SEPARATION))
+        if ([B, ...colors].some(c => colorDistance(c, color) < STACK_MIN_SEPARATION))
             return;
         out.push({ top: i, bottom: j, color, s: dot(sub(color, top), d) / dd });
     }));
@@ -314,7 +301,7 @@ function regionMode(image, B, B2, families, flat, label, k) {
     const dUnder = families.map(f => unit(sub(f.color, B2)));
     const dOver = families.map(f => unit(sub(f.color, B)));
     // one dot's offset from B along c − B: the first level of a translucent family, the color itself if opaque
-    const t1 = families.map(f => Math.hypot(...sub(f.color, B)) * Math.min(1, f.alpha));
+    const t1 = families.map(f => colorDistance(f.color, B) * Math.min(1, f.alpha));
     for (let p = 0; p < label.length; p++) {
         if (label[p] !== k)
             continue;
@@ -354,7 +341,7 @@ function regionMode(image, B, B2, families, flat, label, k) {
     // A box plot's box in its dots' own hue (style.js boxBand) is under them: c − B₂ and c − B nearly agree, so the
     // dots' colors can't tell (protrusion3: 7.7° and 6.8°, over by a hair), but its outline can, lightened where a dot
     // crosses it (19, 20, 19 to 87, 94, 87)
-    if (families.some(f => f.box && Math.hypot(...sub(f.band, B2)) <= BAND_COLOR_TOL))
+    if (families.some(f => f.box && colorDistance(f.band, B2) <= BAND_COLOR_TOL))
         mode = 'under';
     else if (shown >= MODE_MIN_VOTES && under >= MODE_MIN_SHARE * shown)
         mode = 'under';

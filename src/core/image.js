@@ -39,9 +39,50 @@ export function pixelAt(image, x, y) {
 }
 
 /**
- * A test of whether a pixel is within `tol` of a color: Euclidean distance in RGB, the app's one measure of "the
- * same color". The scans make it tens of times per pixel, so it compares squared distances: Math.hypot, which
- * these tests were first written with, is 7–9 times slower there. The two agree on every pixel, also on those
+ * The distance between two colors, the app's one measure of how alike they are: Euclidean, in RGB. Also between two
+ * offsets or two directions in that space.
+ *
+ * @param {number[]} a  0–255
+ * @param {number[]} b  0–255
+ * @returns {number}  0–255 units
+ */
+export function colorDistance(a, b) {
+    return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+// Colors as vectors: a color's offset from another (a − b), the inner product of two offsets, and an offset's
+// direction (a unit vector; not for a zero offset).
+
+/**
+ * @param {number[]} a
+ * @param {number[]} b
+ * @returns {number[]}
+ */
+export function sub(a, b) {
+    return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+/**
+ * @param {number[]} a
+ * @param {number[]} b
+ * @returns {number}
+ */
+export function dot(a, b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+/**
+ * @param {number[]} v  not zero
+ * @returns {number[]}
+ */
+export function unit(v) {
+    const n = Math.hypot(...v);
+    return v.map(x => x / n);
+}
+
+/**
+ * A test of whether a pixel is within `tol` of a color (colorDistance). The scans make it tens of times per pixel, so it compares squared distances: Math.hypot is 7–9
+ * times slower there. The two agree on every pixel, also on those
  * exactly `tol` away, when tol² is exact, as it is for the whole and half units used here (test/image.test.js).
  *
  * @param {Uint8ClampedArray} data  RGBA, 0–255

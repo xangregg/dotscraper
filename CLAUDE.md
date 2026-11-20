@@ -31,7 +31,7 @@ work is completed, and record measured results there (what was tried, the number
 ```
 index.html              layout, loads src/ui/main.js as a module
 styles.css
-src/core/               pure algorithms: image.js (hash, pixel access, color tests), render.js (forward model), style.js (dot
+src/core/               pure algorithms: image.js (hash, pixel access, color tests and distance), render.js (forward model), style.js (dot
                         style: the families of an image and one family's style, with the band and box rules), scan.js
                         (page, flat pixels, tolerances, the Scan passed through the search), levels.js (translucent
                         families: levels, alpha, color), opaque.js (opaque families: measureOpaque, opaqueFamilies, radius
@@ -41,7 +41,7 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
                         whole images whose fills vary, and single outlined families), annotations.js (text lines and legend markers, masked), families.js (all of the
-                        above, per image: what the bench and the app fit), rng.js
+                        above, per image: what the bench and the app fit), stats.js (medians, quantile), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
                         axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress

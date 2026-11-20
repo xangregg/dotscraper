@@ -15,6 +15,9 @@
 
 import { pixelCoverage, gaussianKernel, blurRect, createDotModel, createDotStore, unionRect, solidImage } from './render.js';
 import { ringCenters } from './fit.js';
+import { colorDistance } from './image.js';
+import { components8 } from './layers.js';
+import { upperMedian } from './stats.js';
 
 const RING_EDGE_MARGIN = 1; // px around a dot's rectangle for antialiasing
 const K = [0, 0, 0]; // the ring color P is measured toward
@@ -473,7 +476,6 @@ export function fillFamilies(image) {
 export function dotFamilies(image, dots, families, radius, fillRadius) {
     const { width, height, data } = image;
     const rIn = fillRadius - FAMILY_INSET;
-    const median = a => a.sort((u, v) => u - v)[a.length >> 1];
     return dots.map(d => {
         const others = dots.filter(o => o !== d && Math.hypot(o.x - d.x, o.y - d.y) < radius + fillRadius);
         const own = [];
@@ -497,10 +499,10 @@ export function dotFamilies(image, dots, families, radius, fillRadius) {
         const use = sure ? own : top.length ? top : own;
         if (!use.length)
             return { family: 0, sure: false };
-        const med = [0, 1, 2].map(ch => median(use.map(c => c[ch])));
+        const med = [0, 1, 2].map(ch => upperMedian(use.map(c => c[ch])));
         let best = 0;
         families.forEach((f, k) => {
-            if (Math.hypot(...f.map((v, ch) => v - med[ch])) < Math.hypot(...families[best].map((v, ch) => v - med[ch])))
+            if (colorDistance(f, med) < colorDistance(families[best], med))
                 best = k;
         });
         return { family: best, sure };
@@ -562,50 +564,12 @@ export function underRings(P, width, height, radius) {
     return out;
 }
 
-// connected components (8-neighbors) of v ≥ level: boxes and pixel counts
-function components(v, width, height, level) {
-    const seen = new Uint8Array(v.length);
-    const out = [];
-    for (let s = 0; s < v.length; s++) {
-        if (seen[s] || !(v[s] >= level))
-            continue;
-        const comp = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, count: 0 };
-        const stack = [s];
-        seen[s] = 1;
-        while (stack.length) {
-            const p = stack.pop();
-            const x = p % width;
-            const y = (p - x) / width;
-            comp.count++;
-            comp.x0 = Math.min(comp.x0, x);
-            comp.x1 = Math.max(comp.x1, x);
-            comp.y0 = Math.min(comp.y0, y);
-            comp.y1 = Math.max(comp.y1, y);
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    const xx = x + dx;
-                    const yy = y + dy;
-                    if (xx < 0 || yy < 0 || xx >= width || yy >= height)
-                        continue;
-                    const q = yy * width + xx;
-                    if (!seen[q] && v[q] >= level) {
-                        seen[q] = 1;
-                        stack.push(q);
-                    }
-                }
-            }
-        }
-        out.push(comp);
-    }
-    return out;
-}
-
 // Isolated rings: square, hollow components of P of a plausible size, their box centers
 function isolatedRings(P, width, height) {
-    return components(P, width, height, ISO_LEVEL).filter(c => {
+    return components8(P.map(v => (v >= ISO_LEVEL ? 1 : 0)), width, height).filter(c => {
         const w = c.x1 - c.x0 + 1;
         const h = c.y1 - c.y0 + 1;
-        if (Math.abs(w - h) > ISO_SQUARE || w < ISO_SIZE[0] || w > ISO_SIZE[1] || c.count > ISO_FILL * w * h)
+        if (Math.abs(w - h) > ISO_SQUARE || w < ISO_SIZE[0] || w > ISO_SIZE[1] || c.pixels.length > ISO_FILL * w * h)
             return false;
         const mid = Math.floor((c.y0 + c.y1) / 2) * width + Math.floor((c.x0 + c.x1) / 2);
         return P[mid] < ISO_LEVEL;
@@ -668,7 +632,7 @@ function ringPatchError(A, width, height, cx, cy, st, fixedAlpha = null) {
  * @returns {{radius: number, inner: number, blur: number, alpha: number, rms: number, rings: number}}
  */
 function measureRing(A, width, height, rings, fixedAlpha = null) {
-    const r0 = rings.map(c => c.r).sort((a, b) => a - b)[rings.length >> 1];
+    const r0 = upperMedian(rings.map(c => c.r));
     let st = { r: r0, inner: Math.max(0.5, (r0 - 1.5) / r0), blur: 0.5 };
     let centers = rings.map(c => ({ x: c.x, y: c.y }));
     const total = () => {
@@ -746,8 +710,7 @@ function measureRing(A, width, height, rings, fixedAlpha = null) {
         }
     }
     const { sse, count, alphas } = total();
-    alphas.sort((a, b) => a - b);
-    return { radius: st.r, inner: st.inner, blur: st.blur, alpha: alphas[alphas.length >> 1], rms: Math.sqrt(sse / Math.max(1, count)), rings: alphas.length };
+    return { radius: st.r, inner: st.inner, blur: st.blur, alpha: upperMedian(alphas), rms: Math.sqrt(sse / Math.max(1, count)), rings: alphas.length };
 }
 
 /**
@@ -798,8 +761,7 @@ function measureFillAlpha(A, width, height, cands, ring) {
             }
             if (inside.length < PAIR_MIN_INSIDE || outside.length < PAIR_MIN_OUTSIDE)
                 continue;
-            const med = s => s.sort((u, v) => u - v)[s.length >> 1];
-            const ratio = med(inside) / med(outside);
+            const ratio = upperMedian(inside) / upperMedian(outside);
             pairs++;
             if (ratio < PAIR_LOW_MODE)
                 low.push(ratio);
@@ -810,8 +772,7 @@ function measureFillAlpha(A, width, height, cands, ring) {
         return { fillAlpha: 0, pairs, measured: true };
     if (low.length < PAIR_MIN)
         return { fillAlpha: FILL_ALPHA_DEFAULT, pairs, measured: false };
-    low.sort((u, v) => u - v);
-    return { fillAlpha: Math.min(1, Math.max(0, 1 - low[low.length >> 1])), pairs, measured: true };
+    return { fillAlpha: Math.min(1, Math.max(0, 1 - upperMedian(low))), pairs, measured: true };
 }
 // Hollow rings (ggplot's shape 1, R's pch 1): a stroke of one color with nothing inside, drawn over bands and other
 // dots (step1: red rings r 6.4, 1.75 px wide, about 0.31 of white's distance at their cores, some under a band that
@@ -949,8 +910,7 @@ function hollowInside(image, rings, ring) {
         if (inside[3] && outside[3])
             d.push(Math.hypot(...[0, 1, 2].map(ch => inside[ch] / inside[3] - outside[ch] / outside[3])));
     }
-    d.sort((a, b) => a - b);
-    return d.length > 0 && d[d.length >> 1] <= HOLLOW_INSIDE_TOL;
+    return d.length > 0 && upperMedian(d) <= HOLLOW_INSIDE_TOL;
 }
 
 /**
@@ -1032,7 +992,7 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     const rings = isolatedRings(P, width, height);
     if (rings.length < ISO_MIN)
         return null;
-    const r0 = rings.map(c => c.r).sort((a, b) => a - b)[rings.length >> 1];
+    const r0 = upperMedian(rings.map(c => c.r));
     const under = underRings(P, width, height, r0);
     // the most ring-like of the isolated components, of about one size (droplet1: a glyph at r 15 beside rings of
     // 9.75–10.5)

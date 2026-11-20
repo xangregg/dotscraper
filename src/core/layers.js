@@ -6,6 +6,8 @@
 // Morphology uses the exact Euclidean distance transform, so dilation and opening by a disc cost O(pixels)
 // whatever the radius.
 
+import { colorDistance } from './image.js';
+
 export const CLASS_BACKGROUND = 0;
 export const CLASS_FAMILY = 1;
 export const CLASS_OTHER = 2;
@@ -335,8 +337,17 @@ function barPieces(pieces, deep, thin, width, height, radius) {
     }
 }
 
-/** Connected components (8-neighbor) of a binary mask, with their bounding boxes. */
-function components8(mask, width, height) {
+/**
+ * Connected components (8-neighbor) of a binary mask, in the order of their first pixels. shape.js components is
+ * the 4-neighbor one, for the pieces of a coverage image.
+ *
+ * @param {ArrayLike<number>} mask  nonzero where set
+ * @param {number} width
+ * @param {number} height
+ * @returns {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]}  each component's pixel indices
+ *   and its bounding box, px, the last column and row included
+ */
+export function components8(mask, width, height) {
     const seen = new Uint8Array(mask.length);
     const comps = [];
     const stack = [];
@@ -446,6 +457,24 @@ function fillBoxes(mask, width, height, boxes) {
     }
 }
 
+// Masks the pixels whose centers lie more than m px beyond the plot area's sides (a side that is null bounds
+// nothing); returns how many.
+function maskOutside(mask, width, height, b, m) {
+    let outside = 0;
+    for (let y = 0; y < height; y++) {
+        const cy = y + 0.5;
+        const rowOut = (b.top !== null && cy < b.top - m) || (b.bottom !== null && cy > b.bottom + m);
+        for (let x = 0; x < width; x++) {
+            const cx = x + 0.5;
+            if (rowOut || (b.left !== null && cx < b.left - m) || (b.right !== null && cx > b.right + m)) {
+                mask[y * width + x] = 1;
+                outside++;
+            }
+        }
+    }
+    return outside;
+}
+
 function outlineLayers(estimate, width, height, opts) {
     const n = width * height;
     const { D, style } = estimate;
@@ -454,22 +483,7 @@ function outlineLayers(estimate, width, height, opts) {
     const classes = new Uint8Array(n);
     for (let p = 0; p < n; p++)
         classes[p] = mask[p] ? CLASS_OTHER : (D[p] > 0 ? CLASS_FAMILY : CLASS_BACKGROUND);
-    let outside = 0;
-    const b = opts.bounds;
-    if (b) {
-        const m = OUTSIDE_MARGIN_RADII * style.radius;
-        for (let y = 0; y < height; y++) {
-            const cy = y + 0.5;
-            const rowOut = (b.top !== null && cy < b.top - m) || (b.bottom !== null && cy > b.bottom + m);
-            for (let x = 0; x < width; x++) {
-                const cx = x + 0.5;
-                if (rowOut || (b.left !== null && cx < b.left - m) || (b.right !== null && cx > b.right + m)) {
-                    mask[y * width + x] = 1;
-                    outside++;
-                }
-            }
-        }
-    }
+    const outside = opts.bounds ? maskOutside(mask, width, height, opts.bounds, OUTSIDE_MARGIN_RADII * style.radius) : 0;
     const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside };
     for (let p = 0; p < n; p++) {
         if (classes[p] === CLASS_BACKGROUND)
@@ -490,7 +504,7 @@ function overInk(fm) {
         return null;
     const over = new Uint8Array(256);
     fm.inkColors.forEach((c, k) => {
-        if (fm.under.some(u => Math.hypot(u[0] - c[0], u[1] - c[1], u[2] - c[2]) <= OVER_INK_TOL))
+        if (fm.under.some(u => colorDistance(u, c) <= OVER_INK_TOL))
             over[k + 1] = 1;
     });
     return over;
@@ -530,9 +544,8 @@ export function buildMask(image, estimate, opts = {}) {
     if (style.radius) {
         const deep = new Uint8Array(n);
         const limit = style.measuredLevels + DEEP_EXTRA_LEVELS;
-        const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-        const beyond = (estimate.familyMeasure?.beyond ?? []).filter(L => dist(L.color, style.color) <= ANCHOR_MAX_OFFSET);
-        const anchor = beyond.length ? beyond.reduce((a, b) => (dist(a.color, style.color) <= dist(b.color, style.color) ? a : b)).color : style.color;
+        const beyond = (estimate.familyMeasure?.beyond ?? []).filter(L => colorDistance(L.color, style.color) <= ANCHOR_MAX_OFFSET);
+        const anchor = beyond.length ? beyond.reduce((a, b) => (colorDistance(a.color, style.color) <= colorDistance(b.color, style.color) ? a : b)).color : style.color;
         const d = image.data;
         const opaque = style.alpha >= 1;
         for (let p = 0; p < n; p++) {
@@ -598,22 +611,7 @@ export function buildMask(image, estimate, opts = {}) {
         seedMask[p] = classes[p] === CLASS_OTHER || thin[p] || (over && over[estimate.familyMeasure.edgeInk[p]]) ? 1 : 0;
     fillBoxes(seedMask, width, height, opts.exclude);
     const mask = dilate(seedMask, width, height, r);
-    let outside = 0;
-    const b = opts.bounds;
-    if (b && style.radius) {
-        const m = OUTSIDE_MARGIN_RADII * style.radius;
-        for (let y = 0; y < height; y++) {
-            const cy = y + 0.5;
-            const rowOut = (b.top !== null && cy < b.top - m) || (b.bottom !== null && cy > b.bottom + m);
-            for (let x = 0; x < width; x++) {
-                const cx = x + 0.5;
-                if (rowOut || (b.left !== null && cx < b.left - m) || (b.right !== null && cx > b.right + m)) {
-                    mask[y * width + x] = 1;
-                    outside++;
-                }
-            }
-        }
-    }
+    let outside = opts.bounds && style.radius ? maskOutside(mask, width, height, opts.bounds, OUTSIDE_MARGIN_RADII * style.radius) : 0;
     const clipped = [];
     for (const edge of opts.clips ?? []) {
         const cut = style.radius ? clipAt(D, width, height, edge, style.radius) : null;

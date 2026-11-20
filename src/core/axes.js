@@ -9,6 +9,9 @@
 // Coordinates follow the rest of the project: pixel (i, j) spans [i, i + 1) × [j, j + 1), so a one-pixel line in row
 // j has its center at j + 0.5. Positions of lines and ticks are darkness-weighted centers.
 
+import { components8 } from './layers.js';
+import { median } from './stats.js';
+
 const GRAY_CHROMA = 24; // 0–255: max(r, g, b) − min(r, g, b) for a gray pixel
 // … or, for a dark pixel, this: dark navy text and ticks are ink as black is (wages2025: 24, 37, 50, chroma 26)
 const DARK_GRAY_CHROMA = 40;
@@ -345,42 +348,19 @@ function inkComponents(image, backgrounds, rect, grayOnly = false) {
             return false;
         return isInk(data, i, backgrounds);
     };
-    const seen = new Uint8Array(w * h);
-    const comps = [];
+    const mask = new Uint8Array(w * h);
     for (let y = y0; y < y1; y++) {
-        for (let x = x0; x < x1; x++) {
-            if (seen[(y - y0) * w + x - x0] || !ink(x, y))
-                continue;
-            const stack = [[x, y]];
-            seen[(y - y0) * w + x - x0] = 1;
-            const box = [x, y, x + 1, y + 1];
-            let n = 0;
-            while (stack.length) {
-                const [cx, cy] = stack.pop();
-                n++;
-                box[0] = Math.min(box[0], cx);
-                box[1] = Math.min(box[1], cy);
-                box[2] = Math.max(box[2], cx + 1);
-                box[3] = Math.max(box[3], cy + 1);
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        const nx = cx + dx;
-                        const ny = cy + dy;
-                        if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1 || seen[(ny - y0) * w + nx - x0])
-                            continue;
-                        if (ink(nx, ny)) {
-                            seen[(ny - y0) * w + nx - x0] = 1;
-                            stack.push([nx, ny]);
-                        }
-                    }
-                }
-            }
-            // ink touching the image border is a frame or a cut-off mark, never a label (pathogen: a 1 px border
-            // at the right edge chained every x label and the axis title into one word)
-            const touches = box[0] === 0 || box[1] === 0 || box[2] === image.width || box[3] === image.height;
-            if (n >= LABEL_MIN_PIXELS && !touches)
-                comps.push({ box, n });
-        }
+        for (let x = x0; x < x1; x++)
+            mask[(y - y0) * w + x - x0] = ink(x, y) ? 1 : 0;
+    }
+    const comps = [];
+    for (const c of components8(mask, w, h)) {
+        const box = [c.x0 + x0, c.y0 + y0, c.x1 + x0 + 1, c.y1 + y0 + 1];
+        // ink touching the image border is a frame or a cut-off mark, never a label (pathogen: a 1 px border
+        // at the right edge chained every x label and the axis title into one word)
+        const touches = box[0] === 0 || box[1] === 0 || box[2] === image.width || box[3] === image.height;
+        if (c.pixels.length >= LABEL_MIN_PIXELS && !touches)
+            comps.push({ box, n: c.pixels.length });
     }
     return comps;
 }
@@ -569,10 +549,6 @@ export function detectAxes(image) {
     const backgrounds = backgroundColors(image);
     const ink = grayInk(image, backgrounds);
     const lines = findLines(image, ink);
-    const median = v => {
-        const r = [...v].sort((a, b) => a - b);
-        return (r[(r.length - 1) >> 1] + r[r.length >> 1]) / 2;
-    };
     // labeled ticks drawn as strokes (a corner tick, on a line, has none) are straight, and their labels are in
     // plain view of the axis
     const axisLike = ticks => {

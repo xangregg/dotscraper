@@ -11,6 +11,7 @@
 import { mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { readPng, writePng } from './png.mjs';
+import { median } from '../src/core/stats.js';
 
 const PERP_TOL = 4; // 0–255 units: max distance of a pixel from the color line to count as dot-colored
 // Near the background every color is close to the line in absolute terms (antialiased gray text one step from white
@@ -382,11 +383,6 @@ function upscalePhases(image) {
 
 function fmt(v, d = 1) {
     return v.toFixed(d);
-}
-
-function median(a) {
-    const s = [...a].sort((x, y) => x - y);
-    return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 }
 
 function main() {

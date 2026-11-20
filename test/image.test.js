@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pixelHash, pixelAt, nearColor, nearAnyColor, colorMask } from '../src/core/image.js';
+import { pixelHash, pixelAt, nearColor, nearAnyColor, colorMask, colorDistance, sub, dot, unit } from '../src/core/image.js';
 
 function solid(width, height, rgba) {
     const data = new Uint8ClampedArray(4 * width * height);
@@ -78,4 +78,25 @@ test('colorMask and nearAnyColor mark the same pixels as nearColor', () => {
     }
     assert.ok(count > 100, `${count} pixels within 5 units`);
     assert.equal(nearAnyColor(image.data, [], 5)(0), false);
+});
+
+test('colorDistance is Math.hypot of the channel differences, however a call site used to spell it', () => {
+    const a = [12.5, 200, 31];
+    const b = [250, 3, 77.25];
+    const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    assert.equal(colorDistance(a, b), d);
+    assert.equal(colorDistance(a, b), Math.hypot(...a.map((v, ch) => v - b[ch])));
+    assert.equal(colorDistance(b, a), d);
+    assert.equal(colorDistance([3, 4, 0], [0, 0, 0]), 5);
+    assert.equal(colorDistance(a, a), 0);
+    // only the color channels count: a pixel's α doesn't
+    assert.equal(colorDistance([3, 4, 0, 255], [0, 0, 0]), 5);
+});
+
+test('sub, dot and unit: a color\'s offset from another, the inner product, and a direction', () => {
+    assert.deepEqual(sub([10, 20, 30], [1, 2, 3]), [9, 18, 27]);
+    assert.equal(dot([1, 2, 3], [4, 5, 6]), 32);
+    assert.deepEqual(unit([0, 3, 4]), [0, 0.6, 0.8]);
+    const u = unit(sub([255, 255, 255], [31, 119, 180]));
+    assert.ok(Math.abs(dot(u, u) - 1) < 1e-12);
 });

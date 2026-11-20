@@ -16,6 +16,8 @@
 
 import { createDotModel, renderDots, solidImage, gaussianKernel } from './render.js';
 import { createOutlineModel } from './outline.js';
+import { colorDistance } from './image.js';
+import { upperMedian } from './stats.js';
 
 const HUBER_DELTA = 3; // t units (0–255 scale): residuals beyond this count linearly
 const DOT_COST_PIXELS = 20; // λ = this many pixels …
@@ -386,7 +388,7 @@ export function createFit(input) {
     const opaque = style.alpha >= 1;
     const minVisible = opaque ? MIN_VISIBLE_OPAQUE : (style.layered ? MIN_VISIBLE_OUTLINE : 0);
     const fitColor = style.fitColor ?? style.color;
-    const fillT = FILL_LEVEL * Math.hypot(B[0] - fitColor[0], B[1] - fitColor[1], B[2] - fitColor[2]);
+    const fillT = FILL_LEVEL * colorDistance(B, fitColor);
     const pos = new Map(); // id → { x, y }
     const pinned = new Set(); // ids placed by hand: refinement leaves them where they are
 
@@ -611,8 +613,7 @@ export function createFit(input) {
         const grow = ([x0, y0, x1, y1], d) => [Math.max(0, x0 - d), Math.max(0, y0 - d), Math.min(width, x1 + d), Math.min(height, y1 + d)];
         let made = 0;
         const patches = [...pos.keys()].map(id => ({ id, l: loss(model.influenceRect(pos.get(id).x, pos.get(id).y)) }));
-        const ls = patches.map(c => c.l).sort((a, b) => a - b);
-        const minLoss = Math.max(SPLIT_MIN_LOSS_LAMBDAS * lambda, SPLIT_MIN_LOSS_MEDIANS * (ls[ls.length >> 1] ?? 0));
+        const minLoss = Math.max(SPLIT_MIN_LOSS_LAMBDAS * lambda, SPLIT_MIN_LOSS_MEDIANS * (upperMedian(patches.map(c => c.l)) ?? 0));
         const candidates = patches.filter(c => c.l > minLoss).sort((a, b) => b.l - a.l);
         for (const { id } of candidates) {
             const p0 = pos.get(id);
@@ -778,8 +779,7 @@ export function createFit(input) {
         }
         if (vals.length < FILL_FIT_MIN_PIXELS)
             return false;
-        vals.sort((a, b) => a - b);
-        const f = vals[vals.length >> 1];
+        const f = upperMedian(vals);
         if (Math.abs(f - f0) < FILL_FIT_TOL)
             return false;
         model.setFill(id, f);
