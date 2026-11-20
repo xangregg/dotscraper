@@ -6,7 +6,7 @@ import { unmixFamilies, familyImage, regionLevels } from '../src/core/unmix.js';
 import { flatMask } from '../src/core/scan.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
-import { extractAll } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
 import { matchDots } from '../src/core/metrics.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);

@@ -6,7 +6,7 @@ import { distanceTransform, dilate, opening, buildMask, components8, CLASS_FAMIL
 import { estimateStyle } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readImage, readPng } from '../tools/png.mjs';
-import { extractAll } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
 import { readTruthJson } from '../tools/truth-json.mjs';
 import { matchDots } from '../src/core/metrics.js';
 import { detectAxes, plotBounds, clipEdges } from '../src/core/axes.js';

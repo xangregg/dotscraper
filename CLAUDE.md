@@ -41,11 +41,13 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
                         whole images whose fills vary, and single outlined families), annotations.js (text lines and legend markers, masked), families.js (all of the
-                        above, per image: what the bench and the app fit), stats.js (medians, quantile), rng.js
+                        above, per image: the families to fit), extract.js (from an image to its dots: the scan with the choice of color
+                        matching, mask options, fit input, dots' fill colors, and extractAll, all of it at once: the steps the app takes
+                        and the bench and tests run), stats.js (medians, quantile), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
                         axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
-src/scan-worker.js      module Web Worker running the scan for dot families (estimateFamilies), posting progress
+src/scan-worker.js      module Web Worker running the scan for dot families (extract.js scanFamilies), posting progress
 testgraphs/             test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data
                         cells, ticks in the header): LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,

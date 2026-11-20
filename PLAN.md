@@ -2613,3 +2613,41 @@ Results: every fitted dot and every family estimate of the 118 local images iden
 dots, bench1 group-smoother-ci to 100 in two families with its band divided out and noted, and dog-ages to 95,
 with no console errors. No test was added: the stages are private to their modules, and the tests of
 opaqueFamilies, findCandidates and estimateFamilies through real and synthetic images cover them as before.
+
+**One path from image to dots for the app and the bench** (2026-11-20)
+
+tools/bench.mjs extractAll was a copy of what the app does between its workers: scan with exact colors and, for a
+PNG with JPEG noise, again with noisy matching; mask each family beyond the axes, at clip edges and in text and
+legend boxes; fit; tell the dots of an outlined or palette family apart by fill color. The app had the same steps
+in src/scan-worker.js and src/ui/main.js, each written a second time, and nothing checked that they agreed. They
+are now in src/core/extract.js, and both sides call them:
+
+- `scanFamilies(source, { jpeg, tryNoisy, onProgress })`: the scan and the choice of color matching, with the
+  reasons for the rule in one place. The scan worker's own copy is gone; it passes the result on without the image
+  as analyzed, which the page makes for itself.
+- `excludedBoxes(work, radius)` and `maskOptions(axes, exclude)`: what buildMask is told. The app keeps its cache
+  of the boxes by radius and adds the user's dilation.
+- `fitInput(image, est, mask, style)`: what fitDots is given, with the user's style when there is one.
+- `dotFills(work, est, dots, radius)`: each dot's fill color for an outlined or palette family. The app labels its
+  dots with it, extractAll makes a result per color (now marked with `fill`, the color's index).
+- `extractAll(source, jpeg)`: all of it at once, for the bench and the tests, which import it from core now.
+
+The bench keeps what is only the bench's: the Hough-only candidates, added to extractAll's results, and `extract`,
+the one-family path through estimateStyle that the synthetic one-family presets and compare-fits use.
+
+One difference between the two paths showed, and is settled. The bench read the axes on the image as analyzed (a
+JPEG's chroma restored), the app on the image as decoded, before the scan. Of the 25 local images where the two
+differ (16 JPEG files, 9 PNGs with JPEG noise), the plot's sides differ on six of the PNGs, by 1e-6 to 0.08 px
+(droplet1's bottom). extractAll now reads them as the app does, on the image as decoded: the app's axes carry the
+tick values the user types, so they can't follow the choice of color matching.
+
+Still different, and left: the synthetic one-family presets go through `extract` (estimateStyle, bounds only), not
+through extractAll. Moving them would change what those rows measure, which is a decision of its own.
+
+Results: every fitted dot and every family estimate of the 118 local images identical, by digest, both as moved
+(axes on the image as analyzed) and with the axes read as the app reads them. In the app, six images through each
+changed path give extractAll's counts with no console errors: dog-ages 95, step1 128 in two families (the noisy
+scan wins and turns noisy matching on), bench2 group-smoother.jpg 200 (a JPEG file), bench1 group-graystroke 100
+(fills told apart after the fit), wages2025 670 (a palette), pathogen 468. Tests: test/extract.test.js, among them
+the app's steps taken in turn (scanFamilies, buildMask with maskOptions and excludedBoxes, fitDots with fitInput)
+giving extractAll's masks and dots on a synthetic graph of three families, and the progress of the two scans.

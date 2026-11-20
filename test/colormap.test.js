@@ -6,7 +6,8 @@ import { flatMask, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '..
 import { findColormap, rayImage, opaqueImage } from '../src/core/colormap.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
-import { extractAll, groupRow } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
+import { groupRow } from '../tools/bench.mjs';
 import { detectAxes } from '../src/core/axes.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';

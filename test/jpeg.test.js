@@ -7,7 +7,8 @@ import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
-import { extractAll, groupRow } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
+import { groupRow } from '../tools/bench.mjs';
 
 const BENCH = new URL('../bench1/', import.meta.url).pathname;
 const MEDIUM_R = 6.72; // px, bench1 medium-dots

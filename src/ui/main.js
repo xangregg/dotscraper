@@ -15,10 +15,9 @@ import { restoreChroma, jpegNoise } from '../core/jpeg.js';
 import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render.js';
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
-import { dotFamilies, createOutlineModel } from '../core/outline.js';
-import { paletteColors, paletteFamilies } from '../core/colormap.js';
-import { detectAxes, plotBounds, clipEdges, backgroundColors } from '../core/axes.js';
-import { annotationBoxes } from '../core/annotations.js';
+import { createOutlineModel } from '../core/outline.js';
+import { detectAxes } from '../core/axes.js';
+import { excludedBoxes, maskOptions, fitInput, dotFills } from '../core/extract.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
@@ -143,27 +142,22 @@ function setFits(families, extra = {}) {
 }
 
 // Outlined dots of a few fill colors are fitted as one family of rings; each dot's fill color comes from its pixels
-// (outline.dotFamilies): fill is its index in the estimate's fillFamilies, fillSure false where its fill is mostly
+// (extract.js dotFills): fill is its index in the estimate's fillFamilies, fillSure false where its fill is mostly
 // hidden and the color may not be in the image at all. A palette's dots are fitted as one family too, and its colors
-// are read from the fitted dots after each fit (colormap.js paletteColors, paletteFamilies).
+// are read from the fitted dots after each fit.
 function labelFills(f) {
     const est = state.families[f.family]?.estimate;
     if (!est || !f.dots.length)
         return;
-    if (est.palette) {
-        const colors = paletteColors(state.work, f.dots, f.radius, est.background.color);
-        est.fillFamilies = colors.length ? colors : null;
-        if (!colors.length)
-            return;
-    }
-    const fams = est.fillFamilies;
-    if (!fams)
+    const fills = dotFills(state.work, est, f.dots, f.radius);
+    // (a palette's colors come from the fit: the panel shows the latest)
+    if (est.palette)
+        est.fillFamilies = fills ? fills.colors : null;
+    if (!fills)
         return;
-    const which = est.palette ? paletteFamilies(state.work, f.dots, f.radius, fams)
-        : dotFamilies(state.work, f.dots, fams, f.radius, f.radius * (1 + est.style.ring.inner) / 2);
     f.dots.forEach((d, i) => {
-        d.fill = which[i].family;
-        d.fillSure = which[i].sure;
+        d.fill = fills.which[i].family;
+        d.fillSure = fills.which[i].sure;
     });
 }
 
@@ -190,10 +184,10 @@ function analysisImage() {
 }
 
 function maskOpts(k) {
-    return { bounds: plotBounds(state.axes), clips: clipEdges(state.axes), exclude: annotations(styleOf(k)?.radius), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+    return { ...maskOptions(state.axes, annotations(styleOf(k)?.radius)), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
 }
 
-// text and legend markers to mask (annotations.js), read once per analyzed image and radius
+// text and legend markers to mask (extract.js excludedBoxes), read once per analyzed image and radius
 function annotations(radius) {
     if (!state.work || !radius)
         return [];
@@ -201,8 +195,7 @@ function annotations(radius) {
         state.annotations = { image: state.work, byRadius: new Map() };
     let boxes = state.annotations.byRadius.get(radius);
     if (!boxes) {
-        const { text, legend } = annotationBoxes(state.work, backgroundColors(state.work)[0], radius);
-        boxes = [...text, ...legend];
+        boxes = excludedBoxes(state.work, radius);
         state.annotations.byRadius.set(radius, boxes);
     }
     return boxes;
@@ -214,7 +207,7 @@ function fitInputFor(k) {
     const style = styleOf(k);
     const image = imageOf(k);
     const mask = k === state.current ? state.layers.mask : buildMask(image, { ...est, style }, maskOpts(k)).mask;
-    return { image, style, line: est.familyMeasure.line, mask, D: est.D, imgT: est.fitT, base: est.base, seeds: est.seeds };
+    return fitInput(image, est, mask, style);
 }
 
 /** The color that names a family: the picked color, or its seed; null for one whose dots vary in color. */
@@ -582,13 +575,11 @@ async function analyze({ auto = false } = {}) {
     state.undo = [];
     state.scanning = true;
     selectFamily(0);
-    // A PNG made from a JPEG (a screenshot of a web figure) fails the exact-color tests; when the image has JPEG noise
-    // and noisy color matching finds more families (all of them, when none showed with exact colors), analyze it as
-    // a JPEG. Only on loading: the box is the user's after. Not whenever the noise shows: restoring chroma cost
-    // pathogen precision (0.972 → 0.637), which worked as is. A family counts once it has a radius: without one it
-    // can't be fitted (step1: the blue dots, radius unknown with exact colors, 5.4 px with noisy matching).
+    // An image with JPEG noise that isn't a JPEG file is also scanned with noisy color matching, and analyzed as a
+    // JPEG when that finds more families (extract.js scanFamilies says why). Only on loading: the box is the user's
+    // after.
     const tryNoisy = auto && !state.jpeg && state.noise.likely;
-    const scan = await runScan('scan', { image: state.image, work: state.work, jpeg: state.jpeg, tryNoisy }, `Scanning ${state.name} for dot colors and sizes…`);
+    const scan = await runScan('scan', { image: state.image, jpeg: state.jpeg, tryNoisy }, `Scanning ${state.name} for dot colors and sizes…`);
     if (!scan)
         return false;
     const { prepared } = scan;

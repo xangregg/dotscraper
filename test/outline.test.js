@@ -9,7 +9,8 @@ import { createRng } from '../src/core/rng.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 import { detectAxes } from '../src/core/axes.js';
-import { extractAll, jitterRow, groupRow } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
+import { jitterRow, groupRow } from '../tools/bench.mjs';
 import { refitNear } from '../src/core/fit.js';
 
 const WHITE = [255, 255, 255];

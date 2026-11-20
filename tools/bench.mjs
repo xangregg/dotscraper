@@ -15,15 +15,12 @@ import { fileURLToPath } from 'node:url';
 import { readImage } from './png.mjs';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { estimateStyle } from '../src/core/style.js';
-import { estimateFamilies } from '../src/core/families.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots, houghCenters } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
-import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
-import { dotFamilies } from '../src/core/outline.js';
-import { paletteColors, paletteFamilies } from '../src/core/colormap.js';
-import { detectAxes, plotBounds, clipEdges, backgroundColors } from '../src/core/axes.js';
-import { annotationBoxes } from '../src/core/annotations.js';
+import { restoreChroma } from '../src/core/jpeg.js';
+import { detectAxes, plotBounds } from '../src/core/axes.js';
+import { extractAll, fitInput } from '../src/core/extract.js';
 import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from './truth-csv.mjs';
 import { readTruthJson, isDotsExport } from './truth-json.mjs';
 import { pixelHash } from '../src/core/image.js';
@@ -58,80 +55,28 @@ function parseArgs(argv) {
 }
 
 /**
- * Style, mask and fit for one family of an image (the first by default); also the Hough candidates alone. For a
- * JPEG, pass the image through restoreChroma first and set `jpeg` (scan.js JPEG_TOLERANCES). `bounds` masks what
- * lies beyond the axes (axes.plotBounds).
+ * Style, mask and fit for one family of an image (the first by default), by estimateStyle alone: no overlays, no
+ * text or legend boxes, no other families. The synthetic one-family presets and compare-fits use it; every other
+ * image goes through extract.js extractAll, as in the app. For a JPEG, pass the image through restoreChroma first
+ * and set `jpeg` (scan.js JPEG_TOLERANCES). `bounds` masks what lies beyond the axes (axes.plotBounds).
  */
 export function extract(image, family = 0, candidates = undefined, jpeg = false, bounds = undefined) {
     const est = estimateStyle(image, { family, candidates, jpeg });
     if (!est.style)
         throw new Error(est.notes.join(' '));
-    return fitEstimate(image, est, bounds);
+    const layers = buildMask(image, est, { bounds });
+    const fit = fitDots(fitInput(image, est, layers.mask));
+    return { est, layers, fit, hough: houghOnly(image, est, layers) };
 }
 
-// mask and fit for one family's estimate; exclude: boxes to mask (text, legend markers)
-function fitEstimate(image, est, bounds, exclude = undefined, clips = undefined) {
-    const layers = buildMask(image, est, { bounds, exclude, clips });
-    const input = { image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT, base: est.base, seeds: est.seeds };
-    const fit = fitDots(input);
-    const hough = houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
-    return { est, layers, fit, hough };
+// the Hough candidates alone, for the Hough-only precision and recall
+function houghOnly(image, est, layers) {
+    return houghCenters(est.D, layers.mask.map(m => 1 - m), image.width, image.height, est.style.radius);
 }
 
-/**
- * Every dot family of an image, as families.js prepares them (overlays divided out, translucent families on their
- * own images), each fitted with what lies beyond the axes masked.
- */
-export function extractAll(image, jpeg = false) {
-    const source = image;
-    if (jpeg)
-        image = restoreChroma(image);
-    let { estimates } = estimateFamilies(image, { jpeg });
-    // as the app does: a PNG with JPEG noise is analyzed as a JPEG when that finds more families with a radius (all
-    // of them, when none shows with exact colors)
-    let jpegAuto = false;
-    if (!jpeg && jpegNoise(source).likely) {
-        const restored = restoreChroma(source);
-        const noisy = estimateFamilies(restored, { jpeg: true }).estimates;
-        const found = es => es.filter(e => e.style?.radius).length;
-        if (found(noisy) > found(estimates)) {
-            jpegAuto = true;
-            image = restored;
-            estimates = noisy;
-        }
-    }
-    const missing = estimates.find(e => !e.style);
-    if (missing)
-        throw new Error(missing.notes.join(' '));
-    const axes = detectAxes(image);
-    const bounds = plotBounds(axes);
-    const clips = clipEdges(axes);
-    // text and legends are read on the image as analyzed, not a family's virtual one, against each family's radius
-    const backgrounds = backgroundColors(image);
-    const exclude = e => {
-        const { text, legend } = annotationBoxes(image, backgrounds[0], e.style.radius);
-        return [...text, ...legend];
-    };
-    return estimates.flatMap(e => splitByFill(image, fitEstimate(e.image, e, bounds, exclude(e), clips))).map(r => ({ ...r, jpegAuto }));
-}
-
-// Outlined dots of a few fill colors are fitted as one family of rings, and a palette's dots as one family; each
-// dot's family comes from its fill (outline.dotFamilies; a palette's colors and each dot's from its own pixels,
-// colormap.js paletteColors and paletteFamilies), and each family becomes a result of its own, so the group scoring
-// checks the colors.
-function splitByFill(image, res) {
-    const fams = res.est.fillFamilies ?? (res.est.palette ? paletteColors(image, res.fit.dots, res.fit.radius, res.est.background.color) : null);
-    if (!fams?.length)
-        return [res];
-    const st = res.est.style;
-    const which = res.est.palette ? paletteFamilies(image, res.fit.dots, res.fit.radius, fams)
-        : dotFamilies(image, res.fit.dots, fams, res.fit.radius, res.fit.radius * (1 + st.ring.inner) / 2);
-    return fams.map((color, k) => ({
-        ...res,
-        est: { ...res.est, fillFamilies: fams, style: { ...st, color } },
-        fit: { ...res.fit, dots: res.fit.dots.filter((_, i) => which[i].family === k).map(d => ({ ...d, familySure: which[res.fit.dots.indexOf(d)].sure })) },
-        hough: [],
-    }));
+// extractAll (extract.js) with each result's Hough candidates; a family split by fill color has none of its own
+function extractWithHough(image, jpeg = false) {
+    return extractAll(image, jpeg).map(r => ({ ...r, hough: r.fill === undefined ? houghOnly(r.est.image, r.est, r.layers) : [] }));
 }
 
 // truth families matched to found families by color (each found family to the nearest truth color)
@@ -313,7 +258,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const { image, truth } = synthGraph(spec);
             const t0 = Date.now();
             if (spec.families.length > 1) {
-                const results = extractAll(image);
+                const results = extractWithHough(image);
                 record(familyRows(`${name} #${seed} (${results.length} fam)`, truth, spec, results, Date.now() - t0), { set: 'synthetic', image: name, seed, truth: 'exact', mode: 'exact' });
                 continue;
             }
@@ -343,7 +288,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const t0 = Date.now();
             let results;
             try {
-                results = extractAll(image, /\.jpe?g$/i.test(file));
+                results = extractWithHough(image, /\.jpe?g$/i.test(file));
             }
             catch (e) {
                 fail(meta, e.message);
@@ -384,7 +329,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             }
             let results;
             try {
-                results = extractAll(image, jpeg);
+                results = extractWithHough(image, jpeg);
             }
             catch (e) {
                 fail(meta, e.message);
@@ -430,7 +375,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
             const t0 = Date.now();
             let results;
             try {
-                results = extractAll(image, jpeg);
+                results = extractWithHough(image, jpeg);
             }
             catch (e) {
                 fail(meta, e.message);

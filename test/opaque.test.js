@@ -14,7 +14,8 @@ import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 import { readTruthJson, truthFromExport, isDotsExport } from '../tools/truth-json.mjs';
-import { extractAll, groupRow, laneRow } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
+import { groupRow, laneRow } from '../tools/bench.mjs';
 import { detectAxes } from '../src/core/axes.js';
 import { restoreChroma } from '../src/core/jpeg.js';
 

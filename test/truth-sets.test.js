@@ -10,7 +10,8 @@ import { detectAxes } from '../src/core/axes.js';
 import { matchDots } from '../src/core/metrics.js';
 import { readImage } from '../tools/png.mjs';
 import { laneCentersFromDots, readTruthCsv, truthPixels, truthPixelsByTicks, plotAreaMapping } from '../tools/truth-csv.mjs';
-import { extractAll, laneRow } from '../tools/bench.mjs';
+import { extractAll } from '../src/core/extract.js';
+import { laneRow } from '../tools/bench.mjs';
 import { estimateStyle } from '../src/core/style.js';
 
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
