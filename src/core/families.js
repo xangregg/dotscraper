@@ -4,12 +4,11 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { estimateStyle, measureFamily, backgroundColor, flatMask, familyRings, solidRegion, siblingRadius, JPEG_TOLERANCES, EXACT_TOLERANCES, SPECK_RADIUS_RATIO, NO_ISOLATED_NOTE } from './style.js';
+import { estimateStyle, scanOf, measureFamily, alongLine, backgroundColor, flatMask, familyRings, solidRegion, siblingRadius, SPECK_RADIUS_RATIO, NO_ISOLATED_NOTE } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
 import { findOutlines, findHueOutlines, fillFamilies, outlinesInP, findHollowRings } from './outline.js';
-import { backgroundColors } from './axes.js';
 
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
@@ -49,16 +48,17 @@ function candidateStyle(c) {
 }
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 /**
  * Candidates that are one translucent family seen over the main background B and over a region under the dots:
  * an opaque candidate that is a translucent candidate's dot over a region color is dropped, and two opaque
  * candidates whose colors differ by q·(B − B₂) become one translucent candidate with α = 1 − q.
  *
+ * @param {import('./style.js').Scan} scan  of the image the candidates were found in
+ * @param {number[]} B  the background the regions were told from (the page, or the first family's)
  * @returns {object[]|null}  the new candidates, or null if nothing merged
  */
-function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
+function mergeAcrossRegions(scan, B, candidates, regions) {
     const under = regions.filter(r => r.mode === 'under').map(r => r.color);
     if (!under.length)
         return null;
@@ -79,7 +79,6 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
     // two opaque clusters that are one translucent family over B and over B₂
     for (const B2 of under) {
         const d = sub(B, B2);
-        const dd = dot(d, d);
         for (let i = 0; i < out.length; i++) {
             for (let j = 0; j < out.length; j++) {
                 const a = out[i];
@@ -90,11 +89,11 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
                     continue;
                 // a over B, b over B₂: a − b = q (B − B₂)
                 const diff = sub(a.seed, b.seed);
-                const q = dot(diff, d) / dd;
-                if (q < MERGE_Q[0] || q > MERGE_Q[1] || Math.hypot(...sub(diff, d.map(v => q * v))) > MERGE_TOL)
+                const { m: q, off } = alongLine(diff, d);
+                if (q < MERGE_Q[0] || q > MERGE_Q[1] || off > MERGE_TOL)
                     continue;
                 const c = a.seed.map((v, ch) => (v - q * B[ch]) / (1 - q));
-                const m = measureFamily(image, B, a.seed, flat, tol);
+                const m = measureFamily({ ...scan, B }, a.seed);
                 if (!m.levels.length)
                     continue;
                 const merged = {
@@ -116,10 +115,9 @@ function mergeAcrossRegions(image, B, candidates, regions, flat, tol) {
  * translucent dots, opaqueImage for opaque ones), or null when the image has no such family. `scale` marks it,
  * 'translucent' or 'opaque': its style's color is the virtual family's, which no dot has.
  */
-function colormapEstimate(image, jpeg) {
-    const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
-    const B = backgroundColor(image).color;
-    const cm = findColormap(image, B, flatMask(image, tol), tol);
+function colormapEstimate(scan, jpeg) {
+    const { image, B, tol } = scan;
+    const cm = findColormap(image, B, scan.flat, tol);
     if (!cm)
         return null;
     // a categorical palette is fitted the same way; each dot's color is read from its own pixels after the fit
@@ -133,7 +131,7 @@ function colormapEstimate(image, jpeg) {
         return { ...est, image: virtual, scale: 'opaque', palette: cm.palette, notes: [note, ...est.notes] };
     }
     const { image: virtual, P } = rayImage(image, B, cm);
-    const measured = measureFamily(virtual, B, P, flatMask(virtual, tol), tol);
+    const measured = measureFamily({ image: virtual, B, flat: flatMask(virtual, tol), tol }, P);
     const est = estimateStyle(virtual, { family: 0, candidates: [colormapCandidate(measured, B, P, cm.alpha)], jpeg });
     const note = `${colored}: each pixel is counted along its own direction from the background, so the fit sees one family. Outlines are fitted as part of the dot.${after}`;
     return { ...est, image: virtual, scale: 'translucent', palette: cm.palette, notes: [note, ...est.notes] };
@@ -324,7 +322,9 @@ export function estimateFamilies(image, opts = {}) {
         return { image, layers: null, estimates: [outlined] };
     let first = null;
     stage('scale');
-    const scaled = colormapEstimate(image, jpeg);
+    // the page, the flat mask and what is asked about the image's colors, once for every estimate of this image
+    const scan = scanOf(image, { jpeg });
+    const scaled = colormapEstimate(scan, jpeg);
     if (scaled?.scale === 'opaque') {
         // opaque fills on a scale whose outlines are a darker shade of each fill: the rings place the dots where
         // the union of discs can't (bench2 gradient-opaque-stroke's dense stacks); unless a few stroked families
@@ -332,14 +332,14 @@ export function estimateFamilies(image, opts = {}) {
         stage('hue outlines');
         const hue = findHueOutlines(image);
         if (hue) {
-            first = estimateStyle(image, { jpeg, onProgress: stage('colors') });
+            first = estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
             if (!familiesExplainInk(image, first.candidates))
-                return { image, layers: null, estimates: [outlinedEstimate(image, backgroundColor(image), hue)] };
+                return { image, layers: null, estimates: [outlinedEstimate(image, scan.background, hue)] };
         }
     }
     if (scaled && !first)
         return { image, layers: null, estimates: [scaled] };
-    first ??= estimateStyle(image, { jpeg, onProgress: stage('colors') });
+    first ??= estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
     if (!first.candidates.length) {
         const hollow = hollowEstimates(image, first.background, []);
         return { image, layers: null, estimates: hollow.length ? hollow : [{ ...first, image }] };
@@ -352,7 +352,7 @@ export function estimateFamilies(image, opts = {}) {
     // the regions under the dots are read against their own colors either way, and the fits were tuned with it
     // (from the page, violin-beeswarm's violins under the dots gave 18 more extras, P 0.985 to 0.960).
     stage('regions');
-    const page = backgroundColor(image).color;
+    const page = scan.B;
     let B = page;
     let layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
     if (!layers.regions.some(r => r.mode === 'over') && first.background.color.some((v, ch) => v !== page[ch])) {
@@ -362,22 +362,22 @@ export function estimateFamilies(image, opts = {}) {
     const overlays = layers.regions.filter(r => r.mode === 'over');
     // Opaque dots over a shaded region are read against its color, as against the page; otherwise the region is
     // other ink and the mask around it takes the dots' edges (boxdots1: black dots over a red box, recall 0.74)
-    const under = layers.regions.filter(r => r.mode === 'under' && solidRegion(image, r.color, radius)).map(r => r.color);
+    const under = layers.regions.filter(r => r.mode === 'under' && solidRegion(scan, r.color, radius)).map(r => r.color);
     const regions = under.length && first.candidates.some(c => c.kind === 'opaque') ? under : undefined;
     const work = overlays.length ? removeOverlays(image, B, layers) : image;
+    const workScan = work === image ? scan : scanOf(work, { jpeg });
     if (overlays.length || regions)
-        first = estimateStyle(work, { jpeg, regions, onProgress: stage('colors again') });
+        first = estimateStyle(work, { jpeg, regions, scan: workScan, onProgress: stage('colors again') });
     const each = stage('families');
-    const tol = jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
-    const merged = mergeAcrossRegions(work, B, first.candidates, layers.regions, first.flat, tol);
+    const merged = mergeAcrossRegions(workScan, B, first.candidates, layers.regions);
     if (merged)
-        first = estimateStyle(work, { family: 0, candidates: merged, jpeg });
+        first = estimateStyle(work, { family: 0, candidates: merged, jpeg, scan: workScan });
     const estimates = [first];
     for (let k = 1; k < first.candidates.length; k++) {
         each(k / first.candidates.length);
-        estimates.push(estimateStyle(work, { family: k, candidates: first.candidates, jpeg }));
+        estimates.push(estimateStyle(work, { family: k, candidates: first.candidates, jpeg, scan: workScan }));
     }
-    const separated = unmixEstimates(work, estimates, tol, layers);
+    const separated = unmixEstimates(work, estimates, workScan.tol, layers);
     if (overlays.length) {
         const rgb = c => c.map(Math.round).join(', ');
         const note = overlays.map(r => (r.stack
@@ -389,7 +389,7 @@ export function estimateFamilies(image, opts = {}) {
     const ring = stage('rings');
     const kept = withoutSpeckLevels(withSiblingRadii(work, separated));
     // outlined opaque families are fitted by their rings (ringEstimate)
-    const backgrounds = backgroundColors(work);
+    const backgrounds = workScan.pageBackgrounds;
     // (a fill in the page's color is no other family's ring owner: it can't be told from the page)
     const fills = kept.filter(e => e.style && !e.familyMeasure?.pageFill).map(e => e.style.color);
     // outlines only: a stroke too thin to show its own color is a ring the image barely resolves (engagement1, strokes

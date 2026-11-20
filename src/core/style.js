@@ -12,6 +12,7 @@ import { houghCenters, houghGradient } from './fit.js';
 import { distanceTransform, dilate, nearestTransform, opening } from './layers.js';
 import { backgroundColors } from './axes.js';
 import { pixelCoverage } from './render.js';
+import { nearColor, nearAnyColor, colorMask } from './image.js';
 
 const BACKGROUND_TOL = 3; // 0–255 units (Euclidean RGB): a pixel this close to B is background
 const FLAT_TOL = 3; // 0–255 units: max channel difference in a 3×3 neighborhood for a pixel to count as flat
@@ -67,6 +68,7 @@ const CLUSTER_MIN_FRACTION = 0.001; // a cluster holds at least this share of th
 const CLUSTER_MIN_PIXELS = 100; // … and at least this many pixels
 const CLUSTER_TOL = 40; // 0–255 units: max distance from a cluster's color for a pixel to belong to it
 const CLUSTER_ON_LINE_TOL = 8; // 0–255 units: a cluster this close to a translucent family's line is one of its levels
+const MIX_SHARE = [0.05, 0.95]; // of the way from one color to another: a mix of the two lies between these
 const INK_TOL = 15; // 0–255 units from every background color for a pixel to be ink
 const RING = 3; // px: the ring around a family's pixels whose most common color is its background
 // A dot family (measured on every test image, PLAN.md phase 5): radius ≥ DOT_MIN_RADIUS (text and thin lines give
@@ -373,6 +375,27 @@ export function flatMask(image, tol = EXACT_TOLERANCES) {
  * @param {number[]} seed
  * @returns {ColorLine}
  */
+/**
+ * Where a vector lies against another: `m`, the multiple of w nearest v, and `off`, v's distance from that point.
+ * With v and w two colors measured from a third, it is the test for a mix: on the line (off small) and between the
+ * two (m from 0 to 1). The rules that ask it each have their own range for m.
+ *
+ * @param {number[]} v  0–255 units
+ * @param {number[]} w  0–255 units, not zero
+ * @returns {{m: number, off: number}}  off in 0–255 units
+ */
+export function alongLine(v, w) {
+    const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+    const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
+    return { m, off: Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) };
+}
+
+// whether color c is a mix of P and F: on the line between them (CLUSTER_ON_LINE_TOL) and clear of both ends
+function isMixOf(c, P, F) {
+    const { m, off } = alongLine(c.map((x, ch) => x - P[ch]), F.map((x, ch) => x - P[ch]));
+    return m > MIX_SHARE[0] && m < MIX_SHARE[1] && off <= CLUSTER_ON_LINE_TOL;
+}
+
 export function colorLine(B, seed) {
     const d = [B[0] - seed[0], B[1] - seed[1], B[2] - seed[2]];
     const len = Math.hypot(...d);
@@ -411,13 +434,13 @@ function votesForLevel(t, perp) {
  * the first level whose step exceeds MAX_STEP_RATIO times the previous one (overlap steps shrink by 1 − α);
  * later peaks are returned as `beyond`, typically opaque marks in the family's full color.
  *
- * @param {import('./image.js').RgbaImage} image
+ * @param {Scan|{image: object, flat: Uint8Array, tol?: Tolerances}} scan  its image, flat mask and tolerances
+ *   (default EXACT_TOLERANCES)
  * @param {{t: Float32Array, perp: Float32Array}} proj
- * @param {Uint8Array} flat
- * @param {Tolerances} [tol]
  * @returns {{levels: Level[], beyond: Level[]}}
  */
-export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
+export function findLevels(scan, proj) {
+    const { image, flat, tol = EXACT_TOLERANCES } = scan;
     const { t, perp } = proj;
     const nb = Math.ceil(LEVEL_MAX_T / LEVEL_BIN);
     const raw = new Float64Array(nb + 1);
@@ -479,7 +502,7 @@ export function findLevels(image, proj, flat, tol = EXACT_TOLERANCES) {
     // level's dots or other thin ink in their hue (step1 with its bands divided out: their edges, left as they were,
     // and the dots' rims at 206, 222, 246, 94 flat pixels, ahead of the dots' own 149, 185, 233, 374, which the step
     // ratio then put beyond the sequence)
-    while (found.length > 1 && isThin(image, found[0].color))
+    while (found.length > 1 && isThin(scan, found[0].color))
         found.shift();
     let nSeq = found.length;
     for (let i = 1; i < found.length; i++) {
@@ -631,13 +654,11 @@ export function countImage(proj, line, table, tol = EXACT_TOLERANCES) {
  * the most popular directions, the most common color in its bin seeds a color line whose levels are measured.
  * Translucent families (two or more levels) come first, by pixel count.
  *
- * @param {import('./image.js').RgbaImage} image
- * @param {number[]} B
- * @param {Uint8Array} flat
- * @param {Tolerances} [tol]
+ * @param {Scan} scan  its image, page color, flat mask and tolerances
  * @returns {object[]}  candidates: { seed, line, levels, beyond, fit, pixels, translucent }
  */
-export function familyCandidates(image, B, flat, tol = EXACT_TOLERANCES) {
+export function familyCandidates(scan) {
+    const { image, B, flat } = scan;
     const n = image.width * image.height;
     const nTheta = Math.ceil(360 / DIRECTION_BIN);
     const nPhi = Math.ceil(180 / DIRECTION_BIN);
@@ -693,7 +714,7 @@ export function familyCandidates(image, B, flat, tol = EXACT_TOLERANCES) {
             }
         }
         const seed = [seedKey >> 16, (seedKey >> 8) & 255, seedKey & 255];
-        candidates.push(measureFamily(image, B, seed, flat, tol));
+        candidates.push(measureFamily(scan, seed));
     }
     // two peaks can describe the same family (levels at slightly different hues): keep the first of each
     const distinct = [];
@@ -711,16 +732,16 @@ export function familyCandidates(image, B, flat, tol = EXACT_TOLERANCES) {
 /**
  * Levels and the geometric fit along the line from B toward a seed color.
  *
- * @param {import('./image.js').RgbaImage} image
- * @param {number[]} B
+ * @param {Scan|{image: object, B: number[], flat: Uint8Array, tol?: Tolerances}} scan  its image, the color the line
+ *   starts from (B), the flat mask and the tolerances; a rule measuring without some pixels passes
+ *   { ...scan, flat: rest }
  * @param {number[]} seed
- * @param {Uint8Array} flat
- * @param {Tolerances} [tol]
  */
-export function measureFamily(image, B, seed, flat, tol = EXACT_TOLERANCES) {
+export function measureFamily(scan, seed) {
+    const { image, B } = scan;
     const line = colorLine(B, seed);
     const proj = projectOnLine(image, line);
-    const found = findLevels(image, proj, flat, tol);
+    const found = findLevels(scan, proj);
     let { levels } = found;
     let fit = levels.length ? fitGeometric([B, ...levels.map(L => L.color)]) : null;
     let plausible = isPlausible(fit);
@@ -1051,12 +1072,13 @@ export function colorClusters(image, backgrounds) {
     const count = new Float64Array(nb ** 3);
     const sum = new Float64Array(3 * nb ** 3);
     const d = image.data;
+    const isBackground = nearAnyColor(d, backgrounds, INK_TOL);
     for (let p = 0; p < n; p++) {
+        if (isBackground(p))
+            continue;
         const r = d[4 * p];
         const g = d[4 * p + 1];
         const b = d[4 * p + 2];
-        if (backgrounds.some(B => Math.hypot(r - B[0], g - B[1], b - B[2]) <= INK_TOL))
-            continue;
         const k = ((r / CLUSTER_BIN | 0) * nb + (g / CLUSTER_BIN | 0)) * nb + (b / CLUSTER_BIN | 0);
         count[k]++;
         sum[3 * k] += r;
@@ -1331,14 +1353,11 @@ function localBackground(image, near, colors, others) {
     // Only background colors and other families' colors can be a dot's background. Other ink can't: a median line
     // across a cantons dot took the line beyond the dot as its "background" and read as no dot there.
     const known = new Uint8Array(n);
+    const isBackground = nearAnyColor(data, colors, INK_TOL);
+    const isOther = nearAnyColor(data, others, CLUSTER_TOL);
     for (let p = 0; p < n; p++) {
-        if (near[p])
-            continue;
-        const r = data[4 * p];
-        const g = data[4 * p + 1];
-        const b = data[4 * p + 2];
-        known[p] = colors.some(P => Math.hypot(r - P[0], g - P[1], b - P[2]) <= INK_TOL)
-            || others.some(O => Math.hypot(r - O[0], g - O[1], b - O[2]) <= CLUSTER_TOL) ? 1 : 0;
+        if (!near[p])
+            known[p] = isBackground(p) || isOther(p) ? 1 : 0;
     }
     const nearest = nearestTransform(known, width, height);
     const bg = new Float32Array(3 * n);
@@ -1359,10 +1378,11 @@ function surroundings(image, near, outline) {
     const n = width * height;
     const known = new Uint8Array(n);
     const same = (p, q) => Math.hypot(data[4 * p] - data[4 * q], data[4 * p + 1] - data[4 * q + 1], data[4 * p + 2] - data[4 * q + 2]) <= INK_TOL;
+    const isOutline = nearColor(data, outline, CLUSTER_TOL);
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
             const p = y * width + x;
-            if (near[p] || Math.hypot(data[4 * p] - outline[0], data[4 * p + 1] - outline[1], data[4 * p + 2] - outline[2]) <= CLUSTER_TOL)
+            if (near[p] || isOutline(p))
                 continue;
             known[p] = same(p, p - 1) && same(p, p + 1) && same(p, p - width) && same(p, p + width) ? 1 : 0;
         }
@@ -1426,9 +1446,7 @@ function ringOwners(image, own, rings) {
 export function familyRings(image, fill, outline, backgrounds, others) {
     const { width, height, data } = image;
     const n = width * height;
-    const own = new Uint8Array(n);
-    for (let p = 0; p < n; p++)
-        own[p] = Math.hypot(data[4 * p] - fill[0], data[4 * p + 1] - fill[1], data[4 * p + 2] - fill[2]) <= CLUSTER_TOL ? 1 : 0;
+    const own = colorMask(image, fill, CLUSTER_TOL);
     const reach = dilate(opening(own, width, height, THICK_OPENING), width, height, OUTLINE_REACH);
     const theirs = ringOwners(image, own, others.map(c => ({ fill: c, reach: STROKE_RING })));
     const otherFill = others.length ? thickMembers(image, others) : null;
@@ -1491,8 +1509,9 @@ export function familyRings(image, fill, outline, backgrounds, others) {
 function thickMembers(image, colors) {
     const { width, height, data } = image;
     const m = new Uint8Array(width * height);
+    const isMember = nearAnyColor(data, colors, CLUSTER_TOL);
     for (let p = 0; p < m.length; p++)
-        m[p] = colors.some(c => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL) ? 1 : 0;
+        m[p] = isMember(p) ? 1 : 0;
     return opening(m, width, height, THICK_OPENING);
 }
 
@@ -1509,8 +1528,10 @@ export function strokeColor(image, color, B) {
     const { width, height, data } = image;
     const n = width * height;
     const own = new Float32Array(n);
+    const isOwn = nearColor(data, color, CLUSTER_TOL);
+    const onPage = nearColor(data, B, INK_TOL);
     for (let p = 0; p < n; p++)
-        own[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= CLUSTER_TOL ? 1 : 0;
+        own[p] = isOwn(p) ? 1 : 0;
     const comps = components(own, width, height);
     const label = new Int32Array(n).fill(-1);
     comps.forEach((c, k) => {
@@ -1532,7 +1553,7 @@ export function strokeColor(image, color, B) {
         }
         else if (d <= STROKE_CLEAR) {
             clear[k]++;
-            if (Math.hypot(data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]) <= INK_TOL)
+            if (onPage(p))
                 clearBg[k]++;
         }
     }
@@ -1557,9 +1578,7 @@ export function strokeColor(image, color, B) {
     pixels.sort((a, b) => a.off - b.off);
     const top = pixels.slice(Math.floor(STROKE_TOP * (pixels.length - 1)));
     const S = [0, 1, 2].map(ch => top.reduce((t, q) => t + data[4 * q.p + ch], 0) / top.length);
-    const v = S.map((x, ch) => x - B[ch]);
-    const m = (v[0] * u[0] + v[1] * u[1] + v[2] * u[2]) / uu;
-    const off = Math.hypot(v[0] - m * u[0], v[1] - m * u[1], v[2] - m * u[2]);
+    const { off } = alongLine(S.map((x, ch) => x - B[ch]), u);
     return off >= STROKE_MIN_OFF ? { color: S, off, rings } : null;
 }
 
@@ -1582,6 +1601,7 @@ export function strokeColor(image, color, B) {
  * it is, as `inkColors` lists them, or EDGE_INK_UNLISTED). Whether this family's dots go on under it depends on which
  * is drawn on top (opaqueFamilies' `under`; layers.js buildMask).
  *
+ * @param {Scan} scan  its image, backgrounds (the page first) and tolerances
  * @param {object} [opts]
  * @param {number[]|null} [opts.stroke]  0–255
  * @param {number} [opts.fillRadius]  px, the fill inside the stroke
@@ -1590,12 +1610,15 @@ export function strokeColor(image, color, B) {
  * @param {number} [opts.radius]  px, the dots' radius when known otherwise (a found family's outline color as a family
  *   of its own: its isolated components are text's specks)
  */
-export function measureOpaque(image, color, backgrounds, others = [], tol = EXACT_TOLERANCES, outline = null, opts = {}) {
+export function measureOpaque(scan, color, others = [], outline = null, opts = {}) {
+    const { image, backgrounds, tol } = scan;
     const stroke = opts.stroke ?? null;
     const { width, height, data } = image;
     const n = width * height;
-    const member = (p, c) => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL;
+    const isColor = nearColor(data, color, CLUSTER_TOL);
+    const isOutline = outline ? nearColor(data, outline, CLUSTER_TOL) : null;
     const page = backgrounds[0];
+    const onPage = nearColor(data, page, INK_TOL);
     // (the page's color itself: a light fill near it, as tumour1's 237 gray, is a color of its own)
     const isPage = c => Math.hypot(c[0] - page[0], c[1] - page[1], c[2] - page[2]) <= INK_TOL;
     // an outlined fill in the page's color is the page its outlines enclose (pageFills); for the fit it is the outline's
@@ -1613,7 +1636,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     };
     if (!paged) {
         for (let p = 0; p < n; p++)
-            own[p] = member(p, color) && !nearer(p) ? 1 : 0;
+            own[p] = isColor(p) && !nearer(p) ? 1 : 0;
     }
     // the reach is from the fill's thick parts: an antialiased edge between the outline's color and a lighter one
     // passes through the fill's color (phase1: every black edge, text's and other grays' outlines, had 82-gray
@@ -1624,7 +1647,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const ownReach = outline ? dilate(paged ? own : thickOwn, width, height, OUTLINE_REACH + (paged ? 1 : 0)) : null;
     const mask = new Uint8Array(n);
     for (let p = 0; p < n; p++)
-        mask[p] = own[p] || (outline && ownReach[p] && member(p, outline)) ? 1 : 0;
+        mask[p] = own[p] || (outline && ownReach[p] && isOutline(p)) ? 1 : 0;
     const thick = opening(mask, width, height, THICK_OPENING);
     // a stroked fill's surroundings are its ring: its background lies beyond
     const body = thick.some(v => v) ? thick : mask;
@@ -1651,6 +1674,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
     const bg = localBackground(image, near, pageColorsForBg, others);
     // background colors, but not this family's own (a dot color can be common enough to count as a background)
     const pageColors = pageColorsForBg;
+    const onPageColor = nearAnyColor(data, pageColors, INK_TOL);
     const fo = outline ? color.map((v, ch) => v - outline[ch]) : null;
     const foo = fo ? fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2] : 0;
     // from the family's thick parts: a stroke near its color (engagement1's navy) is thin, and joins its color mask
@@ -1673,14 +1697,14 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
         const g = data[4 * p + 1];
         const b = data[4 * p + 2];
         if (paged) {
-            if (Math.hypot(r - page[0], g - page[1], b - page[2]) <= INK_TOL) {
+            if (onPage(p)) {
                 D[p] = own[p];
                 fillK[p] = own[p];
                 continue;
             }
             // beyond the outlines' reach, a faint pixel is the page (antialiasing), other ink unknown
             if (!ownReach[p]) {
-                D[p] = member(p, color) ? 0 : NaN;
+                D[p] = isColor(p) ? 0 : NaN;
                 continue;
             }
             const w = [rimBg[3 * p], rimBg[3 * p + 1], rimBg[3 * p + 2]];
@@ -1699,7 +1723,7 @@ export function measureOpaque(image, color, backgrounds, others = [], tol = EXAC
                 fillK[p] = Math.min(1, Math.max(0, 1 - m));
             continue;
         }
-        if (!near[p] && pageColors.some(P => Math.hypot(r - P[0], g - P[1], b - P[2]) <= INK_TOL)) {
+        if (!near[p] && onPageColor(p)) {
             D[p] = 0; // away from the family on a background color: no dot here
             continue;
         }
@@ -1942,10 +1966,11 @@ function fillSaturatedOverlaps(image, D, B, color, others) {
     const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
     if (ww < MIN_CONTRAST * MIN_CONTRAST)
         return;
+    const isOther = nearAnyColor(data, others, CLUSTER_TOL);
     const beyond = p => {
         if (!Number.isNaN(D[p]))
             return false;
-        if (others.some(O => Math.hypot(data[4 * p] - O[0], data[4 * p + 1] - O[1], data[4 * p + 2] - O[2]) <= CLUSTER_TOL))
+        if (isOther(p))
             return false;
         const v = [data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]];
         const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
@@ -2105,8 +2130,9 @@ function pageFills(image, page) {
     const { width, height, data } = image;
     const n = width * height;
     const member = new Float32Array(n);
+    const onPage = nearColor(data, page, INK_TOL);
     for (let p = 0; p < n; p++)
-        member[p] = Math.hypot(data[4 * p] - page[0], data[4 * p + 1] - page[1], data[4 * p + 2] - page[2]) <= INK_TOL ? 1 : 0;
+        member[p] = onPage(p) ? 1 : 0;
     const round = roundFills(member, width, height).filter(d => d.r >= DOT_MIN_RADIUS);
     const within = (d, e) => Math.abs(e.r - d.r) <= PAGE_FILL_SIZE_TOL * d.r;
     let best = null;
@@ -2205,20 +2231,22 @@ function pageFills(image, page) {
  * in a band just outside the whole fills, and it must be thin beside them (PAGE_RING_MAX_WIDTH: text's counters
  * aren't dots). Null when no such family shows.
  */
-function pageFilledFamily(image, backgrounds, tol) {
+function pageFilledFamily(scan) {
+    const { image, backgrounds } = scan;
     const { width, height, data } = image;
     const page = backgrounds[0];
     const fills = pageFills(image, page);
     if (!fills)
         return null;
     const ink = [[], [], []];
+    const onPage = nearColor(data, page, INK_TOL);
     for (const d of fills.discs) {
         const outer = d.r + PAGE_RING_BAND[1];
         for (let y = Math.max(0, Math.floor(d.cy - outer)); y < Math.min(height, Math.ceil(d.cy + outer)); y++) {
             for (let x = Math.max(0, Math.floor(d.cx - outer)); x < Math.min(width, Math.ceil(d.cx + outer)); x++) {
                 const q = Math.hypot(x + 0.5 - d.cx, y + 0.5 - d.cy) - d.r;
                 const p = 4 * (y * width + x);
-                if (q < PAGE_RING_BAND[0] || q > PAGE_RING_BAND[1] || Math.hypot(data[p] - page[0], data[p + 1] - page[1], data[p + 2] - page[2]) <= INK_TOL)
+                if (q < PAGE_RING_BAND[0] || q > PAGE_RING_BAND[1] || onPage(y * width + x))
                     continue;
                 for (let ch = 0; ch < 3; ch++)
                     ink[ch].push(data[p + ch]);
@@ -2230,7 +2258,7 @@ function pageFilledFamily(image, backgrounds, tol) {
     const outline = ink.map(median);
     if (Math.hypot(...outline.map((v, ch) => v - page[ch])) <= CLUSTER_TOL)
         return null;
-    const fam = measureOpaque(image, page, backgrounds, [], tol, outline);
+    const fam = measureOpaque(scan, page, [], outline);
     const rf = median(fills.discs.map(d => d.r));
     // the fills are the evidence where few dots show half their edge (hair2: two whole dots and seven crescents)
     const enough = isDotFamily(fam) || (radiusPlausible(fam.radius, fam.isolated.length) && fam.coverage >= DOT_MIN_COVERAGE);
@@ -2277,18 +2305,18 @@ function luminance(c) {
 }
 
 // whether a color's pixels are thin as a whole: an opening by OUTLINE_OPENING keeps under OUTLINE_MAX_THICK of them
-function isThin(image, color) {
-    const { width, height, data } = image;
-    const mask = new Uint8Array(width * height);
-    let total = 0;
-    for (let p = 0; p < mask.length; p++) {
-        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= CLUSTER_TOL ? 1 : 0;
-        total += mask[p];
-    }
-    let kept = 0;
-    for (const v of opening(mask, width, height, OUTLINE_OPENING))
-        kept += v;
-    return total > 0 && kept < OUTLINE_MAX_THICK * total;
+function isThin(scan, color) {
+    return remembered(scan, 'thin', color, () => {
+        const { image } = scan;
+        const mask = colorMask(image, color, CLUSTER_TOL);
+        let total = 0;
+        for (let p = 0; p < mask.length; p++)
+            total += mask[p];
+        let kept = 0;
+        for (const v of opening(mask, image.width, image.height, OUTLINE_OPENING))
+            kept += v;
+        return total > 0 && kept < OUTLINE_MAX_THICK * total;
+    });
 }
 
 function radiusPlausible(radius, isolatedCount) {
@@ -2305,8 +2333,11 @@ function isDotFamily(f) {
  * at least DOT_MIN_COUNT dot-shaped edges at a radius of at least DOT_MIN_RADIUS. `ink` is colors of other marks
  * (levels of rejected translucent candidates): other ink for every family but one of their own color. `onProgress`
  * gets the share of color clusters examined (0–1).
+ *
+ * @param {Scan} scan  its image, backgrounds (the page first, then regions under the dots) and tolerances
  */
-export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLERANCES, ink = [], onProgress = null) {
+export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
+    const { image, backgrounds } = scan;
     const onTranslucent = c => translucent.some(f => {
         const { B, u } = f.line;
         const e = B.map((v, ch) => v - c[ch]);
@@ -2334,13 +2365,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         const ownOutline = f.outline && near(f.background, f.outline);
         return [...(ownOutline && !rim ? [] : [f.background]), ...(rim ? [f.outline] : []), ...backgrounds];
     };
-    const isBlend = (c, interiorShare) => out.some(f => bases(f, c, interiorShare).some(P => {
-        const w = f.seed.map((v, ch) => v - P[ch]);
-        const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
-        const v = c.map((x, ch) => x - P[ch]);
-        const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
-        return m > 0.05 && m < 0.95 && Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) <= CLUSTER_ON_LINE_TOL;
-    }));
+    const isBlend = (c, interiorShare) => out.some(f => bases(f, c, interiorShare).some(P => isMixOf(c, P, f.seed)));
     // translucent families' level colors are theirs (see measureOpaque's `others`)
     const levelColors = translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color));
     const inkFor = seed => ink.filter(c => Math.hypot(c[0] - seed[0], c[1] - seed[1], c[2] - seed[2]) > CLUSTER_TOL);
@@ -2354,19 +2379,14 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     // levels under the CI band, 197, 106, 135, a family of 10 once the levels' pixels stopped counting as its own.
     const page = backgrounds[0];
     // (P is neither color, and off the family's line from the page: see LAYER_MIN_OFF)
-    const offLine = (v, w, ww) => {
-        const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
-        return { m, off: Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) };
-    };
     const throughLayer = c => [...levelColors, ...out.map(g => g.seed)].some(F => clusters.some(({ color: P }) => {
         if (near(P, F) || near(P, c))
             return false;
         const w = F.map((v, ch) => v - page[ch]);
-        const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
-        if (offLine(P.map((x, ch) => x - page[ch]), w, ww).off < LAYER_MIN_OFF)
+        if (alongLine(P.map((x, ch) => x - page[ch]), w).off < LAYER_MIN_OFF)
             return false;
-        const { m, off } = offLine(c.map((x, ch) => x - P[ch]), w, ww);
-        return m > 0.05 && m < 0.95 && off <= CLUSTER_ON_LINE_TOL;
+        const { m, off } = alongLine(c.map((x, ch) => x - P[ch]), w);
+        return m > MIX_SHARE[0] && m < MIX_SHARE[1] && off <= CLUSTER_ON_LINE_TOL;
     }));
     for (const [i, cl] of clusters.entries()) {
         onProgress?.(i / clusters.length);
@@ -2378,7 +2398,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             continue;
         // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
         const c = cl.color;
-        const member = p => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= CLUSTER_TOL;
+        const member = nearColor(data, c, CLUSTER_TOL);
         let count = 0;
         let interior = 0;
         for (let y = 1; y < height - 1; y++) {
@@ -2410,7 +2430,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             continue;
         if (!count || interior / count < DOT_MIN_INTERIOR)
             continue;
-        let fam = measureOpaque(image, cl.color, backgrounds, [...levelColors, ...inkFor(cl.color)], tol);
+        let fam = measureOpaque(scan, cl.color, [...levelColors, ...inkFor(cl.color)]);
         // Outlined or stroked fills, in order: (1) a ring whose color is thin over the whole image is an outline that
         // shows its own color (JMP's 1.7 px outlines); (2) else a fill inside a stroke too thin to show its color, off
         // the line from the page to the fill (engagement1, cells1: it places colored fills better than the outline
@@ -2429,14 +2449,14 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         const notPage = !backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - ring[ch])) <= CLUSTER_TOL);
         const ringable = !onTranslucent(ring) && notPage;
         const outlinedFamily = () => {
-            const outlined = measureOpaque(image, cl.color, backgrounds, [], tol, ring);
+            const outlined = measureOpaque(scan, cl.color, [], ring);
             return isDotFamily(outlined) ? { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius } : null;
         };
-        if (!isDotFamily(fam) && ringable && isThin(image, ring))
+        if (!isDotFamily(fam) && ringable && isThin(scan, ring))
             fam = outlinedFamily() ?? fam;
         if (!isDotFamily(fam))
-            fam = strokedFamily(image, cl.color, backgrounds, tol, plain) ?? fam;
-        if (!isDotFamily(fam) && notPage && !isThin(image, cl.color) && luminance(ring) < luminance(cl.color))
+            fam = strokedFamily(scan, cl.color, plain) ?? fam;
+        if (!isDotFamily(fam) && notPage && !isThin(scan, cl.color) && luminance(ring) < luminance(cl.color))
             fam = outlinedFamily() ?? fam;
         // (4) else a ring in a darker shade of the fill's own hue, when the fill's surroundings are the page: a line
         // in nearly the fill's color, joined to it, can border the page longer than the dots' rings do (kite2: a curve
@@ -2450,7 +2470,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         if (!isDotFamily(fam) && !notPage) {
             for (const hue of hueRings(image, cl.color, clusters, backgrounds[0])) {
                 const fill = ringFill(image, cl.color, hue);
-                const outlined = fill && measureOpaque(image, fill, backgrounds, [], tol, hue);
+                const outlined = fill && measureOpaque(scan, fill, [], hue);
                 if (outlined && (isDotFamily(outlined) || (outlined.fillRadius && radiusPlausible(outlined.radius, outlined.isolated.length)
                     && outlined.strongDots >= DOT_MIN_STRONG && outlined.coverage >= DOT_MIN_COVERAGE_ANY))) {
                     fam = { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius };
@@ -2476,9 +2496,9 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     }
     for (const [i, f] of [...rejected.entries()].reverse()) {
         for (const O of outlines) {
-            if (near(O, f.seed) || luminance(O) >= luminance(f.seed) || isThin(image, f.seed))
+            if (near(O, f.seed) || luminance(O) >= luminance(f.seed) || isThin(scan, f.seed))
                 continue;
-            const outlined = measureOpaque(image, f.seed, backgrounds, [], tol, O);
+            const outlined = measureOpaque(scan, f.seed, [], O);
             if (isDotFamily(outlined)) {
                 out.push({ ...outlined, fillRadius: outlined.fillRadius ?? f.radius, interior: f.interior });
                 rejected.splice(i, 1);
@@ -2497,7 +2517,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
             continue;
         const rings = out.filter(g => g.outline && g.fillRadius).map(g => ({ fill: g.seed, reach: g.radius - g.fillRadius + RING_SLACK }));
         const radius = median(owners.map(g => g.radius));
-        const solid = measureOpaque(image, f.seed, backgrounds, out.map(g => g.seed), tol, null, { radius, rings });
+        const solid = measureOpaque(scan, f.seed, out.map(g => g.seed), null, { radius, rings });
         if (solid.strongDots >= DOT_MIN_STRONG && solid.coverage >= DOT_MIN_COVERAGE_ANY) {
             out.push({ ...solid, interior: f.interior, solidRadius: radius, solidRings: rings });
             rejected.splice(i, 1);
@@ -2510,7 +2530,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
         if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE)
             out.push(f);
     }
-    const paged = pageFilledFamily(image, backgrounds, tol);
+    const paged = pageFilledFamily(scan);
     if (paged)
         out.push(paged);
     // Specks go before the others are measured again: a speck family's color can be a real family's stroke (hair3:
@@ -2526,7 +2546,7 @@ export function opaqueFamilies(image, backgrounds, translucent, tol = EXACT_TOLE
     const stroked = out.some(f => f.stroke);
     const final = out.map(f => {
         const rings = f.solidRings ?? (stroked ? out.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
-        const g = measureOpaque(image, f.seed, backgrounds, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], tol, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
+        const g = measureOpaque(scan, f.seed, [...colors.filter(c => c !== f.seed), ...levelColors, ...inkFor(f.seed), ...blendInk], f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
     for (const f of final)
@@ -2572,26 +2592,21 @@ function hueRings(image, fill, clusters, page) {
     if (Math.max(...fill) - Math.min(...fill) < HUE_RING_MIN_CHROMA)
         return [];
     const u = fill.map((v, ch) => v - page[ch]);
-    const uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
     const shades = clusters.map(c => c.color).filter(c => {
-        const v = c.map((x, ch) => x - page[ch]);
-        const m = (v[0] * u[0] + v[1] * u[1] + v[2] * u[2]) / uu;
-        return m > 1 && Math.hypot(...c.map((x, ch) => x - fill[ch])) > CLUSTER_TOL
-            && Math.hypot(v[0] - m * u[0], v[1] - m * u[1], v[2] - m * u[2]) <= CLUSTER_ON_LINE_TOL;
+        const { m, off } = alongLine(c.map((x, ch) => x - page[ch]), u);
+        return m > 1 && Math.hypot(...c.map((x, ch) => x - fill[ch])) > CLUSTER_TOL && off <= CLUSTER_ON_LINE_TOL;
     });
     if (!shades.length)
         return [];
     const { width, height, data } = image;
     const n = width * height;
-    const isPage = new Uint8Array(n);
-    for (let p = 0; p < n; p++)
-        isPage[p] = Math.hypot(data[4 * p] - page[0], data[4 * p + 1] - page[1], data[4 * p + 2] - page[2]) <= INK_TOL ? 1 : 0;
-    const toPage = distanceTransform(isPage, width, height);
+    const toPage = distanceTransform(colorMask(image, page, INK_TOL), width, height);
     return shades.filter(c => {
+        const isShade = nearColor(data, c, CLUSTER_TOL);
         let total = 0;
         let near = 0;
         for (let p = 0; p < n; p++) {
-            if (Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) > CLUSTER_TOL)
+            if (!isShade(p))
                 continue;
             total++;
             near += toPage[p] <= RING_PAGE_REACH * RING_PAGE_REACH;
@@ -2605,14 +2620,12 @@ function hueRings(image, fill, clusters, page) {
 function ringFill(image, color, ring) {
     const { width, height, data } = image;
     const n = width * height;
-    const near = (p, c, tol) => Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= tol;
-    const ringPx = new Uint8Array(n);
-    for (let p = 0; p < n; p++)
-        ringPx[p] = near(p, ring, CLUSTER_ON_LINE_TOL) ? 1 : 0;
+    const ringPx = colorMask(image, ring, CLUSTER_ON_LINE_TOL);
+    const isColor = nearColor(data, color, CLUSTER_TOL);
     const reach = dilate(ringPx, width, height, RING_FILL_REACH);
     const counts = new Map();
     for (let p = 0; p < n; p++) {
-        if (!reach[p] || ringPx[p] || !near(p, color, CLUSTER_TOL))
+        if (!reach[p] || ringPx[p] || !isColor(p))
             continue;
         const key = (data[4 * p] << 16) | (data[4 * p + 1] << 8) | data[4 * p + 2];
         counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -2627,11 +2640,11 @@ function ringFill(image, color, ring) {
 
 // The family of a fill color inside a stroke (strokeColor), or null when no stroke shows or it isn't a dot family.
 // `plain` is the color measured without one: its radius is the fill's.
-function strokedFamily(image, color, backgrounds, tol, plain) {
-    const stroke = strokeColor(image, color, backgrounds[0]);
+function strokedFamily(scan, color, plain) {
+    const stroke = strokeColor(scan.image, color, scan.backgrounds[0]);
     if (!stroke)
         return null;
-    const fam = measureOpaque(image, color, backgrounds, [], tol, null, { stroke: stroke.color, fillRadius: plain.radius });
+    const fam = measureOpaque(scan, color, [], null, { stroke: stroke.color, fillRadius: plain.radius });
     return isDotFamily(fam) ? { ...fam, fillRadius: plain.radius, strokeOff: stroke.off } : null;
 }
 
@@ -2651,20 +2664,61 @@ function strokedFamily(image, color, backgrounds, tol, plain) {
  * @returns {object}  an estimate, as estimateStyle's; style.radius is null when no dot shape shows
  */
 export function opaqueFamilyEstimate(image, seed, opts = {}) {
-    const tol = opts.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
-    const backgrounds = backgroundColors(image);
+    const scan = scanOf(image, opts);
     const others = opts.others ?? [];
     const stroke = opts.stroke ?? null;
     const rings = opts.ringsToOthers && others.length ? others.map(fill => ({ fill, reach: STROKE_RING })) : null;
-    const fam = measureOpaque(image, seed, backgrounds, others, tol, stroke ? null : opts.outline ?? null,
+    const fam = measureOpaque(scan, seed, others, stroke ? null : opts.outline ?? null,
         { stroke: stroke?.color ?? null, fillRadius: stroke?.fillRadius, rings });
     const measured = { ...fam, fillRadius: stroke?.fillRadius ?? fam.fillRadius };
-    return opaqueEstimate(image, measured, [measured], 0, flatMask(image, tol), backgroundColor(image));
+    return opaqueEstimate(scan, measured, [measured], 0);
 }
 
 function median(a) {
     const s = [...a].sort((x, y) => x - y);
     return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+}
+
+/**
+ * What a scan knows about its image, made once and handed to everything below estimateStyle instead of the image,
+ * the page, the flat mask, the backgrounds and the tolerances one by one. A rule that reads the image differently
+ * passes a copy with that part replaced ({ ...scan, flat: rest }); the copy shares `memo`, which holds answers about
+ * the image's colors that many rules ask for (remembered).
+ *
+ * @typedef {object} Scan
+ * @property {import('./image.js').RgbaImage} image
+ * @property {Tolerances} tol
+ * @property {{color: number[], fraction: number}} background  the page (backgroundColor)
+ * @property {number[]} B  the page's color, 0–255
+ * @property {Uint8Array} flat  flatMask(image, tol)
+ * @property {number[][]} pageBackgrounds  the page and the other large flat colors (axes.js backgroundColors)
+ * @property {number[][]} backgrounds  pageBackgrounds, then the regions under the dots when there are any
+ * @property {Map<string, any>} memo
+ */
+
+/**
+ * @param {import('./image.js').RgbaImage} image
+ * @param {object} [opts]
+ * @param {boolean} [opts.jpeg]  noise-tolerant thresholds (JPEG_TOLERANCES)
+ * @returns {Scan}
+ */
+export function scanOf(image, opts = {}) {
+    const tol = opts.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
+    const background = backgroundColor(image);
+    const pageBackgrounds = backgroundColors(image);
+    return { image, tol, background, B: background.color, flat: flatMask(image, tol), pageBackgrounds, backgrounds: pageBackgrounds, memo: new Map() };
+}
+
+// An answer about one color of the scan's image that depends on nothing else, computed once per scan: the same
+// colors come up in rule after rule (engagement1 asked isThin 10 times about 3 colors). A scan without a memo (a
+// bare { image, ... }) computes every time.
+function remembered(scan, what, color, compute) {
+    if (!scan.memo)
+        return compute();
+    const key = `${what}|${color.join(',')}`;
+    if (!scan.memo.has(key))
+        scan.memo.set(key, compute());
+    return scan.memo.get(key);
 }
 
 /**
@@ -2678,6 +2732,8 @@ function median(a) {
  *   passed in must have been found with the same setting
  * @param {number[][]} [opts.regions]  0–255, colors of shaded regions under the dots (background.js), which opaque
  *   dots are read against as against the page
+ * @param {Scan} [opts.scan]  a scan of this image from an earlier call (scanOf, with the same `jpeg`): its page, flat
+ *   mask and remembered answers are used again
  * @param {(fraction: number) => void} [opts.onProgress]  the share of the candidate search done (0–1)
  * @returns {object}  { background, candidates, family, style, D, isolated, edge, notes }
  *   style: { color, alpha, levels, radius, blur } ready for render.js; radius and blur are null when no isolated
@@ -2685,21 +2741,19 @@ function median(a) {
  */
 export function estimateStyle(image, opts = {}) {
     const { width, height } = image;
-    const background = backgroundColor(image);
-    const B = background.color;
-    const tol = opts.jpeg ? JPEG_TOLERANCES : EXACT_TOLERANCES;
-    const flat = flatMask(image, tol);
-    const backgrounds = [...backgroundColors(image), ...(opts.regions ?? [])];
+    const made = opts.scan?.image === image ? opts.scan : scanOf(image, opts);
+    const scan = opts.regions ? { ...made, backgrounds: [...made.pageBackgrounds, ...opts.regions] } : made;
+    const { background, B, tol, flat } = scan;
     // candidates are the slow part (seconds on large images): reuse them when estimating another family
-    const candidates = opts.candidates ?? findCandidates(image, B, flat, backgrounds, tol, opts.onProgress);
+    const candidates = opts.candidates ?? findCandidates(scan, opts.onProgress);
     let fam;
     let familyIndex = opts.family ?? 0;
     if (opts.seed) {
-        fam = measureFamily(image, B, opts.seed, flat, tol);
+        fam = measureFamily(scan, opts.seed);
         fam.kind = 'translucent';
         if (!fam.translucent) {
-            const plain = measureOpaque(image, opts.seed, backgrounds, [], tol);
-            fam = isDotFamily(plain) ? plain : strokedFamily(image, opts.seed, backgrounds, tol, plain) ?? plain;
+            const plain = measureOpaque(scan, opts.seed);
+            fam = isDotFamily(plain) ? plain : strokedFamily(scan, opts.seed, plain) ?? plain;
         }
         familyIndex = -1;
     }
@@ -2710,7 +2764,7 @@ export function estimateStyle(image, opts = {}) {
     if (!fam || !fam.levels.length)
         return { background, candidates, family: familyIndex, style: null, D: null, isolated: [], edge: null, notes: ['No dot family found.'] };
     if (fam.kind === 'opaque')
-        return opaqueEstimate(image, fam, candidates, familyIndex, flat, background);
+        return opaqueEstimate(scan, fam, candidates, familyIndex);
     const table = levelTable(B, fam.levels, fam.fit);
     const D = countImage(fam.proj, fam.line, table, tol);
     const isolated = isolatedDots(D, width, height, tol);
@@ -2749,8 +2803,11 @@ export function estimateStyle(image, opts = {}) {
 /**
  * All dot families: translucent ones (levels along a color direction) first, then opaque ones (color clusters).
  * `onProgress` gets the share of the work done (0–1), by stage: the opaque clusters are most of it on large images.
+ *
+ * @param {Scan} scan
  */
-export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANCES, onProgress = null) {
+export function findCandidates(scan, onProgress = null) {
+    const { B } = scan;
     // A translucent family's first level fills the insides of single dots, so it is thick. A first level that is
     // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
     // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
@@ -2758,18 +2815,18 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     // A candidate whose level 2 lies outside its level 1 is no family (levelsNest); its colors stay other ink for the
     // opaque families, as when it was dropped later as text (engagement1: black text and the blues' strokes; without
     // them the blues' fit gave 55 dots for 49, P 0.873)
-    const nesting = familyCandidates(image, B, flat, tol).map(c => beyondBox(image, B, flat, c, tol) ?? overBand(image, B, c) ?? c)
-        .filter(c => c.translucent && !isThin(image, c.levels[0].color))
-        .map(c => withoutBand(image, B, flat, c, tol));
-    const measured = nesting.filter(c => levelsNest(image, c, flat));
+    const nesting = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c)
+        .filter(c => c.translucent && !isThin(scan, c.levels[0].color))
+        .map(c => withoutBand(scan, c));
+    const measured = nesting.filter(c => levelsNest(scan, c));
     const ink = nesting.filter(c => !measured.includes(c)).flatMap(c => c.levels.filter(L => !L.inferred).map(L => L.color));
     // A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with
     // a few pixels of other ink on its line for a weak second level (step1: the red band, 9359 flat pixels, and 2 at
     // a red ring's core); dropped, it is a region (background.js)
-    const lone = measured.map(c => lonelyDots(image, c, tol));
+    const lone = measured.map(c => lonelyDots(scan, c));
     const radii = lone.filter(l => l.length >= DOT_MIN_ISOLATED).map(l => median(l.map(d => d.r)));
     const kept = radii.length
-        ? measured.filter((c, i) => lone[i].length || !solidRegion(image, c.levels[0].color, Math.max(...radii)))
+        ? measured.filter((c, i) => lone[i].length || !solidRegion(scan, c.levels[0].color, Math.max(...radii)))
         : measured;
     // a box under the dots in their hue, read as a level (boxBand), at the family's own lone dots' radius or else
     // the other families', or none
@@ -2777,13 +2834,13 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
     const translucent = kept.map(c => {
         const own = lone[measured.indexOf(c)];
         const radius = own.length ? median(own.map(d => d.r)) : anyLone.length ? median(anyLone.map(d => d.r)) : null;
-        return boxBand(image, B, flat, c, radius, tol);
+        return boxBand(scan, c, radius);
     });
     for (const c of translucent)
         c.kind = 'translucent';
     dropBlends(translucent, B);
     onProgress?.(TRANSLUCENT_SHARE);
-    const opaque = opaqueFamilies(image, backgrounds, translucent, tol, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f));
+    const opaque = opaqueFamilies(scan, translucent, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f));
     // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
@@ -2795,19 +2852,21 @@ export function findCandidates(image, B, flat, backgrounds, tol = EXACT_TOLERANC
  * Whether pixels of `color` form a solid region rather than dots: REGION_MIN_SOLID of them survive an opening by the
  * dots' radius. O(pixels · radius).
  *
- * @param {import('./image.js').RgbaImage} image
+ * @param {Scan} scan  its image; the answer is remembered per color and radius
  * @param {number[]} color  0–255
  * @param {number} radius  px, the dots'
  * @returns {boolean}
  */
-export function solidRegion(image, color, radius) {
-    const { width, height, data } = image;
-    const mask = new Uint8Array(width * height);
+export function solidRegion(scan, color, radius) {
+    return remembered(scan, `solid ${radius}`, color, () => solidShare(scan.image, color, radius));
+}
+
+function solidShare(image, color, radius) {
+    const { width, height } = image;
+    const mask = colorMask(image, color, REGION_INK_TOL);
     let all = 0;
-    for (let p = 0; p < mask.length; p++) {
-        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= REGION_INK_TOL ? 1 : 0;
+    for (let p = 0; p < mask.length; p++)
         all += mask[p];
-    }
     let kept = 0;
     for (const v of opening(mask, width, height, radius))
         kept += v;
@@ -2819,21 +2878,23 @@ export function solidRegion(image, color, radius) {
 // 1 with the dots as level 2, so no dot was a whole one, count 1, and the radius was unknown). When no lone dot shows,
 // the family is measured again without that level's pixels; it is a band if that gives lone dots and their radius
 // shows the level's color as a solid region. The band is then a region of its own (background.js).
-function withoutBand(image, B, flat, c, tol) {
-    if (c.levels.length < 2 || lonelyDots(image, c, tol).length)
+function withoutBand(scan, c) {
+    const { image, flat, tol } = scan;
+    if (c.levels.length < 2 || lonelyDots(scan, c).length)
         return c;
     const L1 = c.levels[0].color;
     const { data } = image;
     const rest = flat.slice();
+    const isBand = nearColor(data, L1, tol.minLevelT);
     for (let p = 0; p < rest.length; p++) {
-        if (Math.hypot(data[4 * p] - L1[0], data[4 * p + 1] - L1[1], data[4 * p + 2] - L1[2]) <= tol.minLevelT)
+        if (isBand(p))
             rest[p] = 0;
     }
-    const alt = measureFamily(image, B, c.levels[1].color, rest, tol);
+    const alt = measureFamily({ ...scan, flat: rest }, c.levels[1].color);
     if (!alt.translucent || !alt.levels.length)
         return c;
-    const lone = lonelyDots(image, alt, tol);
-    if (lone.length < DOT_MIN_ISOLATED || !solidRegion(image, L1, median(lone.map(d => d.r))))
+    const lone = lonelyDots(scan, alt);
+    if (lone.length < DOT_MIN_ISOLATED || !solidRegion(scan, L1, median(lone.map(d => d.r))))
         return c;
     return { ...alt, band: L1 };
 }
@@ -2845,21 +2906,20 @@ function withoutBand(image, B, flat, c, tol) {
 // B + (X₁ − B) / α. The colors beyond are all on one line, so X₂ is the one, of most pixels, that puts the color
 // inside the cube (blue 121, 149, 196 → 105, 137, 189: α 0.747, 76, 113, 176; deeper colors gave −210 and −22). The
 // candidate has X₁ as its one level and the band recorded (background.js reads it as a region under the dots).
-function overBand(image, B, c) {
-    if (c.levels.length !== 1 || c.beyond.length < 2 || isThin(image, c.levels[0].color))
+function overBand(scan, c) {
+    const { image, B } = scan;
+    if (c.levels.length !== 1 || c.beyond.length < 2 || isThin(scan, c.levels[0].color))
         return null;
     const band = c.levels[0].color;
     const d = band.map((v, ch) => v - B[ch]);
-    const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
     const [X1, ...rest] = c.beyond;
     let best = null;
     for (const X2 of rest) {
         const e = X2.color.map((v, ch) => v - X1.color[ch]);
-        const q = (e[0] * d[0] + e[1] * d[1] + e[2] * d[2]) / dd;
+        const { m: q, off } = alongLine(e, d);
         // (the step must be a level's apart: beeswarm-boxplot's gray dots under a gray panel, all colors on one line,
         // gave a "pair" 5 units apart, α 0.78, and 2129 dots for 711)
-        if (q <= OVER_BAND_Q[0] || q >= OVER_BAND_Q[1] || Math.hypot(...e) < LEVEL_SEPARATION
-            || Math.hypot(e[0] - q * d[0], e[1] - q * d[1], e[2] - q * d[2]) > CLUSTER_ON_LINE_TOL)
+        if (q <= OVER_BAND_Q[0] || q >= OVER_BAND_Q[1] || Math.hypot(...e) < LEVEL_SEPARATION || off > CLUSTER_ON_LINE_TOL)
             continue;
         const alpha = 1 - q;
         const color = X1.color.map((v, ch) => B[ch] + (v - B[ch]) / alpha);
@@ -2878,7 +2938,8 @@ function overBand(image, B, c) {
 // Whether a translucent candidate's level 2 lies in its level 1 (NEST_REACH). Pixels are a level's when flat and
 // nearer its color than half the step between the two levels. True when there are too few pieces to judge, or level 1
 // or 2 was inferred.
-function levelsNest(image, c, flat) {
+function levelsNest(scan, c) {
+    const { image, flat } = scan;
     const [L1, L2] = c.levels;
     if (!L2 || L1.inferred || L2.inferred)
         return true;
@@ -2908,20 +2969,20 @@ function levelsNest(image, c, flat) {
 // is measured again without the box's pixels, and the box is a region under the dots (background.js). When no second
 // level shows without it (protrusion3: two dots on the page, 142, 178, 142, lie 8 units off the line to the first
 // level, past PERP_TOL), the levels stay as they were, the box's color standing in for level 2's.
-function boxBand(image, B, flat, c, radius, tol) {
+function boxBand(scan, c, radius) {
     if (c.band)
         return c;
     // with no radius known (protrusion1: every dot on a whisker), by comparison with level 1, as in beyondBox
-    const firstShare = radius ? 0 : straightShare(image, c.levels[0].color, BEYOND_BOX_RUN);
+    const firstShare = radius ? 0 : straightShare(scan, c.levels[0].color, BEYOND_BOX_RUN);
     const isBox = color => {
-        const share = straightShare(image, color, radius ? BOX_RUN_RADII * radius : BEYOND_BOX_RUN);
+        const share = straightShare(scan, color, radius ? BOX_RUN_RADII * radius : BEYOND_BOX_RUN);
         return share >= BOX_MIN_STRAIGHT && share >= BEYOND_BOX_RATIO * firstShare;
     };
-    const box = [...c.levels.slice(1), ...c.beyond].find(L => !L.inferred && isBox(L.color) && solidRegion(image, L.color, BOX_MIN_HALF_WIDTH));
+    const box = [...c.levels.slice(1), ...c.beyond].find(L => !L.inferred && isBox(L.color) && solidRegion(scan, L.color, BOX_MIN_HALF_WIDTH));
     if (!box)
         return c;
     const band = box.color;
-    const alt = measureWithout(image, B, flat, c.levels[0].color, band, tol);
+    const alt = measureWithout(scan, c.levels[0].color, band);
     return alt.translucent && alt.levels.length >= 2 ? { ...alt, band, box: true } : { ...c, band, box: true };
 }
 
@@ -2930,36 +2991,39 @@ function boxBand(image, B, flat, c, radius, tol) {
 // level 1). Its two-level reading as dots over a band of their hue (overBand) fits as well with the roles swapped,
 // so shape decides: the box is the straighter (BEYOND_BOX_RATIO). The family is measured again without the box's
 // pixels, as in boxBand. Null when that isn't so.
-function beyondBox(image, B, flat, c, tol) {
+function beyondBox(scan, c) {
     if (c.levels.length !== 1 || !c.beyond.length)
         return null;
     const box = c.beyond[0].color;
-    const boxShare = straightShare(image, box, BEYOND_BOX_RUN);
-    if (boxShare < BOX_MIN_STRAIGHT || boxShare < BEYOND_BOX_RATIO * straightShare(image, c.levels[0].color, BEYOND_BOX_RUN)
-        || !solidRegion(image, box, BOX_MIN_HALF_WIDTH))
+    const boxShare = straightShare(scan, box, BEYOND_BOX_RUN);
+    if (boxShare < BOX_MIN_STRAIGHT || boxShare < BEYOND_BOX_RATIO * straightShare(scan, c.levels[0].color, BEYOND_BOX_RUN)
+        || !solidRegion(scan, box, BOX_MIN_HALF_WIDTH))
         return null;
-    const alt = measureWithout(image, B, flat, c.levels[0].color, box, tol);
+    const alt = measureWithout(scan, c.levels[0].color, box);
     return alt.translucent && alt.levels.length >= 2 ? { ...alt, band: box, box: true } : null;
 }
 
 // a family measured from seed with the pixels of one color (a box's) taken out of the flat mask
-function measureWithout(image, B, flat, seed, color, tol) {
-    const { data } = image;
-    const rest = flat.slice();
+function measureWithout(scan, seed, color) {
+    const { data } = scan.image;
+    const rest = scan.flat.slice();
+    const isBox = nearColor(data, color, BOX_COLOR_TOL);
     for (let p = 0; p < rest.length; p++) {
-        if (Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= BOX_COLOR_TOL)
+        if (isBox(p))
             rest[p] = 0;
     }
-    return measureFamily(image, B, seed, rest, tol);
+    return measureFamily({ ...scan, flat: rest }, seed);
 }
 
 // The share of the boundary of a color's pixels (within BOX_COLOR_TOL) in straight horizontal or vertical runs of at
 // least minRun px. O(pixels).
-function straightShare(image, color, minRun) {
-    const { width, height, data } = image;
-    const m = new Uint8Array(width * height);
-    for (let p = 0; p < m.length; p++)
-        m[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= BOX_COLOR_TOL ? 1 : 0;
+function straightShare(scan, color, minRun) {
+    return remembered(scan, `straight ${minRun}`, color, () => straightEdgeShare(scan.image, color, minRun));
+}
+
+function straightEdgeShare(image, color, minRun) {
+    const { width, height } = image;
+    const m = colorMask(image, color, BOX_COLOR_TOL);
     let edge = 0;
     let straight = 0;
     // boundary pixels facing up, down, left and right, in runs along rows (up, down) or columns (left, right)
@@ -2993,9 +3057,9 @@ function straightShare(image, color, minRun) {
 }
 
 // isolated whole dots under a translucent candidate's levels
-function lonelyDots(image, c, tol) {
-    const D = countImage(c.proj, c.line, levelTable(c.line.B, c.levels, c.fit), tol);
-    return isolatedDots(D, image.width, image.height, tol);
+function lonelyDots(scan, c) {
+    const D = countImage(c.proj, c.line, levelTable(c.line.B, c.levels, c.fit), scan.tol);
+    return isolatedDots(D, scan.image.width, scan.image.height, scan.tol);
 }
 
 // Removes, in place, translucent candidates whose every measured level is a stack of up to BLEND_DEPTH dots of two
@@ -3032,7 +3096,8 @@ function withoutSpecks(opaque, anyTranslucent) {
 
 // the estimate for an opaque family: its own background, radius from isolated dots or the distance transform, blur
 // from isolated dots or the family's boundaries
-function opaqueEstimate(image, fam, candidates, familyIndex, flat, pageBackground) {
+function opaqueEstimate(scan, fam, candidates, familyIndex) {
+    const { image, flat, background: pageBackground } = scan;
     const { width, height } = image;
     const notes = ['Opaque dots: overlapping dots hide each other, so a dot entirely behind others can’t be found.'];
     if (fam.stroke && fam.fillRadius)

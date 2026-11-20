@@ -208,7 +208,7 @@ export function regionLevels(image, flat, index, k, B2, family) {
         if (proj.t[p] < REGION_MIN_LEVEL_SHARE * seedT)
             own[p] = 0;
     }
-    const { levels } = findLevels(image, proj, own);
+    const { levels } = findLevels({ image, flat: own }, proj);
     if (!levels.length)
         return null;
     return {

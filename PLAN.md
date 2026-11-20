@@ -2385,12 +2385,13 @@ Found by the review and not done (each needs its own check against the bench):
   centers and a fill alpha it discards before the cheap inside test rejects the family. (Reordered, below.)
 - 44–184 whole-image distance transforms per image (7%), 10–65% of them on a mask already transformed; isThin runs
   up to 10 times for 3 colors. backgroundColor is computed 5–9 times per image, flatMask 2–5, backgroundColors 4–7:
-  one per-image context would hold these and shorten the signatures that thread (image, B, flat, tol).
+  one per-image context would hold these and shorten the signatures that thread (image, B, flat, tol). (The context: done,
+  below.)
 - findCandidates runs again when regions lie under the dots, and the whole scan again for the noisy trial; in the
   app the two scans, and the families' fits, could run in parallel workers.
 - Math.hypot in per-pixel color tests is 7–9 times slower than a squared distance (about 27 sites); the same sites
   are one "pixels within a tolerance of a color" helper, and the "between two colors on a line" projection test is
-  written out in eight places.
+  written out in eight places. (Done, below.)
 - measureOpaque's radius scan calls houghCenters up to 128 times (delta1: 27 of 47 s); the linear openings
   (underRings, localFill) are O(length) per pixel (6.6%).
 - Structure: measureOpaque braids four reading modes through one loop; opaqueFamilies, findCandidates and
@@ -2431,3 +2432,43 @@ Where failed births still cost: an attempt is about 13 ms (the new dot and each 
 search), and gradient-dots-stroke spends 15 of its 32 s on 1104 of them. Cheaper only by a rule that changes
 results (stop a pass after a run of failures, skip the pass after a radius refit that moved nothing), to be judged
 on the bench.
+
+**One scan context, and helpers for the two color tests** (2026-11-20)
+
+- Color tests (image.js): nearColor(data, color, tol) is the test "this pixel is within tol of this color" that was
+  written out with Math.hypot at some thirty places; nearAnyColor takes several colors, colorMask gives the mask.
+  They compare squared distances. By the profile's line counts the per-pixel Math.hypot tests took 39 s of the 830 s
+  profiled (style.js's cheap dot test alone 9.4 s, measureOpaque's membership 5.6 s, isThin's mask 4.8 s). The
+  squared test agrees with Math.hypot on every pixel, also on pixels exactly tol away, when tol² is exact, which
+  holds for every tolerance used (3, 8, 15, 40, minLevelT 5 or 15); for a tolerance like √48 a pixel exactly that
+  far is in by Math.hypot and out by the squares, so a computed tolerance would make the boundary case differ.
+  Used in style.js and background.js. Left as they were: tests that compare two distances (measureOpaque's nearer,
+  levelsNest), pixel against pixel (surroundings), sites that keep the distance itself (colormap.js), and
+  axes.js isInk, unmix.js and colormap.js's palette lookup, none of them hot.
+- alongLine(v, w) (style.js) is the projection every "is this color a mix of those two" rule made by hand: how far
+  along w and how far off it. isMixOf(c, P, F) is the commonest form, with its range named (MIX_SHARE). Used by
+  isBlend, throughLayer, hueRings, overBand, strokeColor's final measure and families.js mergeAcrossRegions. The
+  per-pixel projections in measureOpaque and strokeColor stay inline: an object per pixel would cost more than the
+  repetition.
+- Scan (style.js scanOf): { image, tol, background, B, flat, pageBackgrounds, backgrounds, memo }, made once per
+  image by estimateFamilies and passed to every estimateStyle call on it (opts.scan), and below estimateStyle in
+  place of the image, page, flat mask, backgrounds and tolerances as separate arguments: findCandidates(scan),
+  measureFamily(scan, seed), measureOpaque(scan, color, others, outline, opts), opaqueFamilies, findLevels,
+  familyCandidates and the band and box rules (twenty signatures). A rule that measures without some pixels passes
+  { ...scan, flat: rest }; regions under the dots extend `backgrounds` for that call. scan.memo remembers, per
+  color, isThin, solidRegion and straightShare, which several rules ask of the same colors. The page color,
+  the backgrounds and the flat mask are no longer recomputed by each estimateStyle call.
+  findColormap and backgroundRegions keep their arguments (the tests call them directly).
+- Not done, measured: a cache of distance transforms by mask content. The repeats (10–65% of 44–184 transforms
+  per image) come from different callers handing in equal masks, not from one question asked twice, so it would
+  have to key on content: a hash of every mask, and 10 MB per entry kept on a 2.6 Mpx image, for 2–3% at best.
+
+Results: every fitted dot of the 118 local images identical, by digest. Full bench 1202.4 → 1126.5 s (−6%), every
+row unchanged but for its time, none slower (score2 60.6 → 52.7 s, beeswarm-boxplot 68.9 → 61.1, violin-beeswarm
+41.8 → 37.2, kite1 20.1 → 16.9). In the app Laser scans and fits to the same 73 dots. style.js is no shorter
+(3077 → 3142 lines: the context's description and the remembered wrappers outweigh the arguments removed); what
+changed is that the rules read alike. Tests: nearColor against Math.hypot over a cube of colors at whole and half
+tolerances, colorMask and nearAnyColor (test/image.test.js); alongLine, and estimateStyle with a scan made
+earlier, with regions, and with another image's scan (test/style.test.js).
+
+Since the review: full bench 1649.5 → 1126.5 s (−32%) with no fitted dot changed.

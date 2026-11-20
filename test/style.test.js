@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { estimateStyle, fitGeometric, shapeRadius, siblingRadius } from '../src/core/style.js';
+import { estimateStyle, scanOf, alongLine, fitGeometric, shapeRadius, siblingRadius } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
 import { readPng } from '../tools/png.mjs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
@@ -38,6 +38,33 @@ const EXPECTED = {
     dense: { alpha: 0.3, c: [50, 160, 70], radius: 11, blur: 0.8 },
     curve: { alpha: 0.31, c: [50, 161, 73], radius: 24, blur: null },
 };
+
+test('alongLine: a color 30% of the way from one to another, 5 units off the line', () => {
+    const w = [60, -20, 30];
+    const perp = [1, 3, 0]; // w · perp = 0
+    const k = 5 / Math.hypot(...perp);
+    const { m, off } = alongLine(w.map((x, ch) => 0.3 * x + k * perp[ch]), w);
+    near(m, 0.3, 1e-12, 'm');
+    near(off, 5, 1e-12, 'off');
+});
+
+test('estimateStyle with a scan made earlier gives the same estimate, and a scan of another image is not used', () => {
+    const { image } = synthGraph(SYNTH_PRESETS.sparse(3));
+    const other = synthGraph(SYNTH_PRESETS.dense(4)).image;
+    const plain = estimateStyle(image);
+    const scan = scanOf(image);
+    assert.deepEqual(scan.B, plain.background.color);
+    assert.equal(scan.backgrounds, scan.pageBackgrounds);
+    for (const opts of [{ scan }, { scan }, { scan: scanOf(other) }]) {
+        const est = estimateStyle(image, opts);
+        assert.deepEqual(est.style, plain.style);
+        assert.equal(est.candidates.length, plain.candidates.length);
+        assert.deepEqual(est.D, plain.D);
+    }
+    // regions extend the backgrounds for that call only
+    estimateStyle(image, { scan, regions: [[200, 220, 240]] });
+    assert.equal(scan.backgrounds, scan.pageBackgrounds);
+});
 
 test('synthetic presets: α within 0.005, c within 2 units, radius within 0.05 px, blur within 0.15 px', () => {
     for (const [name, want] of Object.entries(EXPECTED)) {

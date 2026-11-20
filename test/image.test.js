@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pixelHash, pixelAt } from '../src/core/image.js';
+import { pixelHash, pixelAt, nearColor, nearAnyColor, colorMask } from '../src/core/image.js';
 
 function solid(width, height, rgba) {
     const data = new Uint8ClampedArray(4 * width * height);
@@ -28,4 +28,54 @@ test('pixelAt indexes row-major from the top left', () => {
     im.data.set([1, 2, 3, 4], 4 * (1 * 3 + 2));
     assert.deepEqual(pixelAt(im, 2, 1), [1, 2, 3, 4]);
     assert.deepEqual(pixelAt(im, 0, 0), [0, 0, 0, 255]);
+});
+
+// every color within 12 units per channel of (100, 100, 100): 25³ pixels, so every integer distance up to 20 occurs
+function colorCube() {
+    const side = 25;
+    const data = new Uint8ClampedArray(4 * side ** 3);
+    let p = 0;
+    for (let r = 88; r < 88 + side; r++) {
+        for (let g = 88; g < 88 + side; g++) {
+            for (let b = 88; b < 88 + side; b++)
+                data.set([r, g, b, 255], 4 * p++);
+        }
+    }
+    return { width: side * side, height: side, data };
+}
+
+test('nearColor is Math.hypot(...) <= tol for every pixel, also at exact distances and for fractional colors', () => {
+    // (for tolerances whose square is exact, as the app's are: whole and half units)
+    const { data } = colorCube();
+    // 3, 7 and 9 are the lengths of integer triples such as (1, 2, 2), (2, 3, 6) and (1, 4, 8): pixels exactly at
+    // the tolerance, where a squared distance and a rounded Math.hypot could part
+    for (const color of [[100, 100, 100], [99.5, 101.25, 100.1], [93.4, 104.7, 98.2]]) {
+        for (const tol of [0, 1, 3, 5, 7, 8, 9, 15, 2.5, 7.5, -1, NaN]) {
+            const near = nearColor(data, color, tol);
+            let inside = 0;
+            for (let p = 0; p < data.length / 4; p++) {
+                const want = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= tol;
+                assert.equal(near(p), want, `pixel ${p}, color ${color}, tol ${tol}`);
+                inside += want;
+            }
+            if (tol >= 3)
+                assert.ok(inside > 0 && inside < data.length / 4, `tol ${tol} splits the cube`);
+        }
+    }
+});
+
+test('colorMask and nearAnyColor mark the same pixels as nearColor', () => {
+    const image = colorCube();
+    const colors = [[92, 92, 92], [108, 100, 96]];
+    const tests = colors.map(c => nearColor(image.data, c, 5));
+    const any = nearAnyColor(image.data, colors, 5);
+    const mask = colorMask(image, colors[0], 5);
+    let count = 0;
+    for (let p = 0; p < mask.length; p++) {
+        assert.equal(mask[p], tests[0](p) ? 1 : 0);
+        assert.equal(any(p), tests[0](p) || tests[1](p));
+        count += mask[p];
+    }
+    assert.ok(count > 100, `${count} pixels within 5 units`);
+    assert.equal(nearAnyColor(image.data, [], 5)(0), false);
 });

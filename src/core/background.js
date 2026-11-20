@@ -11,6 +11,7 @@
 
 import { nearestTransform, opening } from './layers.js';
 import { components } from './style.js';
+import { colorMask } from './image.js';
 
 const REGION_MIN_PIXELS = 1500; // flat pixels of one color for a region (bench3's ANOVA band: two boxes of about 2600)
 const REGION_COLOR_TOL = 3; // 0–255 units (RGB distance): a pixel this close to a region's color is that color
@@ -113,9 +114,7 @@ export function regionColors(image, B, families, flat, radius) {
         const c = [key >> 16, (key >> 8) & 255, key & 255];
         if (Math.hypot(...sub(c, B)) <= REGION_COLOR_TOL || isFamily(c) || out.some(o => Math.hypot(...sub(c, o)) <= REGION_COLOR_TOL || isDotOn(c, o)))
             continue;
-        const mask = new Uint8Array(width * height);
-        for (let p = 0; p < mask.length; p++)
-            mask[p] = Math.hypot(data[4 * p] - c[0], data[4 * p + 1] - c[1], data[4 * p + 2] - c[2]) <= REGION_COLOR_TOL ? 1 : 0;
+        const mask = colorMask(image, c, REGION_COLOR_TOL);
         const wide = opening(mask, width, height, REGION_OPEN_RADII * radius);
         let area = 0;
         for (const v of wide)
@@ -215,10 +214,7 @@ export function backgroundRegions(image, B, families, flat, radius) {
 // The rectangles of the pieces of a box's color (within RECT_COLOR_TOL: two dots' overlap 6 units off made pieces
 // outside protrusion2's green box), merged as RECT_TOL and RECT_MAX_GAP say. Inclusive pixel bounds.
 function boxRects(image, color, width, height) {
-    const { data } = image;
-    const mask = new Uint8Array(width * height);
-    for (let p = 0; p < mask.length; p++)
-        mask[p] = Math.hypot(data[4 * p] - color[0], data[4 * p + 1] - color[1], data[4 * p + 2] - color[2]) <= RECT_COLOR_TOL ? 1 : 0;
+    const mask = colorMask(image, color, RECT_COLOR_TOL);
     let rects = components(mask, width, height).filter(c => c.length >= RECT_MIN_PIXELS).map(c => {
         const r = { x0: width, y0: height, x1: -1, y1: -1 };
         for (const p of c) {
