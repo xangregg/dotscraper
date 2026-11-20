@@ -151,7 +151,8 @@ export function createOutlineModel(base, width, height, style) {
         return { x, y, z, f, rect, fill, ring: rg };
     }
 
-    function dotsNear(rect) {
+    // ids of the dots whose rectangles can reach the rectangle, in grid order
+    function idsNear(rect) {
         const [x0, y0, x1, y1] = rect;
         const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
         const gy0 = Math.max(0, Math.floor((y0 - radius) / cell));
@@ -161,10 +162,14 @@ export function createOutlineModel(base, width, height, style) {
         for (let gy = gy0; gy <= gy1; gy++) {
             for (let gx = gx0; gx <= gx1; gx++) {
                 for (const id of grid[gy * gw + gx])
-                    out.push(dots.get(id));
+                    out.push(id);
             }
         }
         return out;
+    }
+
+    function dotsNear(rect) {
+        return idsNear(rect).map(id => dots.get(id));
     }
 
     const blurredRect = ([x0, y0, x1, y1]) => [Math.max(0, x0 - kHalf), Math.max(0, y0 - kHalf), Math.min(width, x1 + kHalf), Math.min(height, y1 + kHalf)];
@@ -300,11 +305,12 @@ export function createOutlineModel(base, width, height, style) {
         /** The fill's radius (the ring's mid-radius), px. */
         fillRadius,
 
+        // as createDotModel's: the records of the dots near the rectangle only, in id order
         snapshot(rect) {
             const outRect = blurredRect(rect);
             return {
                 rect, outRect, topZ,
-                records: new Map(dots),
+                records: idsNear(rect).sort((a, b) => a - b).map(id => [id, dots.get(id)]),
                 T: copyRect(T, rect),
                 comp: copyRect(composite.data, rect),
                 out: kernel ? copyRect(output.data, outRect) : null,
@@ -312,17 +318,21 @@ export function createOutlineModel(base, width, height, style) {
         },
 
         restore(snap) {
-            for (const [id, d] of dots) {
-                if (snap.records.get(id) !== d)
-                    grid[cellOf(d.x, d.y)].delete(id);
+            const saved = new Map(snap.records);
+            for (const id of idsNear(snap.rect)) {
+                const d = dots.get(id);
+                if (saved.get(id) === d)
+                    continue;
+                grid[cellOf(d.x, d.y)].delete(id);
+                if (!saved.has(id))
+                    dots.delete(id);
             }
             for (const [id, d] of snap.records) {
-                if (dots.get(id) !== d)
+                if (dots.get(id) !== d) {
                     grid[cellOf(d.x, d.y)].add(id);
+                    dots.set(id, d);
+                }
             }
-            dots.clear();
-            for (const [id, d] of snap.records)
-                dots.set(id, d);
             topZ = snap.topZ;
             pasteRect(T, snap.rect, snap.T);
             pasteRect(composite.data, snap.rect, snap.comp);
@@ -330,9 +340,9 @@ export function createOutlineModel(base, width, height, style) {
                 pasteRect(output.data, snap.outRect, snap.out);
         },
 
-        /** @returns {{id: number, x: number, y: number, z: number, f: number}[]} */
+        /** @returns {{id: number, x: number, y: number, z: number, f: number}[]} in id order */
         dots() {
-            return [...dots].map(([id, d]) => ({ id, x: d.x, y: d.y, z: d.z, f: d.f }));
+            return [...dots].sort((a, b) => a[0] - b[0]).map(([id, d]) => ({ id, x: d.x, y: d.y, z: d.z, f: d.f }));
         },
 
         footprint: dotRect,

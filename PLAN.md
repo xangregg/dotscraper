@@ -2352,3 +2352,49 @@ Results (full bench, diffed against b523049): Laser above; cells1 74 → 73 for 
 identical but for run times. Tests in test/layers.test.js: a synthetic bracket with dots centered on its bar (the
 bar between them masked), and Laser's regression (≤ 5 extras, ≤ 2 missed; skipped when absent). Both fail without
 the rule.
+
+**Whole-app review: where the time goes, and two fit speed-ups** (2026-11-20)
+
+Profile (`node --cpu-prof` on 20 images, the slowest of each kind, 876 s of samples): the fit takes 53%, the scan for
+families 40% (findCandidates 23%, opaqueFamilies 21%, measureOpaque 16%, the hollow-ring search 7%), and mask, axes,
+annotations and chroma restoration under 3% together. Two costs in the fit had nothing to do with the image:
+
+- createDotModel and createOutlineModel copied the whole dot Map in every snapshot() and walked it in every
+  restore(), once per trial move, birth, split, death and merge: 10% of all time. They now save the records of the
+  dots that can reach the snapshot's rectangle (the ones recompute would read), sorted by id so restore() refills the
+  grid cells in the order a full copy did, and restore only those. A dot put back after a removal lands at the Map's
+  end, so dots() sorts by id.
+- ringCenters' bilinear sampler built four small arrays per sample, 48 samples per pixel of the image, each round of
+  ring births: 11.5% of all time in the sampler alone. It now adds four corner terms without allocating.
+
+Results: every fitted dot of all 118 local images (18,242 dots: radius, position and flags per family) is identical
+before and after, by digest. Full bench 1649.5 → 1255.3 s (−24%), every row unchanged but for its time, none slower:
+score2 215.2 → 62.0 s, beeswarm-boxplot 105.8 → 83.4, pathogen 46.3 → 25.6, step1 26.4 → 10.5, kite2 28.1 → 16.1,
+autocor1 31.4 → 21.4, violin-beeswarm 51.5 → 41.9, bench2 gradient-dots-stroke 44.5 → 35.0. phase1 (115 s) does
+not move: its time is radius bumps refitting from scratch. In the app pathogen fits to the same 468 dots in 17.5 s.
+Tests: snapshot and restore among 50–60 dots in test/render.test.js and test/outline.test.js (moves, removals,
+births and fill values undone exactly, dots in id order, the grid still right afterwards).
+
+Found by the review and not done (each needs its own check against the bench):
+
+- Failed births are retried every round (the tabu list is cleared each round): bench2 gradient-dots-stroke made 805
+  failed attempts for 17 births. Remembering a failure until the model changes inside its rectangle should give the
+  same dots.
+- A doubled or coincident radius bump refits from scratch (phase1's gray family: 65 s, about 5 s of it the last
+  fit). Deciding sooner changes behavior.
+- findHollowRings runs on nearly every image (7% of all time; one bench image has hollow rings), and computes ring
+  centers and a fill alpha it discards before the cheap inside test rejects the family.
+- 44–184 whole-image distance transforms per image (7%), 10–65% of them on a mask already transformed; isThin runs
+  up to 10 times for 3 colors. backgroundColor is computed 5–9 times per image, flatMask 2–5, backgroundColors 4–7:
+  one per-image context would hold these and shorten the signatures that thread (image, B, flat, tol).
+- findCandidates runs again when regions lie under the dots, and the whole scan again for the noisy trial; in the
+  app the two scans, and the families' fits, could run in parallel workers.
+- Math.hypot in per-pixel color tests is 7–9 times slower than a squared distance (about 27 sites); the same sites
+  are one "pixels within a tolerance of a color" helper, and the "between two colors on a line" projection test is
+  written out in eight places.
+- measureOpaque's radius scan calls houghCenters up to 128 times (delta1: 27 of 47 s); the linear openings
+  (underRings, localFill) are O(length) per pixel (6.6%).
+- Structure: measureOpaque braids four reading modes through one loop; opaqueFamilies, findCandidates and
+  estimateFamilies are chains of rescue passes; the two incremental models share a duplicated scaffold; six medians
+  (two variants), five component labelers; tools/bench.mjs extractAll mirrors the app's scan orchestration; style.js
+  holds three subjects in 3,077 lines.

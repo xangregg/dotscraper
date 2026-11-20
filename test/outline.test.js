@@ -116,6 +116,51 @@ test('createOutlineModel: a later fill dims the ring under it; drawn first, it i
     assert.ok(Math.abs(at(under, 23)) < 1e-4, 'restored');
 });
 
+// as the dot model's: snapshot() saves only the dots near its rectangle
+test('createOutlineModel: snapshot and restore among many dots leave the dots, their order and the image as they were', () => {
+    const MW = 200;
+    const MH = 140;
+    const COUNT = 50;
+    const base = new Float32Array(MW * MH);
+    const style = { radius: 6, ring: { inner: 0.75, alpha: 0.5 }, fillAlpha: 0.8, ringT: 100 };
+    const rng = createRng(12);
+    const union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+    const model = createOutlineModel(base, MW, MH, style);
+    model.addAll(Array.from({ length: COUNT }, (_, i) => ({ x: 10 + (MW - 20) * rng.uniform(), y: 10 + (MH - 20) * rng.uniform(), z: i + 1 })));
+    for (let t = 0; t < 40; t++) {
+        const image = Float32Array.from(model.image.data);
+        const dots = JSON.stringify(model.dots());
+        const d = model.dots()[Math.floor(COUNT * rng.uniform())];
+        const to = { x: d.x + 8 * (rng.uniform() - 0.5), y: d.y + 8 * (rng.uniform() - 0.5) };
+        const extra = { x: d.x + 10 * (rng.uniform() - 0.5), y: d.y + 10 * (rng.uniform() - 0.5) };
+        const snap = model.snapshot(union(union(model.footprint(d.x, d.y), model.footprint(to.x, to.y)), model.footprint(extra.x, extra.y)));
+        if (t % 4 === 0)
+            model.move(d.id, to.x, to.y);
+        else if (t % 4 === 1)
+            model.remove(d.id);
+        else if (t % 4 === 2)
+            model.setFill(d.id, 25);
+        else {
+            model.add(extra.x, extra.y);
+            model.move(d.id, to.x, to.y);
+        }
+        model.restore(snap);
+        assert.equal(JSON.stringify(model.dots()), dots, `dots after trial ${t}`);
+        assert.deepEqual(model.image.data, image, `image after trial ${t}`);
+        if (t % 5 === 4)
+            model.move(d.id, to.x, to.y);
+    }
+    // a rejected birth does not raise the drawing order of the next one
+    assert.equal(model.zOf(model.add(100, 70)), COUNT + 1);
+    // the grid still knows where every dot is: moving each one agrees with a model built from the dots
+    for (const d of model.dots())
+        model.move(d.id, d.x + 1.3, d.y - 0.7);
+    const fresh = createOutlineModel(base, MW, MH, style);
+    fresh.addAll(model.dots());
+    for (let i = 0; i < base.length; i++)
+        assert.ok(Math.abs(fresh.image.data[i] - model.image.data[i]) < 1e-3);
+});
+
 test('findOutlines: the fill plane, the ring and αf of outlined dots whose fills vary', () => {
     const image = outlinedImage(scene());
     const plane = fillPlane(image, WHITE);

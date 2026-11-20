@@ -361,8 +361,8 @@ export function createDotModel(background, style) {
         return { x, y, rect, stamp };
     }
 
-    // dots whose rectangles can reach the rectangle
-    function dotsNear(rect) {
+    // ids of the dots whose rectangles can reach the rectangle, in grid order
+    function idsNear(rect) {
         const [x0, y0, x1, y1] = rect;
         const gx0 = Math.max(0, Math.floor((x0 - radius) / cell));
         const gy0 = Math.max(0, Math.floor((y0 - radius) / cell));
@@ -372,10 +372,14 @@ export function createDotModel(background, style) {
         for (let gy = gy0; gy <= gy1; gy++) {
             for (let gx = gx0; gx <= gx1; gx++) {
                 for (const id of grid[gy * gw + gx])
-                    out.push(dots.get(id));
+                    out.push(id);
             }
         }
         return out;
+    }
+
+    function dotsNear(rect) {
+        return idsNear(rect).map(id => dots.get(id));
     }
 
     function blurredRect(rect) {
@@ -496,15 +500,18 @@ export function createDotModel(background, style) {
         },
 
         /**
-         * Save the state a change within `rect` (a footprint) can alter: the dot records and the buffers over the
-         * rectangle (grown by the blur for the output). restore() puts it back without re-rendering, so a rejected
-         * trial costs a copy instead of a second render.
+         * Save the state a change within `rect` (a footprint) can alter: the records of the dots that can reach the
+         * rectangle and the buffers over it (grown by the blur for the output). restore() puts it back without
+         * re-rendering, so a rejected trial costs a copy instead of a second render. Only the dots near the rectangle
+         * are saved (in id order, so restore() refills the grid cells in the order a full copy would): a trial's cost
+         * must not grow with the number of dots in the image. Every dot added, moved or removed between the two
+         * calls must have its footprint inside `rect`, before and after.
          */
         snapshot(rect) {
             const outRect = blurredRect(rect);
             return {
                 rect, outRect,
-                records: new Map(dots),
+                records: idsNear(rect).sort((a, b) => a - b).map(id => [id, dots.get(id)]),
                 T: copyRect(T, 1, rect),
                 comp: copyRect(composite.data, CH, rect),
                 out: kernel ? copyRect(output.data, CH, outRect) : null,
@@ -512,26 +519,30 @@ export function createDotModel(background, style) {
         },
 
         restore(snap) {
-            for (const [id, d] of dots) {
-                if (snap.records.get(id) !== d)
-                    grid[cellOf(d.x, d.y)].delete(id);
+            const saved = new Map(snap.records);
+            for (const id of idsNear(snap.rect)) {
+                const d = dots.get(id);
+                if (saved.get(id) === d)
+                    continue;
+                grid[cellOf(d.x, d.y)].delete(id);
+                if (!saved.has(id))
+                    dots.delete(id);
             }
             for (const [id, d] of snap.records) {
-                if (dots.get(id) !== d)
+                if (dots.get(id) !== d) {
                     grid[cellOf(d.x, d.y)].add(id);
+                    dots.set(id, d);
+                }
             }
-            dots.clear();
-            for (const [id, d] of snap.records)
-                dots.set(id, d);
             pasteRect(T, 1, snap.rect, snap.T);
             pasteRect(composite.data, CH, snap.rect, snap.comp);
             if (kernel)
                 pasteRect(output.data, CH, snap.outRect, snap.out);
         },
 
-        /** @returns {{id: number, x: number, y: number}[]} */
+        /** @returns {{id: number, x: number, y: number}[]} in id order (restore() can put a dot back at the Map's end) */
         dots() {
-            return [...dots].map(([id, d]) => ({ id, x: d.x, y: d.y }));
+            return [...dots].sort((a, b) => a[0] - b[0]).map(([id, d]) => ({ id, x: d.x, y: d.y }));
         },
 
         /** The pixel rectangle [x0, y0, x1, y1) a dot at (x, y) covers (before blur). */

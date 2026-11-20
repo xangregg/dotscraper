@@ -251,12 +251,22 @@ export function houghCenters(D, weight, width, height, r, grad = houghGradient(D
  */
 export function ringCenters(D, weight, width, height, r, inner, minArc = RING_MIN_ARC) {
     const rm = r * (1 + inner) / 2;
-    const offs = [];
+    const offX = new Float64Array(RING_SAMPLES);
+    const offY = new Float64Array(RING_SAMPLES);
     for (let k = 0; k < RING_SAMPLES; k++) {
         const a = 2 * Math.PI * k / RING_SAMPLES;
-        offs.push([rm * Math.cos(a), rm * Math.sin(a)]);
+        offX[k] = rm * Math.cos(a);
+        offY[k] = rm * Math.sin(a);
     }
-    // bilinear sample of D at (x, y) in px, 0 off the image or where masked
+    // one corner of a bilinear sample: w · D at pixel (xx, yy), 0 off the image or where masked
+    const tap = (xx, yy, w) => {
+        if (xx < 0 || yy < 0 || xx >= width || yy >= height)
+            return 0;
+        const q = yy * width + xx;
+        return weight[q] && !Number.isNaN(D[q]) ? w * D[q] : 0;
+    };
+    // Bilinear sample of D at (x, y) in px. This runs RING_SAMPLES times per pixel of the image, so it must not
+    // allocate: building the four corners as arrays made it the largest single cost of a ring fit.
     const at = (x, y) => {
         const fx = x - 0.5;
         const fy = y - 0.5;
@@ -264,24 +274,15 @@ export function ringCenters(D, weight, width, height, r, inner, minArc = RING_MI
         const iy = Math.floor(fy);
         const tx = fx - ix;
         const ty = fy - iy;
-        let s = 0;
-        for (const [ox, oy, w] of [[0, 0, (1 - tx) * (1 - ty)], [1, 0, tx * (1 - ty)], [0, 1, (1 - tx) * ty], [1, 1, tx * ty]]) {
-            const xx = ix + ox;
-            const yy = iy + oy;
-            if (xx < 0 || yy < 0 || xx >= width || yy >= height)
-                continue;
-            const q = yy * width + xx;
-            if (weight[q] && !Number.isNaN(D[q]))
-                s += w * D[q];
-        }
-        return s;
+        return tap(ix, iy, (1 - tx) * (1 - ty)) + tap(ix + 1, iy, tx * (1 - ty)) + tap(ix, iy + 1, (1 - tx) * ty)
+            + tap(ix + 1, iy + 1, tx * ty);
     };
     const score = new Float32Array(width * height);
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             let s = 0;
-            for (const [ox, oy] of offs)
-                s += at(x + 0.5 + ox, y + 0.5 + oy);
+            for (let k = 0; k < RING_SAMPLES; k++)
+                s += at(x + 0.5 + offX[k], y + 0.5 + offY[k]);
             score[y * width + x] = s / RING_SAMPLES;
         }
     }

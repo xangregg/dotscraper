@@ -42,7 +42,6 @@ src/core/               pure algorithms: image.js (hash, pixel access), render.j
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
                         axes-panel.js (tick values, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
-src/fit-worker.js       module Web Worker wrapping the fit
 src/scan-worker.js      module Web Worker running the scan for dot families (estimateFamilies), posting progress
 testgraphs/             test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data
                         cells, ticks in the header): LOCAL ONLY, git ignores all

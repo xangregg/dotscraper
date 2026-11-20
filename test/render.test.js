@@ -241,6 +241,49 @@ test('snapshot and restore undo moves, adds and removes exactly', () => {
         assert.ok(Math.abs(full.data[i] - model.image.data[i]) < 1e-3);
 });
 
+// snapshot() saves only the dots near its rectangle, so restore() has to put back exactly those and leave the rest
+test('snapshot and restore among many dots: rejected trials leave the dots, their order and the image as they were', () => {
+    const W = 200;
+    const H = 140;
+    const COUNT = 60;
+    const style = { color: [50, 160, 70], alpha: 0.3, radius: 6.5, blur: 1 };
+    const bg = solidImage(W, H, [255, 255, 255]);
+    const rng = createRng(11);
+    const place = () => ({ x: 10 + (W - 20) * rng.uniform(), y: 10 + (H - 20) * rng.uniform() });
+    const union = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+    const model = createDotModel(bg, style);
+    model.addAll(Array.from({ length: COUNT }, place));
+    for (let t = 0; t < 45; t++) {
+        const image = Float32Array.from(model.image.data);
+        const dots = JSON.stringify(model.dots());
+        const d = model.dots()[Math.floor(COUNT * rng.uniform())];
+        const to = { x: d.x + 8 * (rng.uniform() - 0.5), y: d.y + 8 * (rng.uniform() - 0.5) };
+        const extra = { x: d.x + 10 * (rng.uniform() - 0.5), y: d.y + 10 * (rng.uniform() - 0.5) };
+        const snap = model.snapshot(union(union(model.footprint(d.x, d.y), model.footprint(to.x, to.y)), model.footprint(extra.x, extra.y)));
+        // a move, a removal (its id must come back in its place, not at the end), or a birth with a move
+        if (t % 3 === 0)
+            model.move(d.id, to.x, to.y);
+        else if (t % 3 === 1)
+            model.remove(d.id);
+        else {
+            model.add(extra.x, extra.y);
+            model.move(d.id, to.x, to.y);
+        }
+        model.restore(snap);
+        assert.equal(JSON.stringify(model.dots()), dots, `dots after trial ${t}`);
+        assert.deepEqual(model.image.data, image, `image after trial ${t}`);
+        // an accepted move between the trials: the next snapshot is of a changed model
+        if (t % 5 === 4)
+            model.move(d.id, to.x, to.y);
+    }
+    // the grid still knows where every dot is: moving each one agrees with a full render
+    for (const d of model.dots())
+        model.move(d.id, d.x + 1.3, d.y - 0.7);
+    const full = renderDots(bg, model.dots(), style);
+    for (let i = 0; i < full.data.length; i++)
+        assert.ok(Math.abs(full.data[i] - model.image.data[i]) < 1e-3);
+});
+
 test('projected rendering equals the projection of the RGB rendering', () => {
     const B = [255, 255, 255];
     const c = [50, 161, 73];
