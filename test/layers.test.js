@@ -5,7 +5,10 @@ import { createRng } from '../src/core/rng.js';
 import { distanceTransform, dilate, opening, buildMask, CLASS_FAMILY, CLASS_OTHER, CLASS_BACKGROUND } from '../src/core/layers.js';
 import { estimateStyle } from '../src/core/style.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
-import { readPng } from '../tools/png.mjs';
+import { readImage, readPng } from '../tools/png.mjs';
+import { extractAll } from '../tools/bench.mjs';
+import { readTruthJson } from '../tools/truth-json.mjs';
+import { matchDots } from '../src/core/metrics.js';
 import { detectAxes, plotBounds, clipEdges } from '../src/core/axes.js';
 import { fitDots } from '../src/core/fit.js';
 
@@ -250,6 +253,53 @@ test('clipped dots: where the plot cuts the dots at the axis and the x axis line
     // without the cut, the dots at the right end were moved in
     const plain = fit({ bounds: plotBounds(axes) });
     assert.ok(cut.slice(2).some(c => !plain.dots.some(d => Math.hypot(d.x - c.x, d.y - c.y) <= 1.5)), 'unclipped, a cut dot is misplaced');
+});
+
+test('a bar in the dots\' color, cut into short pieces by the dots on it, is masked as a line', () => {
+    // before (testgraphs Laser-Asyllable-Maturity): the bar's pieces between the dots, 5–10 px each, were too short
+    // for the length test and stayed unmasked
+    const color = [58, 152, 176];
+    const R = 5.7;
+    const loose = [[40, 30], [90, 25], [140, 35], [190, 30], [240, 40], [70, 70], [200, 80], [250, 110], [215, 150], [260, 170]];
+    const onBar = [[67, 155], [89, 156], [111, 155], [133, 156]];
+    const spec = {
+        width: 300, height: 200, background: [255, 255, 255], blur: 0.2,
+        families: [{ color, alpha: 1, radius: R, points: [...loose, ...onBar].map(([x, y]) => ({ x, y })) }],
+    };
+    const { image } = synthGraph(spec);
+    // a bracket: two sides and a bottom bar, 5 px thick, through the dots on it
+    const { width, data } = image;
+    const rect = (x0, y0, x1, y1) => {
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++)
+                data.set(color, 4 * (y * width + x));
+        }
+    };
+    rect(55, 90, 60, 158);
+    rect(140, 90, 145, 158);
+    rect(55, 153, 145, 158);
+    const est = estimateStyle(image);
+    near(est.style.radius, R, 0.5, 'radius');
+    const layers = buildMask(image, est);
+    for (const x of [78, 100, 122])
+        assert.ok(layers.mask[155 * width + x], `the bar between the dots at x ${x}`);
+    const { dots } = fitDots({ image, style: est.style, line: est.familyMeasure.line, mask: layers.mask, D: est.D, imgT: est.fitT });
+    for (const [x, y] of [...loose, ...onBar])
+        assert.ok(dots.some(d => Math.hypot(d.x - x, d.y - y) <= 1.5), `dot at ${x}, ${y}`);
+    assert.equal(dots.length, loose.length + onBar.length, JSON.stringify(dots.map(d => [+d.x.toFixed(1), +d.y.toFixed(1)])));
+});
+
+const LASER = new URL('../testgraphs/Laser-Asyllable-Maturity.png', import.meta.url).pathname;
+const LASER_TRUTH = new URL('../testgraphs/truth/Laser-Asyllable-Maturity.json', import.meta.url).pathname;
+
+test('regression: Laser, no dots fitted on the brackets\' bars between the dots on them', { skip: !(existsSync(LASER) && existsSync(LASER_TRUTH)) && 'testgraphs Laser absent' }, () => {
+    // before: 80 found for 70, all 70 matched, 10 extras on the bars (P 0.875)
+    const results = extractAll(readImage(LASER));
+    const truth = readTruthJson(LASER_TRUTH).dots;
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, 0.5 * results[0].fit.radius);
+    assert.ok(m.extra.length <= 5, `${m.extra.length} extras: ${JSON.stringify(m.extra.map(j => [Math.round(found[j].x), Math.round(found[j].y)]))}`);
+    assert.ok(m.missed.length <= 2, `${m.missed.length} missed`);
 });
 
 test('bounds: pixels more than a dot radius beyond the axes are masked, nothing nearer changes', () => {

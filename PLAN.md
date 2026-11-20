@@ -2320,3 +2320,35 @@ CSV P 0.953 → 0.960, R 0.833 → 0.838; phase1 135 → 129 for 97, P 0.593 →
 ends, x 1287, masking the colorbar beyond; 228 and 187 at the x axis line, recall unchanged); every other row
 identical but for run times. Test in test/layers.test.js: a synthetic plot clipping its dots at the y axis and the x
 axis line's end (cut dots found whole; without the clip, one at the end is misplaced).
+
+**The remaining "not yet investigated" testgraphs; bars cut by the dots on them** (2026-11-20)
+
+- Laser-Asyllable-Maturity (80 found for 70, all matched, 10 extras): opaque dots and brackets drawn in the dots'
+  colors, bars about 5 px thick against dots 11 px across. The dots sitting on a bracket's bottom bar cut it into
+  pieces of 5–10 px, shorter than the length test (3 radii), so they weren't thin and the fit put dots on them.
+  buildMask now joins such pieces (layers.js barPieces): short components longer than they are thick (≥ 1.3 times),
+  no thicker than the opening removes, filling ≥ 0.7 of their boxes (a crescent doesn't), lined up in a row or a
+  column (one's rows within the other's, 1 px either side), with gaps up to a dot's diameter + 1 px, together at
+  least 3 radii long; or one such piece in line with a thin mark across such a gap (purple's bar: one short piece
+  beside the long rest). The bar's deep pixels in the gaps, under the dots, are marked too (else the strip of bar
+  below a dot's edge drew a second dot). Laser: 73 for 70, P 0.875 → 0.945, R 1.000 → 0.986. Without the
+  elongation test a dotted line's round specks were joined too, and one masked speck cut into adults1's cluster
+  (a dot added there).
+- fibers-distance (39 for 44): translucent matplotlib blue at α 0.5, r 4, with JPEG noise, read as opaque: no
+  level has flat pixels. Coincident pairs show darker and count once; dots on the regression line (the family's
+  full color) are missed. The noisy path (restoreChroma, JPEG tolerances) finds α 0.50 and all 44, but stacks 9
+  extras where the dots cross the line: there the line, thickened by the dot, survives the opening, and its JPEG
+  noise (up to 21 units off the full color) keeps it from reading as deep. The app keeps the exact path because both
+  find one family; preferring the noisy one when it finds the same families translucent would also flip fanc2,
+  whose opaque dots draw every overlap one dark color (2 levels, alike in both cases). Left as is.
+- economist-canada-unfriendly-chart (198 for 210): nearly all misses and extras in the dense pile at lower left,
+  where both translucent families and both full-color trend lines cross; the hand truth is a guess there too.
+  Left as is (one stack there is fitted as 5 coincident dots).
+- violin-beeswarm (712 for 702): the 11 extras lie along the violins' dark center lines, between dots that the line
+  shows through. Small, and no rule found that wouldn't risk the packed dots.
+
+Results (full bench, diffed against b523049): Laser above; cells1 74 → 73 for 72 (P 0.892 → 0.904 by hand, 0.946 →
+0.959 by data); kite1 27 → 26 for 25 (P 0.889 → 0.923); phase1 129 → 128 for 97 (P 0.620 → 0.625); every other row
+identical but for run times. Tests in test/layers.test.js: a synthetic bracket with dots centered on its bar (the
+bar between them masked), and Laser's regression (≤ 5 extras, ≤ 2 missed; skipped when absent). Both fail without
+the rule.

@@ -27,6 +27,16 @@ const THIN_MIN_LENGTH_RADII = 3; // × dot radius, the larger side of a thin com
 // join into long components (synthetic swarm: 8 of 84 dots masked). Lines are at least 2 px wide: a second, 1 px
 // opening of the candidates removes the slivers.
 const SLIVER_OPENING = 1; // px
+// Dots sitting on a bar of their own color cut it into pieces shorter than the length test (Laser's brackets: 5–9 px
+// between dots 11 px across, 10 dots fitted on the bars). Straight pieces in one row (or column), one's rows within
+// the other's, filling their boxes as a bar does and a crescent doesn't, with gaps no wider than a dot, are one line,
+// as is such a piece in line with a thin mark (barPieces).
+const BAR_FILL = 0.7; // share of a piece's bounding box (Laser's corner piece, rounded: 0.72)
+// a piece is longer than the bar is thick (Laser's: 1.4–2.4 times); a dotted line's round specks are not, and masked
+// as bars they cut into the dots beside them (adults1: a dot added to a cluster)
+const BAR_MIN_ELONGATION = 1.3; // a piece's length over its thickness
+const BAR_EDGE_TOL = 1; // px, between pieces' rows (columns) and in a thin mark's cover of them
+const BAR_GAP_SLACK = 1; // px beyond a dot's diameter between pieces
 // A pixel at count ≥ 1.5 is inside at least one dot, so a disc of nearly the dot's radius around it lies in the
 // family's pixels (or under other marks). Text in a translucent family's own color fails that: JMP's 50% black dots
 // share their line with black text, whose antialiased strokes read as counts 1–8, too short for the length test,
@@ -226,6 +236,103 @@ export function erode(mask, width, height, r) {
  */
 export function opening(mask, width, height, r) {
     return dilate(erode(mask, width, height, r), width, height, r);
+}
+
+/**
+ * Marks as thin the pieces of bars cut by dots: short components (components8's), longer along the bar than across
+ * it (BAR_MIN_ELONGATION), no thicker than the opening removes and filling their boxes (BAR_FILL), that line up in a row (or a column):
+ * with each other, across gaps up to a dot's diameter, together reaching the length test; or with a thin mark across
+ * such a gap (a bar's rest, long enough alone). A piece lines up with another when its rows (columns) lie within the
+ * other's, BAR_EDGE_TOL either side. The bar goes on under the dots in the gaps: its deep pixels there, in the rows
+ * (columns) the two sides share, are marked too (else the strip of bar below a dot's edge was a second dot's). In
+ * place. O(pieces² + pieces · radius · thickness).
+ *
+ * @param {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]} pieces
+ * @param {Uint8Array} deep
+ * @param {Uint8Array} thin
+ * @param {number} width
+ * @param {number} height
+ * @param {number} radius  px, the dots'
+ */
+function barPieces(pieces, deep, thin, width, height, radius) {
+    const thick = 2 * OPEN_RADIUS_FRACTION * radius;
+    const gap = 2 * radius + BAR_GAP_SLACK;
+    const done = new Set();
+    const mark = c => {
+        done.add(c);
+        for (const p of c.pixels)
+            thin[p] = 1;
+    };
+    // bars in rows, then in columns: the box keys along the bar and across it, and a pixel at (along, across)
+    const axes = [['x0', 'x1', 'y0', 'y1', (a, b) => b * width + a, width], ['y0', 'y1', 'x0', 'x1', (a, b) => a * width + b, height]];
+    for (const [lo, hi, across0, across1, at, extent] of axes) {
+        const bars = pieces.filter(c => {
+            const along = c[hi] - c[lo] + 1;
+            const across = c[across1] - c[across0] + 1;
+            return along >= BAR_MIN_ELONGATION * across && across <= thick && c.pixels.length >= BAR_FILL * along * across;
+        }).sort((a, b) => a[lo] - b[lo]);
+        // the deep pixels between along-positions a0 and a1 (exclusive), across b0..b1
+        const bridge = (a0, a1, b0, b1) => {
+            for (let a = Math.min(a0, a1) + 1; a < Math.max(a0, a1); a++) {
+                for (let b = b0; b <= b1; b++) {
+                    const p = at(a, b);
+                    if (deep[p])
+                        thin[p] = 1;
+                }
+            }
+        };
+        const within = (a, b) => a[across0] >= b[across0] - BAR_EDGE_TOL && a[across1] <= b[across1] + BAR_EDGE_TOL;
+        const inLine = (a, b) => within(a, b) || within(b, a);
+        const used = new Set();
+        for (const start of bars) {
+            if (used.has(start))
+                continue;
+            const group = [start];
+            let end = start[hi];
+            for (const c of bars) {
+                if (!used.has(c) && !group.includes(c) && c[lo] >= start[lo] && inLine(c, start) && c[lo] - end - 1 <= gap) {
+                    group.push(c);
+                    end = Math.max(end, c[hi]);
+                }
+            }
+            for (const c of group)
+                used.add(c);
+            if (group.length >= 2 && end - start[lo] + 1 >= THIN_MIN_LENGTH_RADII * radius) {
+                group.forEach(mark);
+                for (let i = 1; i < group.length; i++) {
+                    const [a, b] = [group[i - 1], group[i]];
+                    bridge(a[hi], b[lo], Math.max(a[across0], b[across0]), Math.min(a[across1], b[across1]));
+                }
+            }
+        }
+        // a thin mark on either side, covering the piece's rows (columns) BAR_EDGE_TOL short at most, within the gap;
+        // repeated, as a piece marked thin may be the next one's neighbor
+        const meets = c => {
+            const need = c[across1] - c[across0] + 1 - BAR_EDGE_TOL;
+            for (const [from, step] of [[c[lo] - 1, -1], [c[hi] + 1, 1]]) {
+                for (let k = 0, a = from; k < gap && a >= 0 && a < extent; k++, a += step) {
+                    let n = 0;
+                    for (let b = c[across0]; b <= c[across1]; b++)
+                        n += thin[at(a, b)];
+                    if (n >= need)
+                        return a;
+                }
+            }
+            return null;
+        };
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (const c of bars) {
+                const a = done.has(c) ? null : meets(c);
+                if (a !== null) {
+                    mark(c);
+                    bridge(a < c[lo] ? a : c[hi], a < c[lo] ? c[lo] : a, c[across0], c[across1]);
+                    changed = true;
+                }
+            }
+        }
+    }
 }
 
 /** Connected components (8-neighbor) of a binary mask, with their bounding boxes. */
@@ -454,12 +561,16 @@ export function buildMask(image, estimate, opts = {}) {
         for (let p = 0; p < n; p++)
             raw[p] = deep[p] && !kept[p] ? 1 : 0;
         const candidate = opening(raw, width, height, SLIVER_OPENING);
+        const short = [];
         for (const comp of components8(candidate, width, height)) {
-            if (Math.max(comp.x1 - comp.x0, comp.y1 - comp.y0) + 1 < THIN_MIN_LENGTH_RADII * style.radius)
+            if (Math.max(comp.x1 - comp.x0, comp.y1 - comp.y0) + 1 < THIN_MIN_LENGTH_RADII * style.radius) {
+                short.push(comp);
                 continue;
+            }
             for (const p of comp.pixels)
                 thin[p] = 1;
         }
+        barPieces(short, deep, thin, width, height, style.radius);
         if (!opaque) {
             // pixels masked anyway are unknown, not empty: the pale halos of dog-ages' curve and dashes broke the
             // dots beside them
