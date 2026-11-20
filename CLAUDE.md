@@ -32,7 +32,10 @@ work is completed, and record measured results there (what was tried, the number
 index.html              layout, loads src/ui/main.js as a module
 styles.css
 src/core/               pure algorithms: image.js (hash, pixel access, color tests), render.js (forward model), style.js (dot
-                        style, the scan context), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
+                        style: the families of an image and one family's style, with the band and box rules), scan.js
+                        (page, flat pixels, tolerances, the Scan passed through the search), levels.js (translucent
+                        families: levels, alpha, color), opaque.js (opaque families: measureOpaque, opaqueFamilies, radius
+                        from shapes), shape.js (isolated dots, components, edge blur), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
                         ticks, labels, scales), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the

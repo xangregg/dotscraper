@@ -26,7 +26,7 @@ bench1: JMP renderings, 100 dots
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ellipse | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.05 | 2 | 8.0 | 2.2 |  |
+| ellipse | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.05 | 2 | 8.0 | 2.1 |  |
 | gradient-dots | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.04 | 5 | 9.6 | 0.9 |  |
 | gradient-dots-stroke | exact | exact | 100 | 101 | 0.990 | 1.000 | +1 | 0.12 | 15 | 11.1 | 11.2 | Color scale with outlines in a darker shade of each fill: fitted by rings (hue outlines). |
 | gradient-dots-stroke.jpg | exact | JPEG | 100 | 104 | 0.962 | 1.000 | +4 | 0.14 | 20 | 11.1 | 12.5 | As the PNG, through JPEG. |
@@ -36,10 +36,10 @@ bench1: JMP renderings, 100 dots
 | group | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 0 | 6.7 | 1.2 |  |
 | group-graystroke | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.70 | 3 | 7.8 | 1.7 | Gray outlines. RMSE 0.7 px: JMP draws stroked dots up-left of the data. |
 | group-large | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 1 | 10.2 | 1.4 |  |
-| group-smoother | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 0 | 6.7 | 1.4 |  |
-| group-smoother-ci | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 3 | 6.7 | 3.7 |  |
+| group-smoother | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 0 | 6.7 | 1.3 |  |
+| group-smoother-ci | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 3 | 6.7 | 3.8 |  |
 | group-smoother.jpg | exact | JPEG | 100 | 100 | 1.000 | 1.000 | 0 | 0.12 | 9 | 6.7 | 1.5 |  |
-| group-solid-graystroke | exact | exact | 100 | 98 | 1.000 | 0.980 | -2 | 0.71 | 0 | 7.8 | 1.7 | Gray outlines; RMSE as group-graystroke. |
+| group-solid-graystroke | exact | exact | 100 | 98 | 1.000 | 0.980 | -2 | 0.71 | 0 | 7.8 | 1.6 | Gray outlines; RMSE as group-graystroke. |
 | large-dots | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 2 | 12.6 | 1.2 |  |
 | large-dots.jpg | exact | JPEG | 100 | 100 | 1.000 | 1.000 | 0 | 0.05 | 2 | 12.6 | 1.3 |  |
 | medium-dots | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 2 | 6.7 | 0.8 |  |
@@ -50,7 +50,7 @@ bench1: JMP renderings, 100 dots
 | smoother | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 2 | 7.9 | 0.8 |  |
 | smoother-behind | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 2 | 7.9 | 0.8 |  |
 | smoother-behind-ci | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 2 | 7.9 | 1.4 |  |
-| smoother-ci | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 5 | 7.9 | 1.5 |  |
+| smoother-ci | exact | exact | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 5 | 7.9 | 1.6 |  |
 | smoother-ci.jpg | exact | JPEG | 100 | 98 | 0.990 | 0.970 | -2 | 0.29 | 29 | 7.9 | 1.7 | Confidence band over the dots, through JPEG. |
 | smoother.jpg | exact | JPEG | 100 | 100 | 1.000 | 1.000 | 0 | 0.03 | 10 | 7.9 | 0.9 |  |
 | solid-graystroke | exact | exact | 100 | 98 | 1.000 | 0.980 | -2 | 0.70 | 0 | 8.6 | 2.1 | Gray outlines; RMSE as group-graystroke. |
@@ -68,7 +68,7 @@ bench2: JMP renderings, 204 dots with more ties
 | ellipse | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 39 | 7.9 | 2.8 |  |
 | gradient-dots | exact | exact | 204 | 200 | 1.000 | 0.980 | -4 | 0.25 | 68 | 9.6 | 2.0 |  |
 | gradient-dots-stroke | exact | exact | 204 | 207 | 0.957 | 0.971 | +3 | 0.53 | 96 | 11.1 | 31.4 | Color scale with darker outlines, fitted by rings; slow. |
-| gradient-dots-stroke.jpg | exact | JPEG | 204 | 220 | 0.877 | 0.946 | +16 | 1.05 | 110 | 11.2 | 23.3 | As the PNG, through JPEG: +17 extras. |
+| gradient-dots-stroke.jpg | exact | JPEG | 204 | 220 | 0.877 | 0.946 | +16 | 1.05 | 110 | 11.2 | 23.4 | As the PNG, through JPEG: +17 extras. |
 | gradient-dots.jpg | exact | JPEG | 204 | 195 | 1.000 | 0.956 | -9 | 0.41 | 58 | 9.6 | 2.8 |  |
 | gradient-opaque | exact | exact | 204 | 192 | 0.984 | 0.926 | -12 | 0.50 | 32 | 8.8 | 4.2 | Opaque dots in dense stacks: dots wholly behind others can't be found. |
 | gradient-opaque-stroke | exact | exact | 204 | 171 | 0.982 | 0.824 | -33 | 0.13 | 16 | 10.3 | 7.3 | Dense opaque stacks: hidden dots can't be found. |
@@ -76,13 +76,13 @@ bench2: JMP renderings, 204 dots with more ties
 | group-graystroke | exact | exact | 204 | 198 | 0.914 | 0.887 | -6 | 0.72 | 27 | 7.7 | 3.3 | Gray outlines in dense stacks. |
 | group-large | exact | exact | 204 | 203 | 1.000 | 0.995 | -1 | 0.24 | 33 | 10.2 | 3.0 | Two families at α 0.33; their overlaps were read as two more families until blends were dropped. |
 | group-smoother | exact | exact | 204 | 203 | 1.000 | 0.995 | -1 | 0.09 | 23 | 6.7 | 1.9 |  |
-| group-smoother-ci | exact | exact | 204 | 203 | 0.995 | 0.990 | -1 | 0.11 | 33 | 6.7 | 2.8 |  |
+| group-smoother-ci | exact | exact | 204 | 203 | 0.995 | 0.990 | -1 | 0.11 | 33 | 6.7 | 2.9 |  |
 | group-smoother.jpg | exact | JPEG | 204 | 200 | 1.000 | 0.980 | -4 | 0.20 | 38 | 6.7 | 1.7 |  |
 | group-solid-graystroke | exact | exact | 204 | 187 | 0.957 | 0.877 | -17 | 0.74 | 15 | 7.7 | 3.3 | Gray outlines in dense stacks. |
 | large-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 60 | 12.6 | 2.7 | Flagged are close pairs of real ties. |
 | large-dots.jpg | exact | JPEG | 204 | 204 | 1.000 | 1.000 | 0 | 0.08 | 56 | 12.6 | 3.7 |  |
-| medium-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 33 | 6.7 | 1.1 |  |
-| medium-dots-grid1 | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 33 | 6.7 | 1.2 |  |
+| medium-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 33 | 6.7 | 1.2 |  |
+| medium-dots-grid1 | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 33 | 6.7 | 1.1 |  |
 | medium-dots-grid2 | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 33 | 6.7 | 1.2 |  |
 | medium-dots.jpg | exact | JPEG | 204 | 204 | 1.000 | 1.000 | 0 | 0.05 | 33 | 6.7 | 1.4 |  |
 | small-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.03 | 23 | 3.8 | 1.3 |  |
@@ -92,10 +92,10 @@ bench2: JMP renderings, 204 dots with more ties
 | smoother-ci | exact | exact | 204 | 201 | 1.000 | 0.985 | -3 | 0.04 | 49 | 7.9 | 1.9 |  |
 | smoother-ci.jpg | exact | JPEG | 204 | 195 | 0.995 | 0.951 | -9 | 0.40 | 77 | 7.9 | 2.2 | Confidence band over the dots, through JPEG: 9 missed. |
 | smoother.jpg | exact | JPEG | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 47 | 7.9 | 1.6 |  |
-| solid-graystroke | exact | exact | 204 | 189 | 0.995 | 0.922 | -15 | 0.72 | 20 | 8.6 | 3.9 | Gray outlines in dense stacks. |
-| solid-opaque | exact | exact | 204 | 196 | 0.964 | 0.926 | -8 | 0.36 | 34 | 8.8 | 4.5 | Dense opaque stacks. |
+| solid-graystroke | exact | exact | 204 | 189 | 0.995 | 0.922 | -15 | 0.72 | 20 | 8.6 | 3.8 | Gray outlines in dense stacks. |
+| solid-opaque | exact | exact | 204 | 196 | 0.964 | 0.926 | -8 | 0.36 | 34 | 8.8 | 4.4 | Dense opaque stacks. |
 | solid-opaque-stroke | exact | exact | 204 | 172 | 0.988 | 0.833 | -32 | 0.28 | 17 | 10.4 | 4.9 | Dense opaque stacks: hidden dots can't be found. |
-| stroked-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.71 | 80 | 10.2 | 7.0 |  |
+| stroked-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.71 | 80 | 10.2 | 6.9 |  |
 | tiny-dots | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.03 | 18 | 2.6 | 1.1 |  |
 
 ## bench3
@@ -104,10 +104,10 @@ bench3: JMP renderings, 204 dots as beeswarms
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| dots-packed | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.02 | 0 | 5.0 | 0.9 |  |
+| dots-packed | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.02 | 0 | 5.0 | 0.8 |  |
 | dots-packed.jpg | exact | JPEG | 204 | 204 | 1.000 | 1.000 | 0 | 0.02 | 0 | 5.0 | 0.9 |  |
 | dots-random | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.02 | 9 | 5.6 | 1.0 |  |
-| dots-random.jpg | exact | JPEG | 204 | 204 | 1.000 | 1.000 | 0 | 0.03 | 9 | 5.5 | 1.2 |  |
+| dots-random.jpg | exact | JPEG | 204 | 204 | 1.000 | 1.000 | 0 | 0.03 | 9 | 5.5 | 1.1 |  |
 | dots-swarm | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.01 | 0 | 4.4 | 0.8 |  |
 | dots-swarm-anova | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.04 | 6 | 5.6 | 1.2 |  |
 | dots-swarm-box | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.01 | 0 | 6.7 | 1.0 |  |
@@ -120,17 +120,17 @@ testgraphs: real figures (local only)
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| beeswarm-boxplot | by hand | noisy (auto) | 711 | 667 | 0.982 | 0.921 | -44 | 0.22 | 93 | 8.9 | 60.7 | JPEG-noisy screenshot of packed red and gray swarms. The outlined outliers aren't separate families. Slow (both color modes). |
+| beeswarm-boxplot | by hand | noisy (auto) | 711 | 667 | 0.982 | 0.921 | -44 | 0.22 | 93 | 8.9 | 60.5 | JPEG-noisy screenshot of packed red and gray swarms. The outlined outliers aren't separate families. Slow (both color modes). |
 | cantons-haemocytes-dotplot | by hand | exact | 239 | 239 | 1.000 | 1.000 | 0 | 0.00 | 0 | 6.4 | 4.1 | Truth positions are the fit's (RMSE 0): checks the count. |
-| dog-ages | by hand | exact | 95 | 95 | 1.000 | 1.000 | 0 | 0.00 | 45 | 23.9 | 12.7 | Truth positions are the fit's (RMSE 0): checks the count. The native-size copy has no truth yet. |
-| economist-canada-unfriendly-chart | by hand | exact | 210 | 198 | 0.874 | 0.824 | -12 | 1.22 | 69 | 8.4 | 8.3 | Translucent red and blue dots (α 0.3) and trend lines in their full colors. Nearly all misses and extras are in the dense pile at lower left, where both families and both lines cross (the hand truth is a guess there too); one stack there is fitted as 5 coincident dots. |
+| dog-ages | by hand | exact | 95 | 95 | 1.000 | 1.000 | 0 | 0.00 | 45 | 23.9 | 12.6 | Truth positions are the fit's (RMSE 0): checks the count. The native-size copy has no truth yet. |
+| economist-canada-unfriendly-chart | by hand | exact | 210 | 198 | 0.874 | 0.824 | -12 | 1.22 | 69 | 8.4 | 8.2 | Translucent red and blue dots (α 0.3) and trend lines in their full colors. Nearly all misses and extras are in the dense pile at lower left, where both families and both lines cross (the hand truth is a guess there too); one stack there is fitted as 5 coincident dots. |
 | fibers-distance | by hand | exact | 44 | 39 | 0.897 | 0.795 | -5 | 0.14 | 14 | 4.0 | 2.3 | Small translucent dots (r 4; matplotlib blue at α 0.5) with JPEG noise, over a light band, and a regression line in their full color. Read as opaque (no flat pixels at any level), so the darker coincident pairs count once, and dots on the line are missed. The noisy path finds α 0.50 and all 44, with 9 extras stacked where dots cross the line; it isn't chosen (as many families either way, and the same rule would make fanc2 translucent). |
-| Laser-Asyllable-Maturity | by hand | exact | 70 | 73 | 0.945 | 0.986 | +3 | 0.04 | 8 | 5.7 | 2.6 | Opaque dots with brackets drawn in their colors. The bars' pieces between the dots on them are masked as lines (10 extras before). Left: 4 extras, mostly a dot doubled where it sits on a bar, and 1 miss on the teal bar. |
-| nicest language | by hand | exact | 162 | 163 | 0.994 | 1.000 | +1 | 0.05 | 2 | 8.5 | 9.5 | Gray and black dots sharing text's colors. Cyan (59, 186, 209) is a family since same-radius siblings count without strong arcs: all 162 found. |
-| pathogen-trade-time-scatter | by hand | exact | 493 | 468 | 0.989 | 0.939 | -25 | 0.14 | 78 | 8.5 | 25.5 | Outlined dots with fills on a scale, fitted by rings. |
-| pathogen-trade-time-scatter | data | exact | 583 | 468 | 0.972 | 0.780 | -115 | – | 78 | 8.5 | 25.4 | Jittered cells; many data rows are hidden in stacks. |
-| violin-beeswarm | by hand | exact | 702 | 712 | 0.985 | 0.999 | +10 | 0.26 | 18 | 7.5 | 36.6 | Blue dots over violins; the violin fill is other ink, read around the dots as their background (+32 extras before). The extras lie along the violins' dark center lines, which show through the gaps between the dots on them. |
-| wages2025 | data | exact | 772 | 670 | 0.978 | 0.848 | -102 | 0.89 | 34 | 17.6 | 32.2 | 22 occupation groups' colors, translucent with white rims: a categorical palette, fitted as one family and split by each dot's own pixels (22 families). Navy ticks on gray axis lines. Text and the legend's markers are masked (annotations.js); extras left: 3 dots on the bold title, whose strokes are as thick as the dots, and doubles in the dense middle. Misses: dots under others in the dense middle. |
+| Laser-Asyllable-Maturity | by hand | exact | 70 | 73 | 0.945 | 0.986 | +3 | 0.04 | 8 | 5.7 | 2.7 | Opaque dots with brackets drawn in their colors. The bars' pieces between the dots on them are masked as lines (10 extras before). Left: 4 extras, mostly a dot doubled where it sits on a bar, and 1 miss on the teal bar. |
+| nicest language | by hand | exact | 162 | 163 | 0.994 | 1.000 | +1 | 0.05 | 2 | 8.5 | 9.4 | Gray and black dots sharing text's colors. Cyan (59, 186, 209) is a family since same-radius siblings count without strong arcs: all 162 found. |
+| pathogen-trade-time-scatter | by hand | exact | 493 | 468 | 0.989 | 0.939 | -25 | 0.14 | 78 | 8.5 | 25.2 | Outlined dots with fills on a scale, fitted by rings. |
+| pathogen-trade-time-scatter | data | exact | 583 | 468 | 0.972 | 0.780 | -115 | – | 78 | 8.5 | 25.8 | Jittered cells; many data rows are hidden in stacks. |
+| violin-beeswarm | by hand | exact | 702 | 712 | 0.985 | 0.999 | +10 | 0.26 | 18 | 7.5 | 36.4 | Blue dots over violins; the violin fill is other ink, read around the dots as their background (+32 extras before). The extras lie along the violins' dark center lines, which show through the gaps between the dots on them. |
+| wages2025 | data | exact | 772 | 670 | 0.978 | 0.848 | -102 | 0.89 | 34 | 17.6 | 32.3 | 22 occupation groups' colors, translucent with white rims: a categorical palette, fitted as one family and split by each dot's own pixels (22 families). Navy ticks on gray axis lines. Text and the legend's markers are masked (annotations.js); extras left: 3 dots on the bold title, whose strokes are as thick as the dots, and doubles in the dense middle. Misses: dots under others in the dense middle. |
 
 ## bench-nature
 
@@ -138,34 +138,34 @@ bench-nature: Nature figures (local only)
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| autocor1 | by hand | exact | 727 | 702 | 0.980 | 0.946 | -25 | 0.71 | 92 | 13.3 | 20.1 | The user's truth (the scan's result adjusted by hand). Dense, opaque, a curve drawn over the dots; dots clipped at the y axis and where the x axis line ends, masked beyond (axes.clipEdges). Misses: dots along the curve and in the dense band whose pixels the neighbors' discs already cover (0–11 px uncovered each), two cut dots more than half past the edge. Extras: mostly one dot for two in the dense band. |
-| autocor1 | data | exact | 804 | 702 | 0.960 | 0.838 | -102 | 0.87 | 92 | 13.3 | 20.4 | The source CSV: many rows wholly hidden under others. As the hand truth otherwise. |
+| autocor1 | by hand | exact | 727 | 702 | 0.980 | 0.946 | -25 | 0.71 | 92 | 13.3 | 20.0 | The user's truth (the scan's result adjusted by hand). Dense, opaque, a curve drawn over the dots; dots clipped at the y axis and where the x axis line ends, masked beyond (axes.clipEdges). Misses: dots along the curve and in the dense band whose pixels the neighbors' discs already cover (0–11 px uncovered each), two cut dots more than half past the edge. Extras: mostly one dot for two in the dense band. |
+| autocor1 | data | exact | 804 | 702 | 0.960 | 0.838 | -102 | 0.87 | 92 | 13.3 | 20.6 | The source CSV: many rows wholly hidden under others. As the hand truth otherwise. |
 | cells1 | by hand | exact | 72 | 73 | 0.904 | 0.917 | +1 | 2.23 | 5 | 20.0 | 26.9 | Pink and green dots in black outlines over gray bars, paired by gray lines. |
-| cells1 | data | exact | 72 | 73 | 0.959 | 0.972 | +1 | 1.41 | 5 | 20.0 | 27.2 | Two lanes (no x ticks: lane centers from the fitted dots); y pairs its 4 labeled ticks, the 0 hidden by the bars' baseline. |
+| cells1 | data | exact | 72 | 73 | 0.959 | 0.972 | +1 | 1.41 | 5 | 20.0 | 27.4 | Two lanes (no x ticks: lane centers from the fitted dots); y pairs its 4 labeled ticks, the 0 hidden by the bars' baseline. |
 | comment1-2026-10-22 | by hand | exact | 92 | 103 | 0.893 | 1.000 | +11 | 0.07 | 21 | 9.2 | 5.4 | Dots in thin white outlines: the 10 extras are near-duplicate pairs (flagged close). |
 | crystal1 | by hand | exact | 391 | 397 | 0.980 | 0.995 | +6 | 0.79 | 24 | 10.9 | 12.2 | Ticks drawn inward. Truth clicked on whole pixels, hence the RMSE. |
-| degradation1 | by hand | exact | 70 | 61 | 0.967 | 0.843 | -9 | 2.74 | 12 | 21.4 | 16.9 | Mint and orange in gray outlines; orange fitted by rings. Mint crescents behind orange dots are missed. |
+| degradation1 | by hand | exact | 70 | 61 | 0.967 | 0.843 | -9 | 2.74 | 12 | 21.4 | 16.8 | Mint and orange in gray outlines; orange fitted by rings. Mint crescents behind orange dots are missed. |
 | degradation1 | data | exact | 127 | 61 | 0.721 | 0.346 | -66 | 6.43 | 12 | 21.4 | 17.2 | 127 rows, many hidden in the upper cluster; no color split; the 2 legend dots count as extras. |
-| delta1 | by hand | exact | 48 | 50 | 0.940 | 0.979 | +2 | 0.31 | 7 | 14.4 | 38.4 | Black and purple dots with error bars and lines, over a gray region. Was black not found (its radius taken from text). Purple is read as drawn under black, so black at their seams is unknown for purple (was 18 of 24 purple). Misses: a purple dot almost wholly behind a black one; extras: 2 black where the curves cross, a purple dot twice (flagged). |
-| engagement1 | by hand | exact | 49 | 47 | 1.000 | 0.959 | -2 | 0.49 | 7 | 14.3 | 11.7 | Five blues in a thin dark stroke; cyan isn't a family. Since nearest-color membership no family takes another color's dots (P 1.000); 2 missed. |
+| delta1 | by hand | exact | 48 | 50 | 0.940 | 0.979 | +2 | 0.31 | 7 | 14.4 | 39.5 | Black and purple dots with error bars and lines, over a gray region. Was black not found (its radius taken from text). Purple is read as drawn under black, so black at their seams is unknown for purple (was 18 of 24 purple). Misses: a purple dot almost wholly behind a black one; extras: 2 black where the curves cross, a purple dot twice (flagged). |
+| engagement1 | by hand | exact | 49 | 47 | 1.000 | 0.959 | -2 | 0.49 | 7 | 14.3 | 11.5 | Five blues in a thin dark stroke; cyan isn't a family. Since nearest-color membership no family takes another color's dots (P 1.000); 2 missed. |
 | escape1-18-20 | data | exact | 38 | 38 | 1.000 | 1.000 | 0 | 0.07 | 3 | 8.5 | 1.7 |  |
 | escape2-94-51 | data | exact | 145 | 143 | 1.000 | 0.986 | -2 | 0.20 | 29 | 8.4 | 2.4 |  |
-| fanc2 | data | exact | 52 | 50 | 1.000 | 0.962 | -2 | 0.04 | 8 | 15.1 | 13.5 | Overlaps drawn in one flat black. |
-| hair1 | data | exact | 29 | 27 | 1.000 | 0.931 | -2 | 0.49 | 0 | 19.1 | 8.5 | White dots in black outlines (page-filled family): all 11 PBS. Pink DT: 16 of 18, missing one of three ties at 5.88 and one of four zeros. |
-| hair2 | data | exact | 18 | 19 | 0.947 | 1.000 | +1 | 0.49 | 2 | 30.5 | 9.4 | Pink in black outlines; white dots in black outlines, the page's color, in two rows with one whole dot each: found by their crescents (fills whose edge is their own circle or the outlines over them), and the fit seeded with the crescents' centers, which the union of discs can't propose. Extra: a pink dot doubled (flagged). |
+| fanc2 | data | exact | 52 | 50 | 1.000 | 0.962 | -2 | 0.04 | 8 | 15.1 | 14.0 | Overlaps drawn in one flat black. |
+| hair1 | data | exact | 29 | 27 | 1.000 | 0.931 | -2 | 0.49 | 0 | 19.1 | 8.6 | White dots in black outlines (page-filled family): all 11 PBS. Pink DT: 16 of 18, missing one of three ties at 5.88 and one of four zeros. |
+| hair2 | data | exact | 18 | 19 | 0.947 | 1.000 | +1 | 0.49 | 2 | 30.5 | 9.6 | Pink in black outlines; white dots in black outlines, the page's color, in two rows with one whole dot each: found by their crescents (fills whose edge is their own circle or the outlines over them), and the fit seeded with the crescents' centers, which the union of discs can't propose. Extra: a pink dot doubled (flagged). |
 | hair3 | data | exact | 34 | 29 | 0.966 | 0.824 | -5 | 0.93 | 1 | 28.3 | 13.0 | Pink in black strokes found; the gray dots in black strokes aren't. |
 | kite1 | by hand | noisy (auto) | 25 | 26 | 0.923 | 0.960 | +1 | 0.22 | 7 | 12.3 | 16.6 | Online copy: opaque cyan and red, a band of each drawn over the dots, JPEG noise. Cyan's radius found past its line in the dots' color; the red band is read against the page. Extras: a dot found twice and a cyan dot doubled 5 px off (all flagged; a second doubled dot went with the bar-piece mask); the miss is a cyan dot 8 px from another. |
-| kite1 | data | noisy (auto) | 25 | 26 | 0.923 | 0.960 | +1 | 0.19 | 7 | 12.3 | 16.7 | The article's data through the ticks; as the hand truth. |
+| kite1 | data | noisy (auto) | 25 | 26 | 0.923 | 0.960 | +1 | 0.19 | 7 | 12.3 | 17.0 | The article's data through the ticks; as the hand truth. |
 | kite2 | by hand | exact | 21 | 21 | 1.000 | 1.000 | 0 | 0.11 | 0 | 19.0 | 15.2 | Orange fills in rings of their darker shade, beside a curve of the fill's color: fitted by the rings (outline in the fill's hue). |
 | molar1 | by hand | exact | 16 | 16 | 1.000 | 1.000 | 0 | 0.12 | 0 | 9.6 | 2.1 | Opaque black dots on a black curve. Was radius unknown: a gray label (62) and the dots fit as levels 1 and 2 of a translucent family. |
-| phase1 | by hand | exact | 97 | 128 | 0.625 | 0.825 | +31 | 1.30 | 33 | 19.8 | 111.1 | Four grays in black outlines and black dots (fill and outline one color, text's too), same-gray curves through them: all five found (black at the grays' radius, by discs filled with it). Extras: about 25 on the colorbar's blocks, beyond the axes (gray 136's are masked beyond the x axis line's end, a clip); doubles where a curve meets dots, and black's pairs. |
+| phase1 | by hand | exact | 97 | 128 | 0.625 | 0.825 | +31 | 1.30 | 33 | 19.8 | 110.1 | Four grays in black outlines and black dots (fill and outline one color, text's too), same-gray curves through them: all five found (black at the grays' radius, by discs filled with it). Extras: about 25 on the colorbar's blocks, beyond the axes (gray 136's are masked beyond the x axis line's end, a clip); doubles where a curve meets dots, and black's pairs. |
 | primates1 | by hand | exact | 27 | 27 | 1.000 | 1.000 | 0 | 0.00 | 0 | 17.5 | 1.5 |  |
-| primates2 | by hand | exact | 15 | 15 | 1.000 | 1.000 | 0 | 0.03 | 0 | 16.7 | 5.8 |  |
-| protrusion1 | data | exact | 246 | 241 | 0.892 | 0.874 | -5 | – | 175 | 18.6 | 41.8 | Four very light translucent families (α 0.16–0.36) on whiskers, each over its box and a legend swatch in its hue; no dot whole, radius from the dots' edges. Was radius unknown (read as a color scale; boxes as levels). Misses (31) by row: DMSO 10 (its box shows 226 px, under the dots), Cyto C 8, Pseudo A 6, Cyto E 4; extras (26) mostly in the orange stacks (23). Not yet investigated further. |
-| protrusion2 | data | exact | 30 | 26 | 1.000 | 0.867 | -4 | 0.20 | 10 | 30.1 | 8.3 | Green and orange translucent dots over boxes of their own hue, read as regions under the dots. Was radius unknown: both boxes read as levels, and no orange dot is whole (the green's radius). Misses: a dot under three others at the box's edge, and three in the densest stack. |
-| protrusion3 | data | exact | 50 | 48 | 1.000 | 0.960 | -2 | 0.43 | 18 | 22.0 | 5.9 | Translucent green dots over a green box, not composited in sRGB: dots over the box are read against levels measured there. Was 114 found, the box read as level 2. 2 missed: left out of the box's seeds outside its rectangle, all 50 were found (but protrusion2's half-hidden box then lost its lower half). |
+| primates2 | by hand | exact | 15 | 15 | 1.000 | 1.000 | 0 | 0.03 | 0 | 16.7 | 5.7 |  |
+| protrusion1 | data | exact | 246 | 241 | 0.892 | 0.874 | -5 | – | 175 | 18.6 | 42.2 | Four very light translucent families (α 0.16–0.36) on whiskers, each over its box and a legend swatch in its hue; no dot whole, radius from the dots' edges. Was radius unknown (read as a color scale; boxes as levels). Misses (31) by row: DMSO 10 (its box shows 226 px, under the dots), Cyto C 8, Pseudo A 6, Cyto E 4; extras (26) mostly in the orange stacks (23). Not yet investigated further. |
+| protrusion2 | data | exact | 30 | 26 | 1.000 | 0.867 | -4 | 0.20 | 10 | 30.1 | 8.4 | Green and orange translucent dots over boxes of their own hue, read as regions under the dots. Was radius unknown: both boxes read as levels, and no orange dot is whole (the green's radius). Misses: a dot under three others at the box's edge, and three in the densest stack. |
+| protrusion3 | data | exact | 50 | 48 | 1.000 | 0.960 | -2 | 0.43 | 18 | 22.0 | 6.0 | Translucent green dots over a green box, not composited in sRGB: dots over the box are read against levels measured there. Was 114 found, the box read as level 2. 2 missed: left out of the box's seeds outside its rectangle, all 50 were found (but protrusion2's half-hidden box then lost its lower half). |
 | tumour1 | data | exact | 44 | 44 | 1.000 | 1.000 | 0 | 0.34 | 0 | 10.4 | 6.1 | White dots in black outlines over gray and red bars: a page-filled family, its fills the page regions the outlines enclose, crescents included (lane 8's six at zero, four of them mostly hidden). The outline's rim is read against what the dot lies on (the bars' gray). 8 lanes from the fitted dots. |
-| wave1 | by hand | exact | 43 | 44 | 0.955 | 0.977 | +1 | 0.09 | 8 | 14.9 | 14.4 | The 3 legend dots are counted in the truth. |
+| wave1 | by hand | exact | 43 | 44 | 0.955 | 0.977 | +1 | 0.09 | 8 | 14.9 | 14.3 | The 3 legend dots are counted in the truth. |
 
 ## bench-plos
 
@@ -173,15 +173,15 @@ bench-plos: PLOS ONE figures (CC BY)
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| adults1 | by hand | exact | 139 | 146 | 0.952 | 1.000 | +7 | 0.06 | 17 | 12.5 | 15.8 | Opaque black. The 7 extras are in the dense cluster; the CSV has 142 rows (n = 142), so some may be real dots the hand truth lacks. |
-| adults1 | data | exact | 142 | 146 | 0.945 | 0.972 | +4 | 0.59 | 17 | 12.5 | 16.1 | The CSV through the ticks (x from 200: the panel letter C hides the 100 label); 4 data dots missed. |
-| boxdots1 | by hand | exact | 268 | 275 | 0.938 | 0.963 | +7 | 0.60 | 21 | 4.9 | 7.3 | Small black dots (r 4.9) over red and green boxes with gray outlines, JPEG noise; tick labels cropped, so no axes. Extras: 7 on the bold "4d", the rest along the red box's edges. |
-| droplet1 | data | exact | 57 | 46 | 0.891 | 0.719 | -11 | 0.64 | 16 | 9.0 | 7.2 | Black outlines about 2 px around fills of a diverging scale (purple, white, red), fitted by their rings. The 16 misses are the two piles near the origin, whose rings merge into dark areas read as under the dots; 5 extras beside pairs. |
-| grader1 | by hand | exact | 40 | 46 | 0.870 | 1.000 | +6 | 0.30 | 17 | 14.7 | 16.8 | Translucent green with a ring; the 6 extras are in overlaps. |
-| grader1 | data | exact | 40 | 46 | 0.870 | 1.000 | +6 | 0.29 | 17 | 14.7 | 17.0 | The CSV matches the hand truth at 0.55 px RMSE. |
+| adults1 | by hand | exact | 139 | 146 | 0.952 | 1.000 | +7 | 0.06 | 17 | 12.5 | 15.7 | Opaque black. The 7 extras are in the dense cluster; the CSV has 142 rows (n = 142), so some may be real dots the hand truth lacks. |
+| adults1 | data | exact | 142 | 146 | 0.945 | 0.972 | +4 | 0.59 | 17 | 12.5 | 16.4 | The CSV through the ticks (x from 200: the panel letter C hides the 100 label); 4 data dots missed. |
+| boxdots1 | by hand | exact | 268 | 275 | 0.938 | 0.963 | +7 | 0.60 | 21 | 4.9 | 7.2 | Small black dots (r 4.9) over red and green boxes with gray outlines, JPEG noise; tick labels cropped, so no axes. Extras: 7 on the bold "4d", the rest along the red box's edges. |
+| droplet1 | data | exact | 57 | 46 | 0.891 | 0.719 | -11 | 0.64 | 16 | 9.0 | 7.3 | Black outlines about 2 px around fills of a diverging scale (purple, white, red), fitted by their rings. The 16 misses are the two piles near the origin, whose rings merge into dark areas read as under the dots; 5 extras beside pairs. |
+| grader1 | by hand | exact | 40 | 46 | 0.870 | 1.000 | +6 | 0.30 | 17 | 14.7 | 16.7 | Translucent green with a ring; the 6 extras are in overlaps. |
+| grader1 | data | exact | 40 | 46 | 0.870 | 1.000 | +6 | 0.29 | 17 | 14.7 | 17.1 | The CSV matches the hand truth at 0.55 px RMSE. |
 | landing1 | data | exact | 70 | 75 | 0.933 | 1.000 | +5 | 0.42 | 48 | 11.8 | 12.7 | Translucent blue and orange dots (α 0.75) over violins of their own hue, read as regions under the dots; no dot isolated (lines, boxes, outlines), so the radius is from the dots' edges. Extras: doubled dots in the densest spots (blue 36 for 34, orange 39 for 35). |
 | microplastics1 | by hand | exact | 24 | 24 | 1.000 | 1.000 | 0 | 0.19 | 0 | 11.2 | 3.5 | Opaque black. Was radius unknown: a 3 px gray border bar and the dots read as one translucent family. |
 | myeloid1 | by hand | exact | 18 | 18 | 1.000 | 1.000 | 0 | 0.02 | 3 | 13.7 | 5.8 | Orange and teal; teal (touching dots crossed by lines, no strong arc) is found at the orange family's radius. |
-| score1 | by hand | exact | 168 | 166 | 1.000 | 0.988 | -2 | 0.13 | 21 | 8.0 | 11.3 | Translucent teal with white edges. Was 316 found: a gray (dashed line, leaders) took the teal dots, 39.9 units from it. |
+| score1 | by hand | exact | 168 | 166 | 1.000 | 0.988 | -2 | 0.13 | 21 | 8.0 | 11.2 | Translucent teal with white edges. Was 316 found: a gray (dashed line, leaders) took the teal dots, 39.9 units from it. |
 | score2 | by hand | exact | 92 | 99 | 0.929 | 1.000 | +7 | 0.01 | 12 | 13.4 | 52.0 | Viridis fills, outlines a darker shade (the colormap path); a few dots fitted twice; slow (100 s). |
-| step1 | by hand | noisy (auto) | 175 | 128 | 0.992 | 0.726 | -47 | 0.28 | 46 | 5.9 | 8.9 | Blue translucent dots and hollow red rings, under a red band and a blue band over it (divided out in that order), JPEG noise. Missed: mostly dots and rings under the curve and dashed line, and blue dots touching rings. |
+| step1 | by hand | noisy (auto) | 175 | 128 | 0.992 | 0.726 | -47 | 0.28 | 46 | 5.9 | 8.8 | Blue translucent dots and hollow red rings, under a red band and a blue band over it (divided out in that order), JPEG noise. Missed: mostly dots and rings under the curve and dashed line, and blue dots touching rings. |

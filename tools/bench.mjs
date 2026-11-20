@@ -59,7 +59,7 @@ function parseArgs(argv) {
 
 /**
  * Style, mask and fit for one family of an image (the first by default); also the Hough candidates alone. For a
- * JPEG, pass the image through restoreChroma first and set `jpeg` (style.js JPEG_TOLERANCES). `bounds` masks what
+ * JPEG, pass the image through restoreChroma first and set `jpeg` (scan.js JPEG_TOLERANCES). `bounds` masks what
  * lies beyond the axes (axes.plotBounds).
  */
 export function extract(image, family = 0, candidates = undefined, jpeg = false, bounds = undefined) {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { unmixFamilies, familyImage, regionLevels } from '../src/core/unmix.js';
-import { flatMask } from '../src/core/style.js';
+import { flatMask } from '../src/core/scan.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
 import { extractAll } from '../tools/bench.mjs';

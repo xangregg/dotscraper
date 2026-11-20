@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
-import { flatMask, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '../src/core/style.js';
+import { flatMask, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '../src/core/scan.js';
 import { findColormap, rayImage, opaqueImage } from '../src/core/colormap.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';

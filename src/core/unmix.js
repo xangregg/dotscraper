@@ -20,7 +20,11 @@
 // were such stacks within 4 px; they were found once flat pixels had to be whole counts (FLAT_MAX_FRACTION), which
 // masks the stacks' fractional plateaus. Why that let the fit place them wasn't examined.
 
-import { countImage, flatMask, projectOnLine, colorLine, findLevels, isolatedDots, edgeBlur, shapeRadius, EXACT_TOLERANCES, NO_ISOLATED_NOTE } from './style.js';
+import { flatMask, EXACT_TOLERANCES } from './scan.js';
+import { isolatedDots, edgeBlur } from './shape.js';
+import { countImage, projectOnLine, colorLine, findLevels } from './levels.js';
+import { shapeRadius } from './opaque.js';
+import { NO_ISOLATED_NOTE } from './style.js';
 
 const PAIR_MAX_RESIDUAL = 6; // 0–255 units (RGB distance): a pair explains a pixel this well or not at all
 const ONE_FAMILY_PERP_REL = 0.2; // a pixel this close to a family's line (perp / t) …
@@ -267,7 +271,7 @@ export function familyImage(image, B, family, T, mixed) {
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {object[]} estimates  style.estimateStyle for each family (one without a style is passed through)
- * @param {import('./style.js').Tolerances} [tol]  as the estimates used
+ * @param {import('./scan.js').Tolerances} [tol]  as the estimates used
  * @param {{regions: {color: number[], mode: string}[], label: Uint8Array}|null} [layers]  background.js
  * @returns {object[]}  the estimates with `image` added (and D and notes replaced where separated)
  */

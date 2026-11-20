@@ -4,7 +4,10 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { estimateStyle, scanOf, measureFamily, alongLine, backgroundColor, flatMask, familyRings, solidRegion, siblingRadius, SPECK_RADIUS_RATIO, NO_ISOLATED_NOTE } from './style.js';
+import { scanOf, backgroundColor, flatMask, solidRegion } from './scan.js';
+import { measureFamily, alongLine } from './levels.js';
+import { familyRings, siblingRadius, SPECK_RADIUS_RATIO } from './opaque.js';
+import { estimateStyle, NO_ISOLATED_NOTE } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
@@ -54,7 +57,7 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
  * an opaque candidate that is a translucent candidate's dot over a region color is dropped, and two opaque
  * candidates whose colors differ by q·(B − B₂) become one translucent candidate with α = 1 − q.
  *
- * @param {import('./style.js').Scan} scan  of the image the candidates were found in
+ * @param {import('./scan.js').Scan} scan  of the image the candidates were found in
  * @param {number[]} B  the background the regions were told from (the page, or the first family's)
  * @returns {object[]|null}  the new candidates, or null if nothing merged
  */
@@ -423,7 +426,7 @@ function scanStages(onProgress) {
     };
 }
 
-// A translucent family with no radius of its own takes another's when its dots show at it (style.js siblingRadius).
+// A translucent family with no radius of its own takes another's when its dots show at it (opaque.js siblingRadius).
 function withSiblingRadii(image, estimates) {
     const radii = estimates.map(e => e.style?.radius).filter(r => r > 0);
     return estimates.map(e => {
@@ -439,7 +442,7 @@ function withSiblingRadii(image, estimates) {
 
 // A translucent family's radius is known only now: one far smaller than the others is text's antialiased grays
 // read as levels, its isolated "dots" decimal points (engagement1: black at r 3.5 beside fills at r 14.3, 1362 dots).
-// Opaque specks went earlier (style.js withoutSpecks), with their coverage.
+// Opaque specks went earlier (opaque.js withoutSpecks), with their coverage.
 function withoutSpeckLevels(estimates) {
     const largest = Math.max(...estimates.map(e => e.style?.radius ?? 0));
     // a family whose radius wasn't measured stays: the user can type it

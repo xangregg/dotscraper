@@ -10,7 +10,7 @@
 // so a dot inside a band is in the band, and a dot across its edge is split along it.
 
 import { nearestTransform, opening } from './layers.js';
-import { components } from './style.js';
+import { components } from './shape.js';
 import { colorMask } from './image.js';
 
 const REGION_MIN_PIXELS = 1500; // flat pixels of one color for a region (bench3's ANOVA band: two boxes of about 2600)

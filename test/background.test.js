@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
-import { flatMask } from '../src/core/style.js';
+import { flatMask } from '../src/core/scan.js';
 import { backgroundRegions, removeOverlays } from '../src/core/background.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);

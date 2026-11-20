@@ -19,7 +19,7 @@ const NOISE_BAND = [3, 6]; // px from the nearest mark: … and examined in this
 const NOISE_MIN_FRACTION = 0.01; // of the band: JPEG noise (clean renders at most 0.013%, JPEGs 19–51%, PNGs from them 4.8–51%)
 const NOISE_MIN_PIXELS = 1000; // band pixels needed to judge
 
-import { backgroundColor } from './style.js';
+import { backgroundColor } from './scan.js';
 import { distanceTransform } from './layers.js';
 
 // BT.601 full range, as JPEG (JFIF) uses

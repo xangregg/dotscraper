@@ -389,7 +389,7 @@ function ratioAlpha(ratios) {
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  the background, 0–255
  * @param {Uint8Array} flat  style.flatMask
- * @param {import('./style.js').Tolerances} tol
+ * @param {import('./scan.js').Tolerances} tol
  * @returns {{points: {u: number[], m: number, votes: number}[], alpha: number|null, spread: number,
  *            dir: Float32Array}|null}  points: the one-dot curve (unit direction from B, distance m₁ in 0–255
  *            units); dir: each pixel's unit direction (3 per pixel)

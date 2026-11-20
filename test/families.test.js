@@ -9,7 +9,7 @@ import { readTruthCsv, truthPixels, truthPixelsByTicks, laneCentersFromDots } fr
 import { extractAll, groupRow, laneRow, jitterRow } from '../tools/bench.mjs';
 import { detectAxes } from '../src/core/axes.js';
 import { findColormap } from '../src/core/colormap.js';
-import { backgroundColor, flatMask, EXACT_TOLERANCES } from '../src/core/style.js';
+import { backgroundColor, flatMask, EXACT_TOLERANCES } from '../src/core/scan.js';
 import { estimateFamilies } from '../src/core/families.js';
 
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;

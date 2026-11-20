@@ -549,7 +549,7 @@ export function buildMask(image, estimate, opts = {}) {
         }
         // Other marks may hide the rest of a dot: open the family's pixels together with them, so a dot cut in two by
         // a line over it stays whole (synthetic swarm: half-discs along the median lines joined into "thin" marks).
-        // Other ink next to the dots is read as their background (style.js measureOpaque's edgeInk), and counts as
+        // Other ink next to the dots is read as their background (opaque.js measureOpaque's edgeInk), and counts as
         // other here: else its one-pixel seam cut a dot from the one over it, and the rest of the dot, joined to a
         // line of its color, was masked as thin (delta1: purple dots under black ones, and under black error bars)
         const ink = estimate.familyMeasure?.edgeInk;

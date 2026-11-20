@@ -2497,3 +2497,33 @@ row unchanged but for its time; a function call per pixel for the mix costs noth
 scans and fits to the same 73 dots. Test: measureOpaque called directly on the synthetic swarm (its dots covered,
 the page 0, another family unknown, radius, centers and coverage) in test/opaque.test.js; the outlined, stroked and
 page-fill readings are covered by the existing synthetic tests there.
+
+**style.js split by subject** (2026-11-20)
+
+style.js held three subjects in 3,283 lines. It is now five modules, each function and constant moved as it was
+(by a script that checked no line was lost), importing in one direction: scan.js → shape.js and levels.js →
+opaque.js → style.js.
+
+| Module | Lines | What |
+|---|---|---|
+| scan.js | 226 | the page and background colors, flat pixels, tolerances, the Scan and its remembered answers (isThin, solidRegion, straightShare) |
+| shape.js | 332 | components, isolated dots and their rings, edge blur, median and quantile |
+| levels.js | 498 | translucent families: color lines, levels, the geometric fit, the level table and count image |
+| opaque.js | 1,862 | opaque families: measureOpaque and its readings, page fills, strokes and rings, opaqueFamilies, the radius from shapes (shapeRadius, siblingRadius) |
+| style.js | 420 | estimateStyle, findCandidates and the band and box rules, opaqueFamilyEstimate |
+
+- The 130 constants went with their comments to the module that uses them; the eleven used by more than one are
+  exported from the lowest (CLUSTER_TOL, LEVEL_SEPARATION and BOX_COLOR_TOL from scan.js, the ISOLATED_ limits from
+  shape.js, FIT_C_TOL from levels.js, CLUSTER_ON_LINE_TOL, DOT_MIN_ISOLATED and STROKE_RING from opaque.js).
+  BACKGROUND_TOL was used nowhere and is gone.
+- shapeRadius and siblingRadius, which unmix.js and families.js use for translucent families, live in opaque.js:
+  they are the dot test (Hough centers at a radius), and share its constants.
+- Importers name the module that defines what they use (families.js, unmix.js, background.js, jpeg.js,
+  colormap.js and six test files); style.js re-exports nothing.
+- Tests: scan.test.js, shape.test.js and levels.test.js are new (each module its own file), with the tests of
+  fitGeometric, alongLine and scan reuse moved out of style.test.js and direct ones added for backgroundColor,
+  flatMask, solidRegion and its memo, colorLine and projectOnLine, components, isolatedDots and discShare.
+
+Results: every fitted dot and every family estimate of the 118 local images identical, by digest. Full bench
+1110.0 → 1110.8 s, every row unchanged but for its time. 208 tests pass (1 standing skip). In the app Laser fits
+to the same 73 dots and dog-ages to the same 95.
