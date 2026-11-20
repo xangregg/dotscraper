@@ -716,12 +716,14 @@ export function createFit(input) {
         return null;
     }
 
-    // the neighborhood changed: earlier failures in it may succeed now
+    // the neighborhood changed: earlier failures in it may succeed now. Returns the sites forgotten.
     function forgetTabu(tabu, rect) {
+        const forgotten = [];
         for (let i = tabu.length - 1; i >= 0; i--) {
             if (rect[0] <= tabu[i].x && tabu[i].x < rect[2] && rect[1] <= tabu[i].y && tabu[i].y < rect[3])
-                tabu.splice(i, 1);
+                forgotten.push(...tabu.splice(i, 1));
         }
+        return forgotten;
     }
 
     // The drawing order for a new outlined dot at (x, y): each gap in its neighbors' order (below all, between two,
@@ -900,33 +902,47 @@ export function createFit(input) {
         // is among them, without a scan of the image per attempt: on kite1's 2.8 Mpx, 6 of its 13 s)
         const candidates = [];
         const listed = new Uint8Array(n);
+        // How many tabu sites each center is within BIRTH_TABU_RADII · r of. Kept per pixel because the scan for the
+        // best center runs once per attempt: testing every candidate against every site there cost cells1 a third
+        // of its fit.
+        const tabuRadius = BIRTH_TABU_RADII * style.radius;
+        const blocked = new Uint16Array(n);
+        function block(site, by) {
+            for (let y = Math.max(0, Math.floor(site.y - tabuRadius) - 1); y < Math.min(height, Math.ceil(site.y + tabuRadius) + 1); y++) {
+                for (let x = Math.max(0, Math.floor(site.x - tabuRadius) - 1); x < Math.min(width, Math.ceil(site.x + tabuRadius) + 1); x++) {
+                    if (Math.hypot(site.x - (x + 0.5), site.y - (y + 0.5)) < tabuRadius)
+                        blocked[y * width + x] += by;
+                }
+            }
+        }
+        for (const site of tabu)
+            block(site, 1);
         fillResidual([0, 0, width, height]);
         fillMeans([0, 0, width, height]);
         let added = 0;
         for (let attempt = 0; attempt < MAX_BIRTHS_PER_ROUND; attempt++) {
-            // the largest mean, the first in pixel order among equals
-            let best = null;
+            // the largest mean, the first in pixel order among equals, not near a failed site
+            let bestP = -1;
             for (const p of candidates) {
                 const v = M[p];
-                if (v < BIRTH_MIN_LEVELS || (best !== null && (v < best.mean || (v === best.mean && p > best.p))))
+                if (v < BIRTH_MIN_LEVELS || blocked[p] || (bestP >= 0 && (v < M[bestP] || (v === M[bestP] && p > bestP))))
                     continue;
-                const cx = p % width + 0.5;
-                const cy = Math.floor(p / width) + 0.5;
-                if (tabu.some(t => Math.hypot(t.x - cx, t.y - cy) < BIRTH_TABU_RADII * style.radius))
-                    continue;
-                best = { x: cx, y: cy, mean: v, p };
+                bestP = p;
             }
-            if (!best)
+            if (bestP < 0)
                 break;
-            const scoreRect = tryBirth(best.x, best.y);
+            const site = { x: bestP % width + 0.5, y: Math.floor(bestP / width) + 0.5 };
+            const scoreRect = tryBirth(site.x, site.y);
             if (scoreRect) {
                 added++;
                 fillResidual(scoreRect);
                 fillMeans(grow(scoreRect, h));
-                forgetTabu(tabu, scoreRect);
+                for (const t of forgetTabu(tabu, scoreRect))
+                    block(t, -1);
             }
             else {
-                tabu.push({ x: best.x, y: best.y });
+                tabu.push(site);
+                block(site, 1);
             }
         }
         return added;

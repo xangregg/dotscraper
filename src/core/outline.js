@@ -987,8 +987,8 @@ export function findHollowRings(image, B, known = []) {
             else
                 P[p] = Math.max(0, t) / WHITE_LENGTH;
         }
-        const found = outlinesInP(P, width, height, unknown);
-        if (!found || !hollowInside(image, found.isolated, found.ring))
+        const found = outlinesInP(P, width, height, unknown, { hollow: (isolated, ring) => hollowInside(image, isolated, ring) });
+        if (!found)
             continue;
         const color = B.map((x, ch) => Math.round(Math.min(255, Math.max(0, x - u[ch] * found.ring.alpha * WHITE_LENGTH))));
         out.push({ ...found, plane: null, fillAlpha: 0, fillAlphaMeasured: false, hollow: { dir: u, color } });
@@ -1100,6 +1100,8 @@ export function localFill(image) {
  *   ink beyond the outline's reach); masked in A and D
  * @param {object} [opts]
  * @param {boolean} [opts.blackRings]  when no ring shows with dark ink masked, try opaque black rings (MASK_INK)
+ * @param {function(object[], object): boolean} [opts.hollow]  hollow rings: a test of the isolated rings and the
+ *   ring's style that must pass, made before the work that follows; no αf is measured (fillAlpha 0, pairs 0)
  */
 export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     const rings = isolatedRings(P, width, height);
@@ -1136,12 +1138,17 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     if (!found)
         return null;
     const { A, ring } = found;
+    if (opts.hollow && !opts.hollow(used, ring))
+        return null;
     const D = new Float32Array(P.length);
     const weight = new Uint8Array(P.length);
     for (let p = 0; p < P.length; p++) {
         weight[p] = Number.isNaN(A[p]) ? 0 : 1;
         D[p] = weight[p] ? Math.max(0, A[p]) / ring.alpha : NaN;
     }
+    // (the pairs come from ring candidates, a ring score per pixel, and a hollow ring has no fill to measure)
+    if (opts.hollow)
+        return { P, under, A, D, ring, fillAlpha: 0, fillAlphaMeasured: false, pairs: 0, isolated: used };
     const cands = ringCenters(D, weight, width, height, ring.radius, ring.inner, PAIR_MIN_ARC);
     const fa = measureFillAlpha(A, width, height, cands, ring);
     return { P, under, A, D, ring, fillAlpha: fa.fillAlpha, fillAlphaMeasured: fa.measured, pairs: fa.pairs, isolated: used };

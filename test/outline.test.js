@@ -402,6 +402,9 @@ test('findHollowRings: red rings with nothing inside, over gridlines and beside 
     assert.equal(found.length, 1);
     const [f] = found;
     assert.equal(f.fillAlpha, 0);
+    // (no fill is measured for a hollow ring)
+    assert.equal(f.fillAlphaMeasured, false);
+    assert.equal(f.pairs, 0);
     assert.ok(Math.abs(f.ring.radius - RADIUS) <= 0.5, `radius ${f.ring.radius}`);
     // the darkening's direction is the ring color's from white
     const d = WHITE.map((v, ch) => v - HOLLOW_RED[ch]);

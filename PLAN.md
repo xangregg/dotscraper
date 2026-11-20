@@ -2378,12 +2378,11 @@ births and fill values undone exactly, dots in id order, the grid still right af
 Found by the review and not done (each needs its own check against the bench):
 
 - Failed births are retried every round (the tabu list is cleared each round): bench2 gradient-dots-stroke made 805
-  failed attempts for 17 births. Remembering a failure until the model changes inside its rectangle should give the
-  same dots.
+  failed attempts for 17 births. (Tried next, below: remembering failures gains nothing.)
 - A doubled or coincident radius bump refits from scratch (phase1's gray family: 65 s, about 5 s of it the last
   fit). Deciding sooner changes behavior.
 - findHollowRings runs on nearly every image (7% of all time; one bench image has hollow rings), and computes ring
-  centers and a fill alpha it discards before the cheap inside test rejects the family.
+  centers and a fill alpha it discards before the cheap inside test rejects the family. (Reordered, below.)
 - 44–184 whole-image distance transforms per image (7%), 10–65% of them on a mask already transformed; isThin runs
   up to 10 times for 3 colors. backgroundColor is computed 5–9 times per image, flatMask 2–5, backgroundColors 4–7:
   one per-image context would hold these and shorten the signatures that thread (image, B, flat, tol).
@@ -2398,3 +2397,37 @@ Found by the review and not done (each needs its own check against the bench):
   estimateFamilies are chains of rescue passes; the two incremental models share a duplicated scaffold; six medians
   (two variants), five component labelers; tools/bench.mjs extractAll mirrors the app's scan orchestration; style.js
   holds three subjects in 3,077 lines.
+
+**Hollow-ring reorder; failed births: remembering them gains nothing, the tabu scan did** (2026-11-20)
+
+- Hollow rings: outlinesInP takes the hollow test (hollowInside) and runs it as soon as the ring's style is known,
+  and for a hollow ring skips the ring candidates and the fill alpha, which findHollowRings threw away. Worth less
+  than the profile said, now that ringCenters is cheap: over the 20 profiled images the search takes 35 s, 3.4 s
+  of it the skipped part (engagement1 1.6 of 4.6 s). The rest is localFill and underRings, the linear openings.
+- Remembering failed births across rounds, tried and dropped. A failure was kept with the rectangle it read (the
+  scored rectangle and the dots within NEIGHBOR_RADII · r) and skipped while no dot changed there. Measured hits:
+  1 of 1104 failures on bench2 gradient-dots-stroke, 113 of 1585 on cells1, 84 of 364 on pathogen, 0 on dog-ages,
+  kite2 and violin-beeswarm. The failures are not repeats: most are at new sites (the best box moves when anything
+  near it does), the dots near the rest really moved between rounds (a sixteenth of a pixel is a change), and the
+  radius refit starts over (b2 gradient-dots-stroke: 11.1200 to 11.1197 px, 299 failures after it). Letting only
+  births and deaths count as changes, which would no longer be exact, barely raised the hits (cells1 179).
+- It also needed a rejected trial to leave no trace, and it does leave one: restore() puts moved dots back at the
+  end of their grid cells, so later renders multiply the same stamps in another order and differ in the last bit.
+  Rendering in id order removes that, and by itself changed the dots of 6 of the 118 images (pathogen 468 to 464,
+  phase1 128 to 130, four others in position only): the fit is sensitive to rounding at ties. Not kept; worth
+  knowing before any change that reorders arithmetic in the model.
+- What was slow in births was the scan for the best center, once per attempt, testing every candidate center
+  against every failed site (the profile's 19.8 s closure in birthsWithBox, and much of its own 16.8 s).
+  birthsWithBox now keeps a count per pixel of the failed sites within BIRTH_TABU_RADII · r, updated when a site
+  is added or forgotten: the same test, made once per site.
+
+Results: every fitted dot of the 118 local images identical again, by digest. Full bench 1255.3 → 1202.4 s (−4%),
+every row unchanged but for its time, none slower: beeswarm-boxplot 83.4 → 68.9 s, cells1 38.4 → 28.3,
+bench2 gradient-dots-stroke 35.0 → 32.2. In the app dog-ages fits to the same 95 dots. Tests: births keep away from
+failed sites and forget the ones an accepted birth makes stale (test/fit.test.js); a hollow family reports no
+measured fill (test/outline.test.js).
+
+Where failed births still cost: an attempt is about 13 ms (the new dot and each neighbor refined by compass
+search), and gradient-dots-stroke spends 15 of its 32 s on 1104 of them. Cheaper only by a rule that changes
+results (stop a pass after a run of failures, skip the pass after a radius refit that moved nothing), to be judged
+on the bench.

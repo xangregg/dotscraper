@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../src/core/rng.js';
-import { houghCenters, fitDots, refitNear, flagClose } from '../src/core/fit.js';
+import { houghCenters, fitDots, refitNear, flagClose, createFit } from '../src/core/fit.js';
 import { estimateStyle } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { synthGraph, scatterPoints } from '../src/core/synth.js';
@@ -125,6 +125,38 @@ test('regression: a missing dot whose neighbors drifted into its place is born (
     const m = matchDots(truth, res.dots, 3);
     assert.equal(res.dots.length, truth.length);
     assert.equal(m.recall, 1);
+});
+
+test('births keep away from failed sites, and forget the ones an accepted birth makes stale', () => {
+    // one dot of the image is missing from the model; the others are in place
+    const missing = { x: 120, y: 80 };
+    const others = [{ x: 40, y: 40 }, { x: 52, y: 44 }, { x: 190, y: 150 }]; // a pair (levels) and an isolated dot (radius)
+    const { input } = prepare(spec([missing, ...others]));
+    const r = input.style.radius;
+    const start = () => {
+        const fit = createFit(input);
+        for (const p of others)
+            fit.add(p.x, p.y);
+        return fit;
+    };
+    assert.equal(start().births([]), 1);
+    // failed sites 0.4 r apart all around the missing dot: every center a box could propose is within 0.5 r of one
+    const sites = [];
+    for (let j = -8; j <= 8; j++) {
+        for (let i = -8; i <= 8; i++)
+            sites.push({ x: missing.x + 0.4 * r * i, y: missing.y + 0.4 * r * j });
+    }
+    const all = sites.slice();
+    assert.equal(start().births(all), 0);
+    assert.equal(all.length, sites.length, 'no attempt was made');
+    // one failed site beside the dot: the birth comes from a center farther off, and the site, now in a changed
+    // neighborhood, is forgotten
+    const one = [{ x: missing.x + 0.3 * r, y: missing.y }];
+    const fit = start();
+    assert.equal(fit.births(one), 1);
+    assert.equal(one.length, 0);
+    const born = fit.dots().find(d => Math.hypot(d.x - missing.x, d.y - missing.y) < 1);
+    assert.ok(born, 'the dot is where the image has it');
 });
 
 test('refitNear leaves pinned dots where the user put them and refines the others; from maps each dot back', () => {
