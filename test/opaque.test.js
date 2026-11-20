@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { estimateStyle, opaqueFamilyEstimate } from '../src/core/style.js';
+import { estimateStyle, opaqueFamilyEstimate, measureOpaque, scanOf } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots } from '../src/core/fit.js';
 import { synthGraph, SYNTH_PRESETS, scatterPoints } from '../src/core/synth.js';
@@ -36,6 +36,28 @@ test('synthetic swarm: three opaque families, their colors and radius; no family
         assert.equal(c.kind, 'opaque');
         near(c.radius, 8, 0.15, 'radius');
     }
+});
+
+test('measureOpaque, a plain fill: 1 in its dots, 0 on the page, unknown on another family; radius, centers, coverage', () => {
+    const spec = SYNTH_PRESETS.beeswarm(1);
+    const { image, truth } = synthGraph(spec);
+    const [first, ...rest] = spec.families;
+    const fam = measureOpaque(scanOf(image), first.color, rest.map(f => f.color));
+    const at = d => fam.D[Math.floor(d.y) * image.width + Math.floor(d.x)];
+    const own = truth.filter(d => d.family === 0);
+    // a dot's center is covered (the image has noise of 0.4 units), or unknown where the black median line crosses it
+    const centers = own.map(at);
+    const covered = centers.filter(v => v > 0.95).length;
+    assert.ok(centers.every(v => v > 0.95 || Number.isNaN(v)), `own centers: ${centers.filter(v => !(v > 0.95)).slice(0, 5)}`);
+    assert.ok(covered >= 0.8 * own.length, `${covered} of ${own.length} own centers covered`);
+    assert.equal(fam.D[2 * image.width + 2], 0, 'the page');
+    const theirs = truth.filter(d => d.family !== 0 && own.every(o => Math.hypot(o.x - d.x, o.y - d.y) > 3 * first.radius));
+    assert.ok(theirs.length > 5 && theirs.every(d => Number.isNaN(at(d))), 'another family, away from this one');
+    near(fam.radius, first.radius, 0.15, 'radius');
+    assert.ok(fam.dots >= 0.7 * own.length && fam.dots <= own.length, `${fam.dots} centers for ${own.length} dots`);
+    assert.ok(fam.coverage > 0.75, `coverage ${fam.coverage}`);
+    assert.deepEqual(fam.background, [255, 255, 255]);
+    assert.equal(fam.kind, 'opaque');
 });
 
 test('synthetic swarm: each family fitted exactly, no phantoms from other families’ rims', () => {

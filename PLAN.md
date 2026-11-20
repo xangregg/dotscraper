@@ -2472,3 +2472,28 @@ tolerances, colorMask and nearAnyColor (test/image.test.js); alongLine, and esti
 earlier, with regions, and with another image's scan (test/style.test.js).
 
 Since the review: full bench 1649.5 → 1126.5 s (−32%) with no fitted dot changed.
+
+**measureOpaque split into its four steps** (2026-11-20)
+
+measureOpaque was one function of 336 lines: the family's pixels and surroundings, a per-pixel loop that braided
+four readings by `if (paged) … if (stroke) … if (fo) …` with `continue`s, the radius, the centers with their radius
+scan, and the coverage. It is now 43 lines that name the steps, with the code of each moved as it was:
+
+- opaqueGround (74 lines): where the family's pixels are and what they lie on (own, mask, reach, the usual and
+  the local background, the off-line tolerance from the color's noise, other families' pixels).
+- opaqueCoverage: one of four readings, each a loop of its own: readPlain (11 lines), readOutlined (29),
+  readStroked (43), readPageFills (35). The plain and outlined readings share mixReader (a pixel as the edge color
+  mixed with its background, and which other ink it touches), and all but the page fills share noDotAt (away from
+  the family on a background color, or on another family's ring).
+- opaqueRadius (18): given, isolated dots, fills, or the distance transform, in that order.
+- dotCenters (82): the dot test at that radius and the scan of larger radii; shareInDiscs for the coverage.
+
+The order of the readings is as it was (page fill, then stroke, then outline, then plain), so a family given both
+a stroke and an outline is still read by its stroke, with fillK left at zero.
+
+Results: every fitted dot and every family estimate (style, notes, D, edge ink, radius, centers, coverage: all
+fields, typed arrays by content) of the 118 local images identical, by digest. Full bench 1126.5 → 1110.0 s, every
+row unchanged but for its time; a function call per pixel for the mix costs nothing measurable. In the app Laser
+scans and fits to the same 73 dots. Test: measureOpaque called directly on the synthetic swarm (its dots covered,
+the page 0, another family unknown, radius, centers and coverage) in test/opaque.test.js; the outlined, stroked and
+page-fill readings are covered by the existing synthetic tests there.

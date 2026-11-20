@@ -1587,6 +1587,10 @@ export function strokeColor(image, color, B) {
  * neither, or contrast is too low to tell), its typical background (the most common color around it), the radius
  * (isolated dots, else the distance transform), and how many filled, dot-shaped edges a Hough vote finds.
  *
+ * In four steps: where the family's pixels are and what they lie on (opaqueGround), each pixel's coverage by one of
+ * four readings (opaqueCoverage: a plain fill, an outlined one, a stroked one, a fill in the page's color), the
+ * radius (opaqueRadius) and the centers that pass the dot test (dotCenters).
+ *
  * With an outline color, a dot is its fill inside an opaque ring of the outline (JMP's outlined markers: an outline
  * disc 1.7 px larger in radius under the fill): every pixel between the two colors is covered, and the outer rim is
  * read as the outline's coverage of the background. The boundary between fill and outline isn't used.
@@ -1602,6 +1606,9 @@ export function strokeColor(image, color, B) {
  * is drawn on top (opaqueFamilies' `under`; layers.js buildMask).
  *
  * @param {Scan} scan  its image, backgrounds (the page first) and tolerances
+ * @param {number[]} color  the fill, 0–255
+ * @param {number[][]} [others]  other families' colors and other ink, 0–255
+ * @param {number[]|null} [outline]  0–255
  * @param {object} [opts]
  * @param {number[]|null} [opts.stroke]  0–255
  * @param {number} [opts.fillRadius]  px, the fill inside the stroke
@@ -1611,14 +1618,60 @@ export function strokeColor(image, color, B) {
  *   of its own: its isolated components are text's specks)
  */
 export function measureOpaque(scan, color, others = [], outline = null, opts = {}) {
-    const { image, backgrounds, tol } = scan;
+    const { width, height } = scan.image;
     const stroke = opts.stroke ?? null;
+    const ground = opaqueGround(scan, color, others, outline, stroke, opts.rings ?? null);
+    const { paged, own, mask, B } = ground;
+    const cover = opaqueCoverage(ground);
+    const { D, edgeInk, fillW } = cover;
+    if (!stroke)
+        fillSaturatedOverlaps(scan.image, D, B, color, ground.others);
+    const fitColor = paged ? outline : color;
+    const line = colorLine(B, fitColor);
+    const table = [B, fitColor];
+    const shape = opaqueRadius(ground, cover, scan.tol, opts.radius);
+    const { isolated, byFill } = shape;
+    let { radius } = shape;
+    let dots = 0;
+    let strongDots = 0;
+    let coverage = 0;
+    let found = [];
+    if (radiusPlausible(radius, isolated.length)) {
+        const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
+        const at = dotCenters(scan, ground, cover, shape, opts.fillRadius);
+        ({ radius } = at);
+        dots = at.centers.length;
+        strongDots = strong(at.centers);
+        found = at.centers.map(c => ({ x: c.x, y: c.y }));
+        // a stroked family's coverage is its fill's: D also covers the stroke's color, which is text and axes too
+        // (hair3: the black ink diluted it to 0.26); so is one measured by its fills, and an outlined one's only where
+        // a disc of THICK_FILL_RADII × the fill radius fits: a line of the fill's color thinner than a fill is no dot
+        // (phase1: gray 136's curves, 13 px wide beside fills of 17, held most of its pixels; coverage 0.29 → 0.63)
+        const ofFamily = stroke ? fillW : byFill ? (outline ? opening(own, width, height, THICK_FILL_RADII * byFill.fillRadius) : own) : D;
+        coverage = shareInDiscs(ofFamily, at.centers, radius, width, height);
+    }
+    const pixels = mask.reduce((t, v) => t + v, 0);
+    return {
+        kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
+        edgeInk, inkColors: ground.others, centers: found,
+        ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
+        ...(paged ? { pageFill: true, fitColor, fillCenters: paged.centers } : {}),
+        levels: [{ t: Math.hypot(...B.map((v, ch) => v - fitColor[ch])), color: fitColor, count: pixels }],
+        beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
+    };
+}
+
+// Where an opaque family's pixels are and what they lie on, for the readings of opaqueCoverage: the fill's pixels
+// (own), with the outline's in reach of them (mask) and its thick parts, the family's usual background B and the
+// local one near it (bg), how far a pixel may lie off a mix (offAbs, from the color's noise), and the pixels that are
+// other families' (theirs, otherFill). `others` comes back without colors the page hides.
+function opaqueGround(scan, color, others, outline, stroke, rings) {
+    const { image, backgrounds } = scan;
     const { width, height, data } = image;
     const n = width * height;
     const isColor = nearColor(data, color, CLUSTER_TOL);
     const isOutline = outline ? nearColor(data, outline, CLUSTER_TOL) : null;
     const page = backgrounds[0];
-    const onPage = nearColor(data, page, INK_TOL);
     // (the page's color itself: a light fill near it, as tumour1's 237 gray, is a color of its own)
     const isPage = c => Math.hypot(c[0] - page[0], c[1] - page[1], c[2] - page[2]) <= INK_TOL;
     // an outlined fill in the page's color is the page its outlines enclose (pageFills); for the fit it is the outline's
@@ -1626,7 +1679,7 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
     const paged = outline && isPage(color) ? pageFills(image, color) ?? { mask: new Uint8Array(n), discs: [], centers: [] } : null;
     // another family's fill in the page's color can't be told from the page by color: those dots are found by shape
     others = others.filter(O => !isPage(O));
-    const ringFills = opts.rings?.filter(r => !isPage(r.fill)) ?? null;
+    const ringFills = rings?.filter(r => !isPage(r.fill)) ?? null;
     const own = paged ? paged.mask : new Uint8Array(n);
     // a pixel nearer another family's color is that family's, though within this color's tolerance too (score1: the
     // teal dots, 39.9 units from the gray of a dashed line and label leaders, made the gray a family of 150 dots)
@@ -1653,8 +1706,6 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
     const body = thick.some(v => v) ? thick : mask;
     const B = paged ? page : ringBackground(image, stroke ? dilate(body, width, height, STROKE_RING) : body) ?? backgrounds[0];
     const near = dilate(mask, width, height, NEAR_FAMILY + (stroke ? STROKE_RING : 0));
-    // the outer rim mixes the background with the outline, if there is one
-    const edge = outline ?? color;
     // the family's color noise: RMS distance from its color over interior pixels (all 8 neighbors in the family)
     let noiseSum = 0;
     let noiseN = 0;
@@ -1668,124 +1719,210 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
         }
     }
     const offAbs = Math.max(OFF_MIX_ABS, OFF_MIX_NOISE * (noiseN ? Math.sqrt(noiseSum / noiseN) : 0));
-    const pageColorsForBg = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL
+    // background colors, but not this family's own (a dot color can be common enough to count as a background)
+    const pageColors = [...backgrounds, B].filter(P => Math.hypot(...P.map((v, ch) => v - color[ch])) > CLUSTER_TOL
         && (!outline || Math.hypot(...P.map((v, ch) => v - outline[ch])) > CLUSTER_TOL)
         && (!stroke || Math.hypot(...P.map((v, ch) => v - stroke[ch])) > CLUSTER_TOL));
-    const bg = localBackground(image, near, pageColorsForBg, others);
-    // background colors, but not this family's own (a dot color can be common enough to count as a background)
-    const pageColors = pageColorsForBg;
-    const onPageColor = nearAnyColor(data, pageColors, INK_TOL);
-    const fo = outline ? color.map((v, ch) => v - outline[ch]) : null;
-    const foo = fo ? fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2] : 0;
+    const bg = localBackground(image, near, pageColors, others);
     // from the family's thick parts: a stroke near its color (engagement1's navy) is thin, and joins its color mask
     const theirs = ringOwners(image, thick.some(v => v) ? thick : own, ringFills);
     // other families' fills, thick parts only: a stroke near another family's color is still this dot's ring
     const otherFill = stroke ? thickMembers(image, others) : null;
-    const D = new Float32Array(n);
-    const edgeInk = new Uint8Array(n);
-    const fillW = stroke ? new Float32Array(n) : null;
-    // with an outline, how far each pixel is from the outline toward the fill: the fill's antialiased coverage
-    const fillK = outline ? new Float32Array(n) : null;
     // a page-colored fill's antialiased inner rim, next to it, is inside the dot; farther out the outline is mixed with
     // the page
     const besideFill = paged ? dilate(own, width, height, 1.5) : null;
     // … whatever the dot lies on: the page, or a bar (tumour1's gray, 171, lies on the line from white to black, and
     // read as 0.36 of the outline: every dot over a bar read a pixel larger, and the fit put in pairs)
     const rimBg = paged ? surroundings(image, near, outline) : null;
-    for (let p = 0; p < n; p++) {
+    return {
+        image, color, outline, stroke, others, page, paged, own, mask, ownReach, B, near, offAbs, pageColors, bg, theirs,
+        otherFill, besideFill, rimBg,
+    };
+}
+
+/**
+ * Each pixel's coverage by the family's dots, by the reading its kind of dot needs.
+ *
+ * @param {object} ground  opaqueGround's
+ * @returns {{D: Float32Array, edgeInk: Uint8Array, fillW: Float32Array|null, fillK: Float32Array|null}}  D: 0–1
+ *   or NaN; fillW: a stroked fill's own weight; fillK: with an outline, how far each pixel is from the outline
+ *   toward the fill (the fill's antialiased coverage)
+ */
+function opaqueCoverage(ground) {
+    const n = ground.image.width * ground.image.height;
+    const cover = {
+        D: new Float32Array(n),
+        edgeInk: new Uint8Array(n),
+        fillW: ground.stroke ? new Float32Array(n) : null,
+        fillK: ground.outline ? new Float32Array(n) : null,
+    };
+    if (ground.paged)
+        readPageFills(ground, cover);
+    else if (ground.stroke)
+        readStroked(ground, cover);
+    else if (ground.outline)
+        readOutlined(ground, cover);
+    else
+        readPlain(ground, cover);
+    return cover;
+}
+
+// whether no dot of the family can be at a pixel: away from the family on a background color, or on the ring of
+// another family's dot
+function noDotAt(ground) {
+    const { near, theirs } = ground;
+    const onPageColor = nearAnyColor(ground.image.data, ground.pageColors, INK_TOL);
+    return p => (!near[p] && onPageColor(p)) || Boolean(theirs && theirs[p]);
+}
+
+// A fill in the page's color inside an outline: the fill's own pixels are the dot; in the outline's reach a pixel is
+// the outline mixed with whatever the dot lies on (rimBg).
+function readPageFills(ground, { D, fillK }) {
+    const { color, outline, own, ownReach, besideFill, rimBg, offAbs } = ground;
+    const { data } = ground.image;
+    const isColor = nearColor(data, color, CLUSTER_TOL);
+    const onPage = nearColor(data, ground.page, INK_TOL);
+    for (let p = 0; p < D.length; p++) {
         const r = data[4 * p];
         const g = data[4 * p + 1];
         const b = data[4 * p + 2];
-        if (paged) {
-            if (onPage(p)) {
-                D[p] = own[p];
-                fillK[p] = own[p];
-                continue;
-            }
-            // beyond the outlines' reach, a faint pixel is the page (antialiasing), other ink unknown
-            if (!ownReach[p]) {
-                D[p] = isColor(p) ? 0 : NaN;
-                continue;
-            }
-            const w = [rimBg[3 * p], rimBg[3 * p + 1], rimBg[3 * p + 2]];
-            const po = outline.map((v, ch) => v - w[ch]);
-            const poo = po[0] * po[0] + po[1] * po[1] + po[2] * po[2];
-            const v = [r - w[0], g - w[1], b - w[2]];
-            const m = (v[0] * po[0] + v[1] * po[1] + v[2] * po[2]) / poo;
-            const off = Math.hypot(v[0] - m * po[0], v[1] - m * po[1], v[2] - m * po[2]);
-            if (poo < MIN_CONTRAST * MIN_CONTRAST || off > Math.max(offAbs, OFF_MIX_REL * Math.abs(m) * Math.sqrt(poo)) || m > MAX_MIX) {
-                D[p] = NaN;
-                continue;
-            }
-            D[p] = besideFill[p] ? 1 : Math.min(1, Math.max(0, m));
-            // the fill's antialiased edge, for the center search (a binary edge votes weak arcs)
-            if (besideFill[p])
-                fillK[p] = Math.min(1, Math.max(0, 1 - m));
+        if (onPage(p)) {
+            D[p] = own[p];
+            fillK[p] = own[p];
             continue;
         }
-        if (!near[p] && onPageColor(p)) {
-            D[p] = 0; // away from the family on a background color: no dot here
+        // beyond the outlines' reach, a faint pixel is the page (antialiasing), other ink unknown
+        if (!ownReach[p]) {
+            D[p] = isColor(p) ? 0 : NaN;
             continue;
         }
-        if (theirs && theirs[p]) {
-            D[p] = 0; // another family's dot's ring
+        const w = [rimBg[3 * p], rimBg[3 * p + 1], rimBg[3 * p + 2]];
+        const po = outline.map((v, ch) => v - w[ch]);
+        const poo = po[0] * po[0] + po[1] * po[1] + po[2] * po[2];
+        const v = [r - w[0], g - w[1], b - w[2]];
+        const m = (v[0] * po[0] + v[1] * po[1] + v[2] * po[2]) / poo;
+        const off = Math.hypot(v[0] - m * po[0], v[1] - m * po[1], v[2] - m * po[2]);
+        if (poo < MIN_CONTRAST * MIN_CONTRAST || off > Math.max(offAbs, OFF_MIX_REL * Math.abs(m) * Math.sqrt(poo)) || m > MAX_MIX) {
+            D[p] = NaN;
             continue;
         }
-        if (stroke) {
-            // another family's fill is that dot, never this one's partial coverage
-            if (!own[p] && otherFill[p]) {
-                D[p] = NaN;
-                continue;
-            }
-            const w = near[p] ? [bg[3 * p], bg[3 * p + 1], bg[3 * p + 2]] : B;
-            const a1 = color.map((v, ch) => v - w[ch]);
-            const a2 = stroke.map((v, ch) => v - w[ch]);
-            const v = [r - w[0], g - w[1], b - w[2]];
-            const m11 = a1[0] * a1[0] + a1[1] * a1[1] + a1[2] * a1[2];
-            const m12 = a1[0] * a2[0] + a1[1] * a2[1] + a1[2] * a2[2];
-            const m22 = a2[0] * a2[0] + a2[1] * a2[1] + a2[2] * a2[2];
-            const det = m11 * m22 - m12 * m12;
-            if (m11 < MIN_CONTRAST * MIN_CONTRAST || det <= 0) {
-                D[p] = NaN;
-                continue;
-            }
-            const r1 = v[0] * a1[0] + v[1] * a1[1] + v[2] * a1[2];
-            const r2 = v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2];
-            const wf = (m22 * r1 - m12 * r2) / det;
-            const ws = (m11 * r2 - m12 * r1) / det;
-            const off = Math.hypot(v[0] - wf * a1[0] - ws * a2[0], v[1] - wf * a1[1] - ws * a2[1], v[2] - wf * a1[2] - ws * a2[2]);
-            const reach = Math.hypot(wf * a1[0] + ws * a2[0], wf * a1[1] + ws * a2[1], wf * a1[2] + ws * a2[2]);
-            if (off > Math.max(offAbs, OFF_MIX_REL * reach) || wf < -STROKE_SLACK || ws < -STROKE_SLACK || wf + ws > MAX_MIX) {
-                D[p] = NaN;
-                continue;
-            }
-            D[p] = Math.min(1, Math.max(0, wf + ws));
-            fillW[p] = Math.max(0, wf);
+        D[p] = besideFill[p] ? 1 : Math.min(1, Math.max(0, m));
+        // the fill's antialiased edge, for the center search (a binary edge votes weak arcs)
+        if (besideFill[p])
+            fillK[p] = Math.min(1, Math.max(0, 1 - m));
+    }
+}
+
+// A fill inside a stroke too thin to show its own color: a pixel in the triangle background–fill–stroke is dot by
+// the weight it takes off the background; the fill's own weight goes to fillW.
+function readStroked(ground, { D, fillW }) {
+    const { color, stroke, own, otherFill, near, bg, B, offAbs } = ground;
+    const { data } = ground.image;
+    const noDot = noDotAt(ground);
+    for (let p = 0; p < D.length; p++) {
+        if (noDot(p)) {
+            D[p] = 0;
             continue;
         }
-        if (fo) {
-            // ink beyond the outline's reach of any fill isn't this family's
-            if (!ownReach[p]) {
-                D[p] = NaN;
-                continue;
-            }
-            // between the outline and the fill: inside a dot
-            const e0 = r - outline[0];
-            const e1 = g - outline[1];
-            const e2 = b - outline[2];
-            const k = (e0 * fo[0] + e1 * fo[1] + e2 * fo[2]) / foo;
-            if (k >= -OUTLINE_SLACK && k <= 1 + OUTLINE_SLACK && Math.hypot(e0 - k * fo[0], e1 - k * fo[1], e2 - k * fo[2]) <= offAbs) {
-                D[p] = 1;
-                fillK[p] = Math.min(1, Math.max(0, k));
-                continue;
-            }
+        // another family's fill is that dot, never this one's partial coverage
+        if (!own[p] && otherFill[p]) {
+            D[p] = NaN;
+            continue;
         }
+        const r = data[4 * p];
+        const g = data[4 * p + 1];
+        const b = data[4 * p + 2];
+        const w = near[p] ? [bg[3 * p], bg[3 * p + 1], bg[3 * p + 2]] : B;
+        const a1 = color.map((v, ch) => v - w[ch]);
+        const a2 = stroke.map((v, ch) => v - w[ch]);
+        const v = [r - w[0], g - w[1], b - w[2]];
+        const m11 = a1[0] * a1[0] + a1[1] * a1[1] + a1[2] * a1[2];
+        const m12 = a1[0] * a2[0] + a1[1] * a2[1] + a1[2] * a2[2];
+        const m22 = a2[0] * a2[0] + a2[1] * a2[1] + a2[2] * a2[2];
+        const det = m11 * m22 - m12 * m12;
+        if (m11 < MIN_CONTRAST * MIN_CONTRAST || det <= 0) {
+            D[p] = NaN;
+            continue;
+        }
+        const r1 = v[0] * a1[0] + v[1] * a1[1] + v[2] * a1[2];
+        const r2 = v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2];
+        const wf = (m22 * r1 - m12 * r2) / det;
+        const ws = (m11 * r2 - m12 * r1) / det;
+        const off = Math.hypot(v[0] - wf * a1[0] - ws * a2[0], v[1] - wf * a1[1] - ws * a2[1], v[2] - wf * a1[2] - ws * a2[2]);
+        const reach = Math.hypot(wf * a1[0] + ws * a2[0], wf * a1[1] + ws * a2[1], wf * a1[2] + ws * a2[2]);
+        if (off > Math.max(offAbs, OFF_MIX_REL * reach) || wf < -STROKE_SLACK || ws < -STROKE_SLACK || wf + ws > MAX_MIX) {
+            D[p] = NaN;
+            continue;
+        }
+        D[p] = Math.min(1, Math.max(0, wf + ws));
+        fillW[p] = Math.max(0, wf);
+    }
+}
+
+// A fill inside an opaque ring of the outline's color: a pixel between the two colors is inside a dot (its place
+// between them goes to fillK); any other pixel in the outline's reach is read as the outline mixed with the
+// background (mixReader), and ink beyond the reach of every fill isn't this family's.
+function readOutlined(ground, cover) {
+    const { color, outline, ownReach, offAbs } = ground;
+    const { D, fillK } = cover;
+    const { data } = ground.image;
+    const noDot = noDotAt(ground);
+    const readMix = mixReader(ground, cover);
+    const fo = color.map((v, ch) => v - outline[ch]);
+    const foo = fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2];
+    for (let p = 0; p < D.length; p++) {
+        if (noDot(p)) {
+            D[p] = 0;
+            continue;
+        }
+        if (!ownReach[p]) {
+            D[p] = NaN;
+            continue;
+        }
+        const e0 = data[4 * p] - outline[0];
+        const e1 = data[4 * p + 1] - outline[1];
+        const e2 = data[4 * p + 2] - outline[2];
+        const k = (e0 * fo[0] + e1 * fo[1] + e2 * fo[2]) / foo;
+        if (k >= -OUTLINE_SLACK && k <= 1 + OUTLINE_SLACK && Math.hypot(e0 - k * fo[0], e1 - k * fo[1], e2 - k * fo[2]) <= offAbs) {
+            D[p] = 1;
+            fillK[p] = Math.min(1, Math.max(0, k));
+            continue;
+        }
+        readMix(p);
+    }
+}
+
+// a plain fill: every pixel is the color mixed with its background
+function readPlain(ground, cover) {
+    const { D } = cover;
+    const noDot = noDotAt(ground);
+    const readMix = mixReader(ground, cover);
+    for (let p = 0; p < D.length; p++) {
+        if (noDot(p))
+            D[p] = 0;
+        else
+            readMix(p);
+    }
+}
+
+// The reading of one pixel as the family's edge color (the outline's, if there is one, else the fill's) mixed with
+// its background: D is the share of the color, NaN off the line between them or where another family's color is
+// nearer; where the background is other ink, edgeInk records which.
+function mixReader(ground, { D, edgeInk }) {
+    const { color, outline, others, near, bg, B, offAbs, pageColors } = ground;
+    const { data } = ground.image;
+    // the outer rim mixes the background with the outline, if there is one
+    const edge = outline ?? color;
+    return p => {
+        const r = data[4 * p];
+        const g = data[4 * p + 1];
+        const b = data[4 * p + 2];
         // away from the family, another family's color is that family's pixel, not partial coverage of this one
         // (near it, pixels are read against their actual neighbor, which keeps the edges where dots touch)
         const dOwn = Math.min(Math.hypot(r - color[0], g - color[1], b - color[2]), outline ? Math.hypot(r - outline[0], g - outline[1], b - outline[2]) : Infinity);
         if (!near[p] && others.some(O => { const d = Math.hypot(r - O[0], g - O[1], b - O[2]); return d <= CLUSTER_TOL && d < dOwn; })) {
             D[p] = NaN;
-            continue;
+            return;
         }
         // near the family, against the nearest other color; away from it, against the family's usual background
         // (faint antialiased rims just beyond the near zone were left unknown and broke the dots' edges)
@@ -1798,7 +1935,7 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
         const ww = w0 * w0 + w1 * w1 + w2 * w2;
         if (ww < MIN_CONTRAST * MIN_CONTRAST) {
             D[p] = NaN;
-            continue;
+            return;
         }
         const v0 = r - b0;
         const v1 = g - b1;
@@ -1811,12 +1948,20 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
             const k = others.findIndex(O => Math.hypot(b0 - O[0], b1 - O[1], b2 - O[2]) <= INK_TOL);
             edgeInk[p] = k >= 0 && k < EDGE_INK_UNLISTED - 1 ? k + 1 : EDGE_INK_UNLISTED;
         }
-    }
-    if (!stroke)
-        fillSaturatedOverlaps(image, D, B, color, others);
-    const fitColor = paged ? outline : color;
-    const line = colorLine(B, fitColor);
-    const table = [B, fitColor];
+    };
+}
+
+/**
+ * An opaque family's radius: the one given, else the isolated dots' median, else the fills' (outlined or stroked
+ * dots), else the distance transform's.
+ *
+ * @returns {{isolated: object[], byFill: object|null, fillCover: Float32Array|null, radius: number,
+ *   fromDistance: boolean}}  radius in px
+ */
+function opaqueRadius(ground, cover, tol, given) {
+    const { outline, stroke, own } = ground;
+    const { D, fillW, fillK } = cover;
+    const { width, height } = ground.image;
     // an isolated dot of this family has its fill at its middle: specks of another ink that D reads as covered
     // (hair2: the stroke's black, so the decimal points and a colon's dots, r 4.9, outvoted the one whole dot, r 30.3)
     // are not its dots
@@ -1828,123 +1973,119 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
     // half the stroke, got 4.5 for 20 from the distance transform)
     const fillCover = outline ? fillK : stroke ? fillW : null;
     const byFill = !isolated.length && fillCover ? outlinedRadius(fillCover, own, D, width, height) : null;
-    let radius = opts.radius ?? (isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height));
-    const fromDistance = !opts.radius && !isolated.length && !byFill;
-    let dots = 0;
-    let strongDots = 0;
-    let coverage = 0;
-    let found = [];
-    if (radiusPlausible(radius, isolated.length)) {
-        const weight = new Uint8Array(n);
-        for (let p = 0; p < n; p++)
-            weight[p] = Number.isNaN(D[p]) ? 0 : 1;
-        // a center counts if most of its edge is seen and its disc is filled with the family's own color (text:
-        // round glyphs are hollow; fanc2: a rim gray between dot and overlap read black text as beyond its color,
-        // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
-        const rfOf = r => DOT_FILL_RADII * (byFill?.fillRadius ?? (stroke ? opts.fillRadius ?? r * DOT_FILL_RADII : r));
-        const inside = stroke ? fillW : own;
-        const filled = (c, rf) => {
-            let count = 0;
-            let on = 0;
-            for (let y = Math.max(0, Math.floor(c.y - rf)); y < Math.min(height, Math.ceil(c.y + rf)); y++) {
-                for (let x = Math.max(0, Math.floor(c.x - rf)); x < Math.min(width, Math.ceil(c.x + rf)); x++) {
-                    if ((x + 0.5 - c.x) ** 2 + (y + 0.5 - c.y) ** 2 > rf * rf)
-                        continue;
-                    count++;
-                    if (inside[y * width + x] > 0.5)
-                        on++;
-                }
-            }
-            return count > 0 && on >= DOT_MIN_FILL * count;
-        };
-        // (the gradient is the radius's alone, and by fill the centers are too)
-        let grad = null;
-        let fillCenters = null;
-        const houghAt = r => {
-            if (byFill) {
-                fillCenters ??= houghCenters(fillCover, weight, width, height, byFill.fillRadius);
-                return fillCenters;
-            }
-            grad ??= houghGradient(D, weight, width, height);
-            return houghCenters(D, weight, width, height, r, grad);
-        };
-        const centersAt = r => houghAt(r).filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
-        const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
-        let centers = centersAt(radius);
-        // The distance transform underestimates the radius where dots touch; packed past the dot test, larger radii
-        // are tried by Hough. Its evidence leans small in a packed swarm (neighbors cut more of each arc as the radius
-        // grows), so the largest radius keeping RADIUS_SCAN_KEEP of the most strong, filled centers is taken
-        // (beeswarm-boxplot's gray: 6.16 from the transform, no center; 30 strong at 8–8.5 px, 23 at 9; the user's
-        // truth has 9.0, and at 8.2 the fit put a second dot in nearly every dot).
-        // Only for a fill on the page: one surrounded by another ink is an outlined or stroked dot, measured whole by
-        // those readings (hair3, cells1: the scan passed their fills alone, 26.4 px for 28.3)
-        const onPage = backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - B[ch])) <= INK_TOL);
-        if (fromDistance && !stroke && !outline && onPage && strong(centers) < DOT_MIN_STRONG) {
-            const scan = [];
-            for (let r = radius + RADIUS_SCAN_STEP; r <= RADIUS_SCAN_MAX * radius; r += RADIUS_SCAN_STEP) {
-                const cs = centersAt(r);
-                scan.push({ r, cs, n: strong(cs) });
-            }
-            const most = Math.max(0, ...scan.map(t => t.n));
-            // a line in the dots' color sets the transform's radius to its half width (kite1: cyan 3.5 px, the dots
-            // 12.3): then the scan runs again around each of the pieces' radii (componentRadii), keeping the one with
-            // the most strong centers (kite1: 4 at 11.5, 3 at 12, none below 11 or above 12.5)
-            if (most < DOT_MIN_STRONG) {
-                for (const r1 of componentRadii(D, width, height)) {
-                    if ((1 - COMPONENT_SCAN) * r1 <= RADIUS_SCAN_MAX * radius)
-                        continue;
-                    const near = [];
-                    for (let r = (1 - COMPONENT_SCAN) * r1; r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
-                        const cs = centersAt(r);
-                        near.push({ r, cs, n: strong(cs) });
-                    }
-                    if (Math.max(0, ...near.map(t => t.n)) > Math.max(0, ...scan.map(t => t.n)))
-                        scan.splice(0, scan.length, ...near);
-                }
-            }
-            const pick = scan.filter(t => t.n >= RADIUS_SCAN_KEEP * Math.max(0, ...scan.map(t => t.n))).pop();
-            if (pick && pick.n > strong(centers)) {
-                centers = pick.cs;
-                radius = pick.r;
+    const radius = given ?? (isolated.length ? median(isolated.map(d => d.r)) : byFill?.radius ?? radiusFromDistance(D, width, height));
+    return { isolated, byFill, fillCover, radius, fromDistance: !given && !isolated.length && !byFill };
+}
+
+/**
+ * The centers that pass the dot test at the family's radius, and that radius, which a scan of larger radii may
+ * raise when it came from the distance transform. O(pixels · radii tried) (houghCenters).
+ *
+ * @returns {{centers: {x: number, y: number, arc: number}[], radius: number}}  px
+ */
+function dotCenters(scan, ground, cover, shape, fillRadius) {
+    const { outline, stroke, own, B } = ground;
+    const { D, fillW } = cover;
+    const { byFill, fillCover, fromDistance } = shape;
+    const { width, height } = ground.image;
+    const n = width * height;
+    let { radius } = shape;
+    const weight = new Uint8Array(n);
+    for (let p = 0; p < n; p++)
+        weight[p] = Number.isNaN(D[p]) ? 0 : 1;
+    // a center counts if most of its edge is seen and its disc is filled with the family's own color (text:
+    // round glyphs are hollow; fanc2: a rim gray between dot and overlap read black text as beyond its color,
+    // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
+    const rfOf = r => DOT_FILL_RADII * (byFill?.fillRadius ?? (stroke ? fillRadius ?? r * DOT_FILL_RADII : r));
+    const inside = stroke ? fillW : own;
+    const filled = (c, rf) => {
+        let count = 0;
+        let on = 0;
+        for (let y = Math.max(0, Math.floor(c.y - rf)); y < Math.min(height, Math.ceil(c.y + rf)); y++) {
+            for (let x = Math.max(0, Math.floor(c.x - rf)); x < Math.min(width, Math.ceil(c.x + rf)); x++) {
+                if ((x + 0.5 - c.x) ** 2 + (y + 0.5 - c.y) ** 2 > rf * rf)
+                    continue;
+                count++;
+                if (inside[y * width + x] > 0.5)
+                    on++;
             }
         }
-        dots = centers.length;
-        strongDots = strong(centers);
-        found = centers.map(c => ({ x: c.x, y: c.y }));
-        // share of the family's pixels inside the found discs
-        const inDisc = new Uint8Array(n);
-        for (const c of centers) {
-            for (let y = Math.max(0, Math.floor(c.y - radius)); y < Math.min(height, Math.ceil(c.y + radius)); y++) {
-                for (let x = Math.max(0, Math.floor(c.x - radius)); x < Math.min(width, Math.ceil(c.x + radius)); x++) {
-                    if ((x + 0.5 - c.x) ** 2 + (y + 0.5 - c.y) ** 2 <= radius * radius)
-                        inDisc[y * width + x] = 1;
-                }
-            }
-        }
-        // a stroked family's coverage is its fill's: D also covers the stroke's color, which is text and axes too
-        // (hair3: the black ink diluted it to 0.26); so is one measured by its fills, and an outlined one's only where
-        // a disc of THICK_FILL_RADII × the fill radius fits: a line of the fill's color thinner than a fill is no dot
-        // (phase1: gray 136's curves, 13 px wide beside fills of 17, held most of its pixels; coverage 0.29 → 0.63)
-        const ofFamily = stroke ? fillW : byFill ? (outline ? opening(own, width, height, THICK_FILL_RADII * byFill.fillRadius) : own) : D;
-        let fam = 0;
-        let covered = 0;
-        for (let p = 0; p < n; p++) {
-            if (ofFamily[p] > 0.5) {
-                fam++;
-                covered += inDisc[p];
-            }
-        }
-        coverage = fam ? covered / fam : 0;
-    }
-    const pixels = mask.reduce((t, v) => t + v, 0);
-    return {
-        kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
-        edgeInk, inkColors: others, centers: found,
-        ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
-        ...(paged ? { pageFill: true, fitColor, fillCenters: paged.centers } : {}),
-        levels: [{ t: Math.hypot(...B.map((v, ch) => v - fitColor[ch])), color: fitColor, count: pixels }],
-        beyond: [], fit: { alpha: 1, c: [...color], rms: 0, maxAbs: 0, underdetermined: true }, translucent: false,
+        return count > 0 && on >= DOT_MIN_FILL * count;
     };
+    // (the gradient is the radius's alone, and by fill the centers are too)
+    let grad = null;
+    let fillCenters = null;
+    const houghAt = r => {
+        if (byFill) {
+            fillCenters ??= houghCenters(fillCover, weight, width, height, byFill.fillRadius);
+            return fillCenters;
+        }
+        grad ??= houghGradient(D, weight, width, height);
+        return houghCenters(D, weight, width, height, r, grad);
+    };
+    const centersAt = r => houghAt(r).filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
+    const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
+    let centers = centersAt(radius);
+    // The distance transform underestimates the radius where dots touch; packed past the dot test, larger radii
+    // are tried by Hough. Its evidence leans small in a packed swarm (neighbors cut more of each arc as the radius
+    // grows), so the largest radius keeping RADIUS_SCAN_KEEP of the most strong, filled centers is taken
+    // (beeswarm-boxplot's gray: 6.16 from the transform, no center; 30 strong at 8–8.5 px, 23 at 9; the user's
+    // truth has 9.0, and at 8.2 the fit put a second dot in nearly every dot).
+    // Only for a fill on the page: one surrounded by another ink is an outlined or stroked dot, measured whole by
+    // those readings (hair3, cells1: the scan passed their fills alone, 26.4 px for 28.3)
+    const onBackground = scan.backgrounds.some(P => Math.hypot(...P.map((v, ch) => v - B[ch])) <= INK_TOL);
+    if (fromDistance && !stroke && !outline && onBackground && strong(centers) < DOT_MIN_STRONG) {
+        const tried = [];
+        for (let r = radius + RADIUS_SCAN_STEP; r <= RADIUS_SCAN_MAX * radius; r += RADIUS_SCAN_STEP) {
+            const cs = centersAt(r);
+            tried.push({ r, cs, n: strong(cs) });
+        }
+        const most = Math.max(0, ...tried.map(t => t.n));
+        // a line in the dots' color sets the transform's radius to its half width (kite1: cyan 3.5 px, the dots
+        // 12.3): then the scan runs again around each of the pieces' radii (componentRadii), keeping the one with
+        // the most strong centers (kite1: 4 at 11.5, 3 at 12, none below 11 or above 12.5)
+        if (most < DOT_MIN_STRONG) {
+            for (const r1 of componentRadii(D, width, height)) {
+                if ((1 - COMPONENT_SCAN) * r1 <= RADIUS_SCAN_MAX * radius)
+                    continue;
+                const around = [];
+                for (let r = (1 - COMPONENT_SCAN) * r1; r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
+                    const cs = centersAt(r);
+                    around.push({ r, cs, n: strong(cs) });
+                }
+                if (Math.max(0, ...around.map(t => t.n)) > Math.max(0, ...tried.map(t => t.n)))
+                    tried.splice(0, tried.length, ...around);
+            }
+        }
+        const pick = tried.filter(t => t.n >= RADIUS_SCAN_KEEP * Math.max(0, ...tried.map(t => t.n))).pop();
+        if (pick && pick.n > strong(centers)) {
+            centers = pick.cs;
+            radius = pick.r;
+        }
+    }
+    return { centers, radius };
+}
+
+// the share of a plane's pixels (> 0.5) that lie inside the discs of the given radius at the centers
+function shareInDiscs(plane, centers, radius, width, height) {
+    const inDisc = new Uint8Array(plane.length);
+    for (const c of centers) {
+        for (let y = Math.max(0, Math.floor(c.y - radius)); y < Math.min(height, Math.ceil(c.y + radius)); y++) {
+            for (let x = Math.max(0, Math.floor(c.x - radius)); x < Math.min(width, Math.ceil(c.x + radius)); x++) {
+                if ((x + 0.5 - c.x) ** 2 + (y + 0.5 - c.y) ** 2 <= radius * radius)
+                    inDisc[y * width + x] = 1;
+            }
+        }
+    }
+    let fam = 0;
+    let covered = 0;
+    for (let p = 0; p < plane.length; p++) {
+        if (plane[p] > 0.5) {
+            fam++;
+            covered += inDisc[p];
+        }
+    }
+    return fam ? covered / fam : 0;
 }
 
 /**
