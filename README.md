@@ -32,7 +32,8 @@ turn positions into data values.
 3. Find dots, then review: hover a dot for its numbers; flagged dots are red, possible duplicates have a magenta
    double ring, and the Residual view shows what the dots don't explain.
 4. Fix with Add, Remove and Move (Option-click edits without refitting the dots nearby).
-5. Type tick values for data units, then Copy table or Save CSV.
+5. Check the tick values read from the labels, or type them where none were read, for data units; then Copy
+   table or Save CSV.
 
 The About panel in the app has the details, the keys, and what to trust.
 

@@ -3008,3 +3008,42 @@ font, a box cut short, touching digits; the scale check (an unread and a misread
 that must give no scale); synthetic axes with thousands, unit signs, a neighbor's glyphs beside and through a label,
 names; bench-plos (step1, score2, droplet1, landing1) and bench1's medium-dots (PNG and JPEG). Removing the shared
 line, the unit signs, the splitting, the rounding, the disagreement rule or the baseline rule each fails a test.
+
+**Tick values read into the Axes panel** (2026-11-21)
+
+The app now reads the tick labels when an image is opened (labels.js `readTickLabels`, right after detectAxes, on
+the main thread: 5 ms an image, 45 at most) and an axis whose labels a scale confirms starts with that scale's
+values and type, so data coordinates are there with nothing typed.
+
+- **What is offered.** Only a confirmed scale (at least three labels on one linear or log scale): its value at
+  every tick, labeled or not. An axis without one starts empty as before (two labels, names, exponents), or as
+  categories when it has no tick marks.
+- **Where each value is from**, a column beside it: "read" (its own label, which fits the scale), "scale" (its label
+  wasn't read, or it has none: bench3's minor ticks, JMP's "90" under the title), or "label: 2" in the warning color
+  when its label reads as another number that the scale contradicts (kite2's bottom tick, 13 px off the others'
+  spacing: the value is the scale's 1.9, and the summary warns). The tooltip says the same in a sentence. The summary
+  counts them ("Read from the labels: 6 of 7 fit a linear scale; the scale gives the other 7 ticks"), and the section
+  heading says "x linear, read".
+- **The value at a disagreeing tick is the scale's, not the label's**: of the three ways it happens, a misread label
+  and a false tick (delta1's error-bar caps: 154.3 and 145) are right that way, and a tick truly off its axis's
+  spacing (kite2) is right neither way and is flagged both ways.
+- **No provenance is stored.** An entry is still type and texts; a tick is marked while its value equals the
+  reading's (`tickStatus`), so typing over one unmarks it and typing the reading's own value is the same as reading
+  it. An entry that is just the reading isn't written to localStorage (it is read again next time, by the reader as
+  it then is); anything the user changed is remembered and wins, a cleared axis included. A button per axis: Clear
+  while the values are the reading's, Use read values otherwise.
+- The label crop in each row is the tick's box joined with the glyphs read, so a box that axes.js cut short (cells1's
+  "00") shows the whole label. A unit sign the reading leaves out stays in view where the box has it (wages2025's
+  "$320" beside 320): the values are in the unit the axis states.
+
+Checked in the app (the built-in browser, images dropped on the view): bench1 medium-dots (x 8 of 8 read; y 6 read
+and "90" from the scale), kite2 (the "label: 2" warning), wages2025 (y log, 320 down to 10, "$" left out; x left
+empty), bench3 dots-swarm (x categories; y 7 labels and 6 minor ticks), hair3 (x left empty), delta1. Typing over a
+value, Use read values, Clear, and reopening the image after each behave as described; no console errors. The
+About text and the README's steps say values are read where they can be checked.
+
+Tests (test/axes-panel.test.js, 4): the entry a reading gives, each tick status and its loss on typing over, the
+starting entries (read, empty, categories), and bench-plos step1 from the image to data units with nothing typed.
+
+Left: the exported table and the readout don't say whether an axis's values were read or typed; the panel does.
+Unchecked readings (two-label axes, hair3's doses) are not shown anywhere yet.

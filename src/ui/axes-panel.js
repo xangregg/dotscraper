@@ -1,7 +1,9 @@
-// The Axes section: detected ticks with their label crops, typed values, the scale they imply, and pixel → data.
+// The Axes section: detected ticks with their label crops, their values, the scale they imply, and pixel → data.
 //
-// An axis entry is { type: 'linear' | 'log' | 'category', texts: [string per tick] } and is remembered per image
-// (by pixel hash) in localStorage, so reopening a test image doesn't mean retyping its ticks.
+// An axis entry is { type: 'linear' | 'log' | 'category', texts: [string per tick] }. It starts as the values read
+// from the labels, when a scale confirms them (core/labels.js), and is the user's from the first change: remembered
+// per image (by pixel hash) in localStorage, so reopening a test image doesn't mean retyping its ticks. Nothing in
+// an entry says where a value came from: a tick is marked as read while its value is the reading's (tickStatus).
 
 import { fitScale, toData, resolution, guessValues } from '../core/axes.js';
 
@@ -11,7 +13,7 @@ const CROP_PAD = 2; // px of image around a label box
 const AGREE_PX = 1; // typed ticks off their fitted position by more than this are flagged
 
 /**
- * @typedef {object} AxisEntry  what the user typed for an axis
+ * @typedef {object} AxisEntry  an axis's values: read from its labels, or typed
  * @property {'linear'|'log'|'category'} type
  * @property {string[]} texts  per tick: its value, or its category's name
  */
@@ -50,14 +52,47 @@ export function defaultEntry(axis) {
 }
 
 /**
- * The entries remembered for an image, or empty ones; one whose tick count no longer matches the detected ticks is
- * dropped.
+ * The entry an axis's labels give: the values of the scale that confirms them, or null without one.
+ *
+ * @param {import('../core/labels.js').AxisReading|null} reading
+ * @returns {AxisEntry|null}
+ */
+export function readEntry(reading) {
+    return reading?.scale ? { type: reading.scale.type, texts: reading.scale.values.map(String) } : null;
+}
+
+/**
+ * Where a tick's value comes from, while it is the reading's (null once it is typed over, or without a reading):
+ * 'read' from its own label, which fits the scale of the others; 'scale' when its label wasn't read or it has none,
+ * and the value is the scale's there; 'differs' when its label reads as another number (`label`), which the scale
+ * of the others contradicts.
+ *
+ * @param {AxisEntry} entry
+ * @param {import('../core/labels.js').AxisReading|null} reading
+ * @param {number} i  the tick
+ * @returns {{kind: 'read'|'scale'|'differs', label?: string}|null}
+ */
+export function tickStatus(entry, reading, i) {
+    const scale = reading?.scale;
+    if (!scale || entry.type !== scale.type || entry.texts[i] !== String(scale.values[i]))
+        return null;
+    if (scale.agree[i])
+        return { kind: 'read' };
+    const label = reading.read[i];
+    return label && label.value !== null ? { kind: 'differs', label: label.text } : { kind: 'scale' };
+}
+
+/**
+ * The entries remembered for an image, or else those read from its labels, or else empty ones. A remembered one
+ * whose tick count no longer matches the detected ticks is dropped.
  *
  * @param {string} hash  image.js pixelHash of the image
  * @param {import('../core/axes.js').Axes} axes
+ * @param {{x: import('../core/labels.js').AxisReading|null, y: import('../core/labels.js').AxisReading|null}} readings
+ *   core/labels.js readTickLabels'
  * @returns {{x: AxisEntry, y: AxisEntry}}
  */
-export function loadEntries(hash, axes) {
+export function loadEntries(hash, axes, readings) {
     let stored = null;
     try {
         stored = JSON.parse(localStorage.getItem(STORAGE_PREFIX + hash) ?? 'null');
@@ -70,20 +105,28 @@ export function loadEntries(hash, axes) {
         const axis = axes[k];
         const s = stored?.[k];
         // keep stored values only if the ticks are the same in number (detection may have changed)
-        out[k] = s && axis && s.texts.length === axis.ticks.length ? s : defaultEntry(axis);
+        out[k] = s && axis && s.texts.length === axis.ticks.length ? s : readEntry(readings[k]) ?? defaultEntry(axis);
     }
     return out;
 }
 
 /**
- * Remember an image's entries (in localStorage; quietly not, where storage is blocked).
+ * Remember an image's entries (in localStorage; quietly not, where storage is blocked). An entry that is just what
+ * its labels read as isn't kept: it is read again next time, by the reader as it then is.
  *
  * @param {string} hash  image.js pixelHash of the image
  * @param {{x: AxisEntry, y: AxisEntry}} entries
+ * @param {{x: import('../core/labels.js').AxisReading|null, y: import('../core/labels.js').AxisReading|null}} readings
  */
-export function saveEntries(hash, entries) {
+export function saveEntries(hash, entries, readings) {
+    const kept = {};
+    for (const k of ['x', 'y']) {
+        const asRead = readEntry(readings[k]);
+        const same = asRead && asRead.type === entries[k].type && asRead.texts.every((t, i) => t === entries[k].texts[i]);
+        kept[k] = same ? null : entries[k];
+    }
     try {
-        localStorage.setItem(STORAGE_PREFIX + hash, JSON.stringify(entries));
+        localStorage.setItem(STORAGE_PREFIX + hash, JSON.stringify(kept));
     }
     catch {
         // private window or blocked storage: values just aren't remembered
@@ -91,7 +134,7 @@ export function saveEntries(hash, entries) {
 }
 
 /**
- * The scale an axis entry implies: numeric from at least two typed values (scale: core/axes.js fitScale's; known:
+ * The scale an axis entry implies: numeric from at least two values (scale: core/axes.js fitScale's; known:
  * the ticks with a value; guesses: a value for every tick, guessValues'), categories (the ticks' positions, px, and
  * names), or none yet (guesses only). Null without an axis.
  *
@@ -163,10 +206,13 @@ export function formatData(v, res) {
     return v.toFixed(decimals);
 }
 
-function labelCrop(image, box) {
+// a tick's label as the image has it: its box from the axis and the glyphs read, which the box can cut short
+function labelCrop(image, tickBox, readBox) {
     const c = document.createElement('canvas');
-    if (!box)
+    const boxes = [tickBox, readBox].filter(Boolean);
+    if (!boxes.length)
         return c;
+    const box = [Math.min(...boxes.map(b => b[0])), Math.min(...boxes.map(b => b[1])), Math.max(...boxes.map(b => b[2])), Math.max(...boxes.map(b => b[3]))];
     const x0 = Math.max(0, box[0] - CROP_PAD);
     const y0 = Math.max(0, box[1] - CROP_PAD);
     const x1 = Math.min(image.width, box[2] + CROP_PAD);
@@ -185,16 +231,18 @@ function labelCrop(image, box) {
 }
 
 /**
- * Render one axis's block: header with type menu, a row per tick (label crop, value, px), and the scale summary.
+ * Render one axis's block: header with type menu, a row per tick (label crop, value, where the value is from, px),
+ * and the scale summary.
  *
  * @param {HTMLElement} el
  * @param {string} name  'x' or 'y'
  * @param {import('../core/axes.js').Axis|null} axis  from detectAxes
  * @param {AxisEntry} entry
+ * @param {import('../core/labels.js').AxisReading|null} reading  the axis's labels as read
  * @param {import('../core/image.js').RgbaImage} image
  * @param {function(AxisEntry): void} onChange  the new entry
  */
-export function renderAxis(el, name, axis, entry, image, onChange) {
+export function renderAxis(el, name, axis, entry, reading, image, onChange) {
     el.replaceChildren();
     const head = document.createElement('h3');
     head.textContent = `${name.toUpperCase()} axis`;
@@ -213,6 +261,17 @@ export function renderAxis(el, name, axis, entry, image, onChange) {
     type.value = entry.type;
     type.addEventListener('change', () => onChange({ ...entry, type: type.value }));
     head.append(type);
+    const statuses = axis.ticks.map((_, i) => tickStatus(entry, reading, i));
+    const asRead = readEntry(reading);
+    if (asRead) {
+        // back to the reading after typing over it, or rid of it
+        const whole = statuses.every(Boolean);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = whole ? 'Clear' : 'Use read values';
+        button.addEventListener('click', () => onChange(whole ? { ...defaultEntry(axis), type: entry.type } : asRead));
+        head.append(button);
+    }
     const source = { grid: 'gridlines', label: 'labels' }[axis.ticks[0]?.source] ?? 'ticks';
     const info = document.createElement('p');
     info.className = 'fine';
@@ -226,7 +285,7 @@ export function renderAxis(el, name, axis, entry, image, onChange) {
     const table = document.createElement('table');
     axis.ticks.forEach((t, i) => {
         const tr = table.insertRow();
-        tr.insertCell().append(labelCrop(image, t.label));
+        tr.insertCell().append(labelCrop(image, t.label, reading?.read[i]?.box));
         const input = document.createElement('input');
         input.type = 'text';
         input.inputMode = entry.type === 'category' ? 'text' : 'decimal';
@@ -240,6 +299,23 @@ export function renderAxis(el, name, axis, entry, image, onChange) {
             onChange({ ...entry, texts });
         });
         tr.insertCell().append(input);
+        const from = tr.insertCell();
+        from.className = 'from';
+        const status = statuses[i];
+        if (status?.kind === 'read') {
+            from.textContent = 'read';
+            from.title = 'Read from this label; it fits the scale of the axis\'s labels.';
+        }
+        else if (status?.kind === 'scale') {
+            from.textContent = 'scale';
+            from.title = t.label ? 'This label wasn\'t read: the value is what the scale of the other labels gives here.'
+                : 'No label here: the value is what the scale of the axis\'s labels gives.';
+        }
+        else if (status?.kind === 'differs') {
+            from.textContent = `label: ${status.label}`;
+            from.classList.add('warn');
+            from.title = `This label reads ${status.label}, which the scale of the other labels contradicts: the value is the scale's here. Check the tick and its label.`;
+        }
         const px = tr.insertCell();
         px.className = 'px';
         px.textContent = `${t.pos.toFixed(1)} px`;
@@ -258,8 +334,17 @@ export function renderAxis(el, name, axis, entry, image, onChange) {
         const mid = (axis.ticks[0].pos + axis.ticks[axis.ticks.length - 1].pos) / 2;
         const res = axisResolution(s, mid);
         const parts = [`1 px = ${res.toPrecision(3)} ${entry.type === 'log' ? 'at mid-axis (log scale)' : 'data units'}.`];
+        const read = statuses.filter(st => st?.kind === 'read').length;
+        const fromReading = statuses.filter(Boolean).length;
+        if (fromReading) {
+            const labels = axis.ticks.filter(t => t.label).length;
+            const rest = fromReading - read;
+            parts.push(`Read from the labels: ${read} of ${labels} fit a ${entry.type} scale${rest ? `; the scale gives the other ${rest === 1 ? 'tick' : `${rest} ticks`}` : ''}. Type over any that is wrong.`);
+            if (statuses.some(st => st?.kind === 'differs'))
+                summary.classList.add('warn');
+        }
         if (s.known.length > 2) {
-            parts.push(`Typed ticks within ${s.scale.maxResidualPx.toFixed(2)} px of a ${entry.type} scale.`);
+            parts.push(`${fromReading ? 'Ticks' : 'Typed ticks'} within ${s.scale.maxResidualPx.toFixed(2)} px of a ${entry.type} scale.`);
             if (s.scale.maxResidualPx > AGREE_PX)
                 summary.classList.add('warn');
         }

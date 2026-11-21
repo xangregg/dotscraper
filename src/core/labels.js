@@ -131,6 +131,15 @@ const SCALE_MAX_DISAGREE = 1 / 3;
  */
 
 /**
+ * An axis's labels as read (readAxisLabels).
+ *
+ * @typedef {object} AxisReading
+ * @property {(LabelReading|null)[]} read  per tick, what its label reads as, unit signs left out; null without a
+ *   label
+ * @property {TickValues|null} scale       consistentValues of those: null when no scale confirms them
+ */
+
+/**
  * How dark each pixel of a rectangle is against the page, 0–1 of the rectangle's darkest: the label's ink whatever
  * its color. Null when nothing in it is INK_MIN_CONTRAST from the page.
  *
@@ -622,8 +631,7 @@ export function labelOptions(image, backgrounds, axis, which) {
  * @param {number[][]} backgrounds  0–255, the page's colors
  * @param {import('./axes.js').Axis} axis
  * @param {'x'|'y'} which  the axis it is
- * @returns {{read: (LabelReading|null)[], scale: TickValues|null}}  read: per tick, what its label reads as, unit
- *   signs left out (null without a label); scale: consistentValues of those
+ * @returns {AxisReading}
  */
 export function readAxisLabels(image, backgrounds, axis, which) {
     const options = labelOptions(image, backgrounds, axis, which);
@@ -634,4 +642,18 @@ export function readAxisLabels(image, backgrounds, axis, which) {
     const signs = unitSigns(founds.filter(Boolean));
     const read = founds.map(found => found && glyphsRead(found, signs));
     return { read, scale: consistentValues(axis.ticks.map((t, i) => ({ pos: t.pos, value: read[i]?.value ?? null }))) };
+}
+
+/**
+ * Read the tick labels of both axes of an image.
+ *
+ * @param {RgbaImage} image
+ * @param {import('./axes.js').Axes} axes  axes.js detectAxes'
+ * @returns {{x: AxisReading|null, y: AxisReading|null}}  null for an axis that wasn't found
+ */
+export function readTickLabels(image, axes) {
+    return {
+        x: axes.x ? readAxisLabels(image, axes.backgrounds, axes.x, 'x') : null,
+        y: axes.y ? readAxisLabels(image, axes.backgrounds, axes.y, 'y') : null,
+    };
 }

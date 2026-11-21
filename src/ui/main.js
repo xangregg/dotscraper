@@ -17,8 +17,9 @@ import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { createOutlineModel } from '../core/outline.js';
 import { detectAxes } from '../core/axes.js';
+import { readTickLabels } from '../core/labels.js';
 import { excludedBoxes, familyClips, maskOptions, fitInput, dotFills } from '../core/extract.js';
-import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis } from './axes-panel.js';
+import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis, tickStatus } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
 import {
@@ -100,7 +101,8 @@ const state = {
     showClose: true, // possible duplicates drawn in magenta with a shared ring (their 'close' flag stays either way)
     hoverDot: -1, // index into fit.dots of the dot Remove would take or Move has chosen, highlighted
     axes: null, // from detectAxes
-    axisEntries: { x: null, y: null }, // typed tick values and scale types
+    axisReadings: { x: null, y: null }, // the tick labels as read (core/labels.js readTickLabels)
+    axisEntries: { x: null, y: null }, // tick values (read from the labels, or typed) and scale types
     showAxes: true,
 };
 
@@ -1456,9 +1458,9 @@ function baseName() {
 
 function renderAxesPanel() {
     for (const k of ['x', 'y']) {
-        renderAxis($(`axis-${k}`), k, state.axes?.[k] ?? null, state.axisEntries[k], state.image, entry => {
+        renderAxis($(`axis-${k}`), k, state.axes?.[k] ?? null, state.axisEntries[k], state.axisReadings[k], state.image, entry => {
             state.axisEntries[k] = entry;
-            saveEntries(state.hash, state.axisEntries);
+            saveEntries(state.hash, state.axisEntries, state.axisReadings);
             renderAxesPanel();
         });
     }
@@ -1469,13 +1471,14 @@ function renderAxesPanel() {
             + 'with resampled or antialiased edges the real position error is several times larger (a few tenths of a px), '
             + 'and tick placement adds the scale residual shown above.');
     else
-        note.push('Type tick values to get data coordinates.');
+        note.push('Type tick values to get data coordinates: an axis\'s are read from its labels only when at least three of them fit one scale.');
     $('axes-note').textContent = note.join(' ');
     const summary = ['x', 'y'].map(k => {
         if (!state.axes?.[k])
             return `${k} not found`;
         const sk = s[k]?.kind;
-        return sk === 'numeric' ? `${k} ${state.axisEntries[k].type}` : sk === 'category' ? `${k} categories` : `${k}: ${state.axes[k].ticks.length} ticks, no values`;
+        const read = state.axes[k].ticks.every((_, i) => tickStatus(state.axisEntries[k], state.axisReadings[k], i));
+        return sk === 'numeric' ? `${k} ${state.axisEntries[k].type}${read ? ', read' : ''}` : sk === 'category' ? `${k} categories` : `${k}: ${state.axes[k].ticks.length} ticks, no values`;
     });
     $('axes-summary').textContent = state.image ? summary.join(' · ') : '';
     refreshAxisMarks();
@@ -1554,7 +1557,8 @@ async function setImage(name, image, jpeg, load) {
     setMode(null);
     view.setImage(image);
     state.axes = detectAxes(image);
-    state.axisEntries = loadEntries(state.hash, state.axes);
+    state.axisReadings = readTickLabels(image, state.axes);
+    state.axisEntries = loadEntries(state.hash, state.axes, state.axisReadings);
     renderAxesPanel();
     $('stage').focus();
     if (!await analyze({ auto: !jpeg }))

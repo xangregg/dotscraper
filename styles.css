@@ -777,6 +777,21 @@ input.needed::placeholder {
     text-align: right;
 }
 
+.axis td.from {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.axis td.from.warn {
+    color: var(--warning);
+}
+
+.axis h3 button {
+    font-size: 12px;
+    font-weight: 400;
+}
+
 .axis canvas {
     display: block;
     max-width: 90px;
