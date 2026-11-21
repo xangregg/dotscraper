@@ -1,5 +1,5 @@
 // RESULTS.md: the benchmark's result for every test and bench image, one table per set. Runs tools/bench.mjs (every
-// set it finds: the synthetic presets, bench1–3, and the local testgraphs and bench-nature images) with --json, and
+// set it finds: the synthetic presets, bench1–3, bench-plos, bench-r, and the local testgraphs and bench-nature images) with --json, and
 // writes the tables. The numbers are regenerated each time; the Notes column is hand-written and kept, matched by
 // set, image and kind of truth, so notes can be edited in RESULTS.md directly.
 //
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 let OUT = join(ROOT, 'RESULTS.md');
-const SET_ORDER = ['synthetic', 'bench1', 'bench2', 'bench3', 'testgraphs', 'bench-nature', 'bench-plos'];
+const SET_ORDER = ['synthetic', 'bench1', 'bench2', 'bench3', 'testgraphs', 'bench-nature', 'bench-plos', 'bench-r'];
 const SET_TITLES = {
     synthetic: 'Synthetic presets',
     bench1: 'bench1: JMP renderings, 100 dots',
@@ -25,6 +25,7 @@ const SET_TITLES = {
     testgraphs: 'testgraphs: real figures (local only)',
     'bench-nature': 'bench-nature: Nature figures (local only)',
     'bench-plos': 'bench-plos: PLOS ONE figures (CC BY)',
+    'bench-r': 'bench-r: R renderings, 40 dots (scientific notation, ggplot2\'s gray theme)',
 };
 const TRUTH = { exact: 'exact', data: 'data', hand: 'by hand' };
 const MODE = { exact: 'exact', noisy: 'noisy (auto)', jpeg: 'JPEG' };

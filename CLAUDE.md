@@ -58,7 +58,7 @@ bench1/ bench2/ bench3/  the user's own JMP renderings (PNG and JPEG) of one dat
                         bench3: 204 as beeswarms, x a lane). Exact ground truth; the user's to commit or not.
                         Tests using them skip when they're absent.
 bench-r/                R's renderings with tick labels in scientific notation, and of ggplot2's gray theme, drawn by
-                        bench-r/make.R, each with a CSV of its points and tick values: for the label benchmark and
+                        bench-r/make.R, each with a CSV of its points and tick values: for both benchmarks and
                         tests (which skip without it)
 tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
 tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
@@ -91,7 +91,7 @@ test/*.test.js          node:test + node:assert/strict
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose --jobs n]` runs style, mask and
   fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
-  sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. It fits 10 images at a time in worker threads (`--jobs n`
   for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
   (14% in all at 10), so compare times only between runs at one job count.

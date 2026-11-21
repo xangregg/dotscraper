@@ -1,9 +1,11 @@
 # bench-r: R's tick labels in scientific notation, and ggplot2's gray theme
 
 Scatterplots drawn by R for this project, to benchmark and test the finding of axes without axis lines (ggplot2's
-default theme) and the reading of tick labels written the two ways figures write large and small numbers: with the power of ten after an "e" (`1e+05`, R's own form in base graphics and
-ggplot2; JMP's `1e+5`; Excel's `1.E+05`) and as a number times a power of ten (`2 × 10³`, by plotmath or typed).
-Run with `npm run bench:labels -- --set bench-r`.
+default theme) and the reading of tick labels written the two ways figures write large and small numbers: with the
+power of ten after an "e" (`1e+05`, R's own form in base graphics and ggplot2; JMP's `1e+5`; Excel's `1.E+05`) and as
+a number times a power of ten (`2 × 10³`, by plotmath or typed).
+Run with `npm run bench:labels -- --set bench-r` (the axes and their labels) and `npm run bench -- --set bench-r`
+(the dots: each plot has 40, placed through the detected ticks).
 
 Nothing here comes from a publication: `make.R` draws every image from random points and writes, beside each, a CSV
 of the points in data units with the tick values in header lines. `Rscript make.R` in this directory draws them again

@@ -3414,3 +3414,23 @@ Not done, and known:
 - The translucent rules still accept text and ticks as two levels where both lie inside the plot's bounds or the
   axes bound nothing (labels above or right of a plot whose axes are at its left and bottom are inside).
 - bench-r is in the label benchmark only.
+
+**bench-r in the dot benchmark** (2026-11-21)
+
+bench-r's 26 plots are now a set of the dot benchmark too (`npm run bench -- --set bench-r`; `CSV_SETS` in
+tools/bench.mjs, and a table in RESULTS.md). Each plot has 40 opaque dots whose values R wrote beside it; the
+benchmark places them through the detected ticks, as it does a figure's published values.
+
+Result: every plot gives 40 found of 40, precision and recall 1.000, no dot flagged, RMSE 0.02 to 0.16 px (the
+largest on ggplot2's gray theme at 72 and 110 dpi, 0.15 and 0.16; 0.04 at 300 dpi), at radii from 3.1 px (R's
+default device) to 14.1. These are easy plots for the fit, sparse and opaque: the set is there for the axes and
+the labels, and now says that what follows from them, the plot's bounds, the mask and the families, holds too.
+log-e-turned, whose turned y labels are not read, and gg-gray-small, whose digits are too small, are placed like
+the rest: the truth goes through the ticks' positions and the header's values, not the labels as read.
+
+RESULTS.md has the new table, with a note per plot: 170 rows from 144, no failures, the other sets' rows as they
+were apart from times. It was built from the benchmark run set by set and merged, because a truth file being
+written in testgraphs (song-cents.csv, of 2026-11-21, with pixel positions and a y tick header that doesn't parse)
+stops a whole run; that file is left as it is, and has no row. testgraphs' ten images were fitted one at a time
+for the same reason, so their times in this table are each image's own, shorter than the header's "10 at a time"
+says. `npm run results` writes the same table in one run once that file reads.
