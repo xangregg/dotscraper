@@ -6,6 +6,16 @@ or circles fails.
 
 **Try it:** https://xangregg.github.io/dotscraper/ (everything runs in your browser; images are never uploaded)
 
+<p align="center">
+  <img src="images/synthetic-before.png" width="45%" alt="Part of a scatterplot: overlapping translucent green dots under a black curve and dashed gray lines">
+  &nbsp;
+  <img src="images/synthetic-after.png" width="45%" alt="The same part with a circle and a center cross on every dot found, blue or red">
+</p>
+
+Part of a scatterplot (a synthetic one, drawn to resemble a published figure), and the same part with the dots
+dotscraper finds: blue for a dot it is sure of, red for one it flags as doubtful (mostly hidden, deep in a stack, or
+weakly supported).
+
 ## How it works
 
 Analysis by synthesis. dotscraper measures the dots' style (color, size, transparency, edge blur, outline), sets aside
