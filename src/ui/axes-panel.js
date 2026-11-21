@@ -39,13 +39,14 @@ export function parseValue(text) {
 }
 
 /**
- * An entry with nothing typed.
+ * An entry with nothing typed: linear, or categories for an axis without tick marks, whose labels are the positions
+ * (core/axes.js labelAxis).
  *
  * @param {import('../core/axes.js').Axis|null} axis
  * @returns {AxisEntry}
  */
 export function defaultEntry(axis) {
-    return { type: 'linear', texts: axis ? axis.ticks.map(() => '') : [] };
+    return { type: axis?.ticks[0]?.source === 'label' ? 'category' : 'linear', texts: axis ? axis.ticks.map(() => '') : [] };
 }
 
 /**
@@ -212,10 +213,13 @@ export function renderAxis(el, name, axis, entry, image, onChange) {
     type.value = entry.type;
     type.addEventListener('change', () => onChange({ ...entry, type: type.value }));
     head.append(type);
-    const source = axis.ticks[0]?.source === 'grid' ? 'gridlines' : 'ticks';
+    const source = { grid: 'gridlines', label: 'labels' }[axis.ticks[0]?.source] ?? 'ticks';
     const info = document.createElement('p');
     info.className = 'fine';
-    info.textContent = `${axis.ticks.length} ${source}, ${axis.regular ? 'evenly' : 'unevenly'} spaced (mean ${axis.spacing.toFixed(2)} px).`;
+    // (a label's center is where its category is, to a pixel or two: bench3's "1" and "2" lie 1 and 1.5 px left of
+    // their swarms' centers)
+    info.textContent = `${axis.ticks.length} ${source}, ${axis.regular ? 'evenly' : 'unevenly'} spaced (mean ${axis.spacing.toFixed(2)} px).`
+        + (source === 'labels' ? ' No tick marks: each position is its label\'s center.' : '');
     el.append(info);
 
     const s = axisScale(axis, entry);

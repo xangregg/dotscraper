@@ -62,6 +62,11 @@ const OTHER_SIDE_MIN_LABELS = 3;
 // at a 74 px spacing, against "2007" and "2023" below; the plot was bounded above the baseline and every dot masked).
 // No ratio of the two sides' counts separates that from dots beside 4 of an inward frame's 6 ticks (6 to 4).
 const OTHER_SIDE_MAX_WIDTH = 1.5; // × the tick spacing
+// A category axis often has no tick marks: its labels alone mark the positions (labelAxis). It is the line that meets
+// an end of the other axis's line within AXIS_CORNER_TOL px (beyond the two lines' half thicknesses), with at least
+// CATEGORY_MIN_LABELS words in a row beside it: one word under a line is an axis title.
+const AXIS_CORNER_TOL = 3; // px
+const CATEGORY_MIN_LABELS = 2;
 const BACKGROUND_MIN_FRACTION = 0.05; // any flat color covering this share of the image is a background (panels)
 const GRID_BASELINE_TOL = 0.03; // × spacing: a dark baseline this close to the gridlines' progression is a tick
 const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of the line's length of either end
@@ -85,7 +90,8 @@ const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of
  * @property {'before'|'after'} side  'before' = above (x axis) or left (y axis)
  * @property {number[]|null} label  [x0, y0, x1, y1) box of the label's ink, or null
  * @property {number} [labelPath]  0–1, share of ink between the axis and the label
- * @property {'tick'|'grid'} source
+ * @property {'tick'|'grid'|'label'} source  a tick mark; a gridline standing in for one; or, on an axis without tick
+ *   marks, a label, whose center is the position
  */
 
 /**
@@ -453,6 +459,81 @@ export function findLabels(image, backgrounds, axis, ticks) {
     }
 }
 
+// how far a word's box is from an axis's edge, px, on the side it lies
+function wordGap(b, h, side, edge) {
+    return h ? (side === 'after' ? b[1] - edge : edge - b[3]) : (side === 'after' ? b[0] - edge : edge - b[2]);
+}
+
+// share of ink between an axis's edge and a word, across the word's extent along the axis
+function inkBetween(image, backgrounds, b, h, side, edge) {
+    const [a0, a1] = h ? [b[0], b[2]] : [b[1], b[3]];
+    const [n0, n1] = side === 'after' ? [Math.ceil(edge), h ? b[1] : b[0]] : [h ? b[3] : b[2], Math.floor(edge)];
+    let all = 0;
+    let ink = 0;
+    for (let a = a0; a < a1; a++) {
+        for (let c = n0; c < n1; c++) {
+            all++;
+            if (isInk(image.data, 4 * (h ? c * image.width + a : a * image.width + c), backgrounds))
+                ink++;
+        }
+    }
+    return all ? ink / all : 0;
+}
+
+/**
+ * An axis whose labels alone mark its positions, with no tick marks: a category axis (bench3: "1" and "2" under the
+ * two swarms; cells1: the bars' names under their baseline). It is a dark line meeting an end of the other axis's
+ * line, the plot's corner, and the words in the row nearest it on the side away from the plot, between the other
+ * axis and the line's far end; each word's center is a position. Words farther out are the axis's title. Null
+ * without such a line or with fewer than CATEGORY_MIN_LABELS words.
+ *
+ * Not for a line elsewhere in the plot (a bracket, a box's edge), which has dots and text beside it, and not for the
+ * other axis's own labels, which lie beyond its line (JMP's bottom y label straddles the x axis line there).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[][]} backgrounds
+ * @param {Line[]} lines
+ * @param {'h'|'v'} dir  the direction of the axis looked for
+ * @param {Line} other  the other axis's line
+ * @returns {{line: Line, ticks: Tick[]}|null}
+ */
+function labelAxis(image, backgrounds, lines, dir, other) {
+    const h = dir === 'h';
+    for (const line of lines.filter(l => l.dir === dir && l.dark)) {
+        const corner = Math.abs(other.from - line.pos) <= Math.abs(other.to - line.pos) ? other.from : other.to;
+        const tol = AXIS_CORNER_TOL + (line.thickness + other.thickness) / 2;
+        if (Math.abs(corner - line.pos) > tol || other.pos < line.from - tol || other.pos > line.to + tol)
+            continue;
+        // the plot lies where the other axis runs to, the labels on the line's other side
+        const far = corner === other.from ? other.to : other.from;
+        const side = far > line.pos ? 'before' : 'after';
+        const reach = LABEL_SEARCH_FRACTION[dir] * (h ? image.height : image.width);
+        const edge = side === 'after' ? line.pos + line.thickness / 2 + 1 : line.pos - line.thickness / 2 - 1;
+        const c0 = Math.max(0, Math.floor(side === 'after' ? edge : edge - reach));
+        const c1 = Math.min(h ? image.height : image.width, Math.ceil(side === 'after' ? edge + reach : edge));
+        const toEnd = Math.abs(line.to - other.pos) >= Math.abs(line.from - other.pos);
+        const a0 = toEnd ? other.pos + other.thickness / 2 : line.from;
+        const a1 = toEnd ? line.to : other.pos - other.thickness / 2;
+        if (c1 <= c0 || a1 <= a0)
+            continue;
+        const words = mergeWords(inkComponents(image, backgrounds, h ? [a0, c0, a1, c1] : [c0, a0, c1, a1]).map(c => c.box));
+        if (words.length < CATEGORY_MIN_LABELS)
+            continue;
+        // the labels are the row at the smallest gap, as an axis's tick labels are (labelsOnSide)
+        const minGap = Math.min(...words.map(b => wordGap(b, h, side, edge)));
+        const tolGap = Math.max(LABEL_COLUMN_MIN_TOL, 0.5 * median(words.map(b => b[3] - b[1])));
+        const row = words.filter(b => wordGap(b, h, side, edge) <= minGap + tolGap);
+        if (row.length < CATEGORY_MIN_LABELS)
+            continue;
+        const ticks = row.map(b => ({
+            pos: h ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2, length: 0, side, label: b,
+            labelPath: inkBetween(image, backgrounds, b, h, side, edge), source: 'label',
+        })).sort((p, q) => p.pos - q.pos);
+        return { line, ticks };
+    }
+    return null;
+}
+
 // tick → { box, path } for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without
 // them), and no wider along the axis than `maxWidth` spacings: the label's box and the share of ink between the axis
 // and it
@@ -472,22 +553,8 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth
     const rect = h ? [a0, c0, a1, c1] : [c0, a0, c1, a1];
     // Tick labels form a column (y) or row (x) at a consistent gap from the ticks; axis titles and other text are
     // farther out. Keep words whose gap is within half a label height of the smallest gap.
-    const gapOf = b => (h ? (side === 'after' ? b[1] - edge : edge - b[3]) : (side === 'after' ? b[0] - edge : edge - b[2]));
-    // share of ink between the axis (beyond reachFrom) and a word, across the word's extent along the axis
-    const pathInk = b => {
-        const [a0w, a1w] = h ? [b[0], b[2]] : [b[1], b[3]];
-        const [n0, n1] = side === 'after' ? [Math.ceil(edge), h ? b[1] : b[0]] : [h ? b[3] : b[2], Math.floor(edge)];
-        let all = 0;
-        let ink = 0;
-        for (let a = a0w; a < a1w; a++) {
-            for (let c = n0; c < n1; c++) {
-                all++;
-                if (isInk(image.data, 4 * (h ? c * width + a : a * width + c), backgrounds))
-                    ink++;
-            }
-        }
-        return all ? ink / all : 0;
-    };
+    const gapOf = b => wordGap(b, h, side, edge);
+    const pathInk = b => inkBetween(image, backgrounds, b, h, side, edge);
     const assigned = [];
     for (const b of mergeWords(inkComponents(image, backgrounds, rect).map(c => c.box))) {
         const mid = h ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2;
@@ -569,7 +636,8 @@ function gridLabels(image, backgrounds, ticks, gridlines, dir) {
  * Detect the axes: the x axis is the dark horizontal line with the most ticks (ties: the lowest), the y axis the
  * dark vertical line with the most ticks (ties: the leftmost). Without a dark line with ticks on an axis, light
  * gridlines across the other direction stand in as its ticks (economist: no y axis line, horizontal gridlines),
- * with a dark baseline that continues their spacing (the economist's zero line).
+ * with a dark baseline that continues their spacing (the economist's zero line). Without those either, a line at
+ * the other axis's end with a row of labels and no tick marks is the axis, its labels the positions (labelAxis).
  *
  * @param {import('./image.js').RgbaImage} image
  * @returns {Axes}
@@ -634,14 +702,19 @@ export function detectAxes(image) {
         const regular = gaps.length > 0 && gaps.every(g => Math.abs(g - spacing) <= Math.max(1, 0.03 * spacing));
         return { ...axis, spacing, regular };
     };
-    const x = pick('h');
-    const y = pick('v');
+    let x = pick('h');
+    let y = pick('v');
+    // an axis with no tick marks and none standing in: its labels, at the plot's corner with the other axis
+    if (!x && y?.line)
+        x = labelAxis(image, backgrounds, lines, 'h', y.line);
+    else if (!y && x?.line)
+        y = labelAxis(image, backgrounds, lines, 'v', x.line);
     return { lines, backgrounds, x: finish(beyondOther(x, y)), y: finish(beyondOther(y, x)) };
 }
 
 /**
- * The plot area's sides that the axes show: an axis line with tick marks whose labels all lie on one side of it
- * bounds the data on the other side (x labels below the line: the plot is above it). Gridline axes and axes with
+ * The plot area's sides that the axes show: an axis line with tick marks (or, without them, labels) whose labels
+ * all lie on one side of it bounds the data on the other side (x labels below the line: the plot is above it). Gridline axes and axes with
  * labels on both sides bound nothing (the economist's zero line has data on both sides; a baseline through the
  * middle of a beeswarm would too).
  *
@@ -654,7 +727,7 @@ export function plotBounds(axes) {
     const side = axis => {
         if (!axis?.line)
             return 0;
-        const labeled = axis.ticks.filter(t => t.source === 'tick' && t.label);
+        const labeled = axis.ticks.filter(t => t.source !== 'grid' && t.label);
         if (labeled.length < AXIS_MIN_LABELED_TICKS)
             return 0;
         const across = axis.line.dir === 'h' ? b => (b[1] + b[3] + 1) / 2 : b => (b[0] + b[2] + 1) / 2;

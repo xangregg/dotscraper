@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
 import { detectAxes, fitScale, toData, toPixel, resolution, guessValues, plotBounds } from '../src/core/axes.js';
 import { synthGraph, scatterPoints, labelBlocks } from '../src/core/synth.js';
-import { readPng } from '../tools/png.mjs';
+import { readPng, readImage } from '../tools/png.mjs';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -260,4 +260,92 @@ test('regression: boxdots1, a filled box\'s edges with dots along them are no x 
     const ax = detectAxes(readPng(PLOS + BOXDOTS1));
     assert.equal(ax.x, null, `x axis at ${ax.x?.line?.pos}`);
     assert.deepEqual(plotBounds(ax), { left: null, right: null, top: null, bottom: null });
+});
+
+// a graph with two columns of dots over an x axis that has labels and no tick marks, and a y axis with ticks
+function categoryPlot(xTicks = [150, 310]) {
+    const rng = createRng(7);
+    return {
+        width: 420, height: 360, background: [255, 255, 255], blur: 0.5,
+        families: [{
+            color: [70, 120, 220], alpha: 1, radius: 5,
+            points: xTicks.flatMap(x => scatterPoints(rng, { n: 20, box: [x - 30, 40, x + 30, 270] })),
+        }],
+        axes: {
+            x: { pos: 290.5, from: 59, to: 405, ticks: xTicks, labelsOnly: true },
+            // the bottom tick is at the corner: its label lies beside the x axis line's end, beyond the y axis
+            y: { pos: 60.5, from: 20, to: 291.5, ticks: [290.5, 230, 170, 110, 50] },
+        },
+    };
+}
+
+// a solid black block, as an axis title's
+function block(image, [x0, y0, x1, y1]) {
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++)
+            image.data.set([0, 0, 0, 255], 4 * (y * image.width + x));
+    }
+}
+
+test('an axis with labels and no tick marks: the labels are its positions; a title under them is not', () => {
+    const spec = categoryPlot();
+    const { image } = synthGraph(spec);
+    // the axis's title, a row below the labels
+    block(image, [200, 322, 260, 332]);
+    const ax = detectAxes(image);
+    assert.ok(ax.x, 'an x axis');
+    near(ax.x.line.pos, 290.5, 0.5, 'the x axis line');
+    assert.deepEqual(ax.x.ticks.map(t => t.source), ['label', 'label']);
+    assert.deepEqual(ax.x.ticks.map(t => t.length), [0, 0]);
+    ax.x.ticks.forEach((t, i) => near(t.pos, spec.axes.x.ticks[i], 1, `position ${i}`));
+    const blocks = labelBlocks(spec.axes);
+    for (const t of ax.x.ticks)
+        assert.ok(blocks.some(k => k[0] - 2 <= t.label[0] && t.label[2] <= k[2] + 2 && k[1] - 2 <= t.label[1] && t.label[3] <= k[3] + 2), `label box ${t.label}`);
+    // the y axis is as it was, its corner label its own
+    assert.equal(ax.y.ticks.filter(t => t.label).length, 5);
+    assert.ok(ax.y.ticks.every(t => t.source === 'tick'));
+    // the line bounds the plot: its labels are below it
+    assert.deepEqual(plotBounds(ax), { left: ax.y.line.pos, right: null, top: null, bottom: ax.x.line.pos });
+});
+
+test('no category axis from one word under a line, or from a line that isn\'t at the other axis\'s end', () => {
+    // one label: an axis title, not a category
+    assert.equal(detectAxes(synthGraph(categoryPlot([230])).image).x, null);
+    // no label at all
+    const bare = categoryPlot();
+    bare.axes.label = [0, 0];
+    bare.axes.x.ticks = [];
+    assert.equal(detectAxes(synthGraph(bare).image).x, null);
+    // the labeled line is up in the plot, not at the y axis's end: a bracket or a box's edge with text under it
+    const spec = categoryPlot();
+    spec.axes.x.pos = 180.5;
+    spec.families[0].points = spec.families[0].points.filter(p => p.y < 160);
+    assert.equal(detectAxes(synthGraph(spec).image).x, null);
+});
+
+const BENCH3 = new URL('../bench3/', import.meta.url).pathname;
+
+test('regression: bench3, the category axis under the swarms has no tick marks', { skip: !existsSync(BENCH3 + 'dots-swarm.png') && 'bench3 absent' }, () => {
+    // before: no x axis (an axis needed tick marks), so the plot had no bottom side and the axes panel no x
+    for (const name of ['dots-swarm.png', 'dots-packed.jpg', 'dots-swarm-grid.png']) {
+        const ax = detectAxes(readImage(BENCH3 + name));
+        assert.ok(ax.x, `${name}: an x axis`);
+        assert.deepEqual(ax.x.ticks.map(t => t.source), ['label', 'label'], name);
+        // the lanes are at 206.5 and 479.5 px (data.csv's plot area and scale); the labels "1" and "2" are centered
+        // 1.5 and 1 px left of them, their ink not being centered on their advance
+        near(ax.x.ticks[0].pos, 206.5, 2, `${name}: lane 1`);
+        near(ax.x.ticks[1].pos, 479.5, 2, `${name}: lane 2`);
+        // "group", the title under them, is no third category
+        assert.equal(ax.x.ticks.length, 2, name);
+        assert.equal(ax.y.ticks.filter(t => t.label).length, 7, `${name}: y labels`);
+        near(plotBounds(ax).bottom, 471.5, 0.6, `${name}: the plot's bottom`);
+    }
+});
+
+test('regression: cells1, the bars\' names under their baseline are the x axis\'s two categories', { skip: !existsSync(NATURE + CELLS1) && 'bench-nature cells1 absent' }, () => {
+    const ax = detectAxes(readPng(NATURE + CELLS1));
+    assert.deepEqual(ax.x?.ticks.map(t => t.source), ['label', 'label']);
+    // "L5PTs" and "GrCs", under the two bars (centered about 430 and 661 px)
+    near(ax.x.ticks[0].pos, 430, 6, 'L5PTs');
+    near(ax.x.ticks[1].pos, 661, 6, 'GrCs');
 });

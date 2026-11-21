@@ -164,8 +164,9 @@ function headerTicks(ticks, n) {
  * values: x ticks left to right, y ticks bottom to top. When more ticks are detected than the header lists, its values
  * pair with the labeled ticks.
  *
- * Lane data needs no x ticks: x only says which lane a dot is in. Without x ticks to match (category axes often have
- * none: cells1, hair1, protrusion3), each dot's x is NaN, `laneCenters` is null and `lanesFromDots` is set: the
+ * Lane data needs no x ticks: x only says which lane a dot is in. A category axis without tick marks gives its
+ * labels' centers as ticks (axes.js labelAxis: cells1). Without any x ticks to match (hair1, protrusion3), each dot's
+ * x is NaN, `laneCenters` is null and `lanesFromDots` is set: the
  * scorer finds the lanes in the fitted dots (laneCentersFromDots).
  *
  * @param {ReturnType<typeof readTruthCsv>} truth

@@ -2875,3 +2875,47 @@ or imported and unused.
 three with their sorts take 0.17 s of 1,024 s (0.016%): 0.06 s under fitFill, 0.04 under findColormap, 0.03 under
 radiusFromDistance, 0.02 under paletteColors, and no array is sorted twice for two statistics. A variant taking a
 sorted array would save nothing that shows, so there is none.
+
+**Category axes without tick marks; where axis detection stands** (2026-11-21)
+
+Surveyed on the 118 local images: both axes found on 102, no x axis on 13, no y axis on 2, neither on 1. Each of the
+219 axes found has at least two labeled ticks, so finding the label boxes is not the weak point; reading them is
+missing (the user types the values), and so were category axes, which have labels and no tick marks. Label boxes are
+small: a median of 13 px tall, 141 of the 219 axes under 16 px (the JMP renderings); published figures 28 to 74 px.
+
+Of the 13 with no x axis, ten are one case: an axis line, no tick marks, a row of labels beside it (bench3's nine
+renderings: "1" and "2" under the swarms, with the title "group" below; cells1: "L5PTs" and "GrCs" under its bars'
+baseline). An axis needed tick marks, or gridlines standing in for them, so the line was dropped.
+
+- **labelAxis** (axes.js), tried when an axis is still missing and the other one has a line: a dark line that meets
+  an end of the other axis's line within 3 px (the plot's corner) and has at least two words in the row nearest it,
+  on the side away from the plot, between the other axis and the line's far end. Each word's center is a position:
+  a tick of length 0 with `source: 'label'`. The row is the words at the smallest gap, as for tick labels, so a title
+  farther out is not a category; one word alone is taken for a title; the other axis's own label at the corner lies
+  beyond its line (JMP's bottom y label straddles the x axis line there) and is outside the band searched.
+- Such an axis bounds the plot as one with tick marks does (plotBounds), and its line and far end are clip
+  candidates.
+- The app's axes panel starts it as categories and says the positions are label centers.
+- The positions are the labels' ink centers: bench3's are 205.0 and 478.5 px against lanes at 206.5 and 479.5 (a
+  "1" isn't centered on its advance), cells1's 431.5 and 660.0 under bars centered near 430 and 661.
+
+Not this case, and left: hair1 (its baseline is broken by the dots sitting on it, and no line is found; it has two
+tick marks), boxdots1 (no y axis; box edges for lines), beeswarm-boxplot (no axis line; names on a gray band under
+the plot, one in red), protrusion3 (one box, no label at all).
+
+Reading the labels (asked 2026-11-21; nothing tried yet). Tesseract.js would do it in the browser, at the price of
+the first runtime dependency and a download of its engine and language data; a built-in text detector isn't
+available across browsers. A reader of our own for tick labels looks feasible without either: the alphabet is
+small (digits, point, minus, sometimes % or an exponent), the glyph boxes are already found, and the axis checks
+the reading, since evenly spaced ticks must fit a linear or log scale (two right labels fix it, a misread shows as a
+tick off the fit, as typed values are flagged now). 23 truth files already list their tick values (bench1–3 and
+about 20 real figures, with log scales and decimals), so its accuracy can be measured from the start. Open:
+superscript exponents (phase1's 10¹), rotated y labels, units and thousands separators.
+
+Results: the ten images gain an x axis of two label positions, and no axis of the other 108 changes. Every fitted
+dot and estimate of the 118 is the same, by digest, the plot's new bottom side included, and the bench rows of
+bench3 and cells1 are unchanged; cells1's lane truth now pairs with the label positions (431.5 and 660 px) where it
+took the lanes from the fitted dots. 233 tests pass. In the app bench3 dots-swarm shows the x axis with a mark at
+each label, starts it as categories, and fits the same 204 dots, with no console errors. Tests: a synthetic graph
+with a labels-only axis (synth.js AxisSpec.labelsOnly), a title under the labels and a y label at the corner; one
+word, no word, and a labeled line away from the corner give no axis; bench3 (three renderings) and cells1.

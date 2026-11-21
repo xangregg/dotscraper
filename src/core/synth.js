@@ -32,6 +32,8 @@ import { createDotModel, solidImage, toRgba, gaussianKernel, blurRect } from './
  * @property {number} from       px, start of the line along the axis
  * @property {number} to         px, end
  * @property {number[]} ticks    px positions along the axis
+ * @property {boolean} [labelsOnly]  no tick marks: a label block at each position, right beyond the line (a category
+ *   axis)
  */
 
 /**
@@ -217,13 +219,13 @@ function axisLines(axes) {
     if (axes.x) {
         const { pos, from, to, ticks } = axes.x;
         out.push({ points: [[from, pos], [to, pos]], width, color });
-        for (const t of ticks)
+        for (const t of axes.x.labelsOnly ? [] : ticks)
             out.push({ points: [[t, pos], [t, pos + dir * (width / 2 + len)]], width, color });
     }
     if (axes.y) {
         const { pos, from, to, ticks } = axes.y;
         out.push({ points: [[pos, from], [pos, to]], width, color });
-        for (const t of ticks)
+        for (const t of axes.y.labelsOnly ? [] : ticks)
             out.push({ points: [[pos, t], [pos - dir * (width / 2 + len), t]], width, color });
     }
     return out;
@@ -247,12 +249,14 @@ export function labelBlocks(axes) {
     const [w, h] = axes.label ?? [14, 10];
     const out = [];
     if (axes.x) {
+        const out0 = axes.x.pos + width / 2 + (axes.x.labelsOnly ? 0 : len) + LABEL_GAP;
         for (const t of axes.x.ticks)
-            out.push([t - w / 2, axes.x.pos + width / 2 + len + LABEL_GAP, t + w / 2, axes.x.pos + width / 2 + len + LABEL_GAP + h]);
+            out.push([t - w / 2, out0, t + w / 2, out0 + h]);
     }
     if (axes.y) {
+        const out0 = axes.y.pos - width / 2 - (axes.y.labelsOnly ? 0 : len) - LABEL_GAP;
         for (const t of axes.y.ticks)
-            out.push([axes.y.pos - width / 2 - len - LABEL_GAP - w, t - h / 2, axes.y.pos - width / 2 - len - LABEL_GAP, t + h / 2]);
+            out.push([out0 - w, t - h / 2, out0, t + h / 2]);
     }
     return out;
 }
