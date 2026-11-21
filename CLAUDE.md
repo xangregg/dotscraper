@@ -37,7 +37,8 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         families: levels, alpha, color), opaque.js (opaque families: measureOpaque, opaqueFamilies, radius
                         from shapes), shape.js (isolated dots, components, edge blur), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
-                        ticks, labels, scales), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
+                        ticks, labels, scales), labels.js (reading tick labels' numbers: glyphs, digits by template, the
+                        check by the axis's scale; digit-templates.js, generated: the digits' shapes in 18 fonts), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
                         whole images whose fills vary, and single outlined families), annotations.js (text lines and legend markers, masked), families.js (all of the
@@ -62,6 +63,8 @@ tools/measure-dots.mjs  phase 0 measurement of a translucent dot family (levels,
 tools/truth-csv.mjs     truth sets in data units (benchN/data.csv) and their pixel positions through the plot area
 tools/truth-json.mjs    truth placed by hand (Save truth JSON, px, in testgraphs/truth/ and bench-nature/truth/); run
                         directly, it converts an old Save CSV export to one
+tools/label-bench.mjs   benchmark of the tick-label reader against the tick values the truth files list
+tools/make-digit-templates.mjs  writes src/core/digit-templates.js from tools/digit-fonts.html (digits drawn by Chrome)
 tools/                  bench and index scripts
 test/*.test.js          node:test + node:assert/strict
 ```
@@ -90,6 +93,11 @@ test/*.test.js          node:test + node:assert/strict
   for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
   (14% in all at 10), so compare times only between runs at one job count.
   Record results in PLAN.md.
+- Label benchmark: `npm run bench:labels [-- --set dir --verbose]` reads the tick labels of every image whose truth
+  lists tick values and prints, per set, the labels read right and the axes solved, wrong (a scale accepted with a
+  wrong value: there should be none), unchecked and left alone. Record results in PLAN.md.
+- Digit templates: `node tools/make-digit-templates.mjs` (server running) rewrites `src/core/digit-templates.js`
+  from the fonts of the machine it runs on; rerun the label benchmark after it.
 - Results table: `npm run results [-- --jobs n]` runs the full benchmark (about 3.5 minutes at the default 10 jobs,
   18.5 at `--jobs 1`) and rewrites RESULTS.md, a table per set with every image's counts, precision, recall and
   notes (`--json file` on the bench gives its rows); its header says how many images were fitted at a time. The numbers are

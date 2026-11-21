@@ -15,6 +15,7 @@
     "images:index": "node tools/images-index.mjs",
     "measure": "node tools/measure-dots.mjs",
     "bench": "node tools/bench.mjs",
+    "bench:labels": "node tools/label-bench.mjs",
     "results": "node tools/results.mjs"
   },
   "devDependencies": {

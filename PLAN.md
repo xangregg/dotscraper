@@ -2919,3 +2919,92 @@ took the lanes from the fitted dots. 233 tests pass. In the app bench3 dots-swar
 each label, starts it as categories, and fits the same 204 dots, with no console errors. Tests: a synthetic graph
 with a labels-only axis (synth.js AxisSpec.labelsOnly), a title under the labels and a y label at the corner; one
 word, no word, and a labeled line away from the corner give no axis; bench3 (three renderings) and cells1.
+
+**Reading tick labels: a reader in core, measured; not yet in the app** (2026-11-21)
+
+labels.js reads an axis's tick labels as numbers (`readAxisLabels`), and nothing calls it yet: this step is the
+reader and its measurement. It is a reader of our own, with no dependency: a label is cut into glyphs, the glyphs are
+digits, points, commas and minus signs by their size and place, digits are told apart by correlation with templates,
+and the axis checks the result.
+
+- **Finding the label again.** A label's box from axes.js is where to look, not what to read (cells1's "100" boxed
+  as "00", autocor1's "1.0" as "0", JMP's "60" boxed with two letters of the rotated title). The label is the line
+  of text through the box, cut into glyphs at empty columns and into words at gaps over 0.45 of the digits' height,
+  and the word at the tick (under an x tick; nearest the line beside a y axis, short of its tick marks). Touching
+  digits (a "4" and a "0" at 13 px share a gray column) are cut at the lightest column near even divisions.
+- **One line per axis** (`labelOptions`). The labels are found twice: each from its own box, and then on the line
+  the cleanly found ones share (one row below an x axis; one height and one offset from the tick beside a y axis).
+  A glyph reaching more than 0.15 of the height beyond that line is foreign and ends a word. This is what reads
+  JMP's y axes: the plot title's "p" hangs through "90" and the rotated axis title sits 6 px from "60", taller than
+  it. Before it the JMP y axes read 5 of 7 labels and the two others as "???" and "??".
+- **Kinds by geometry** (`glyphKinds`): tall glyphs are digits; a point is small and on the baseline; a comma's tail
+  ends below the label's own digits' feet (measured from them, not from the axis's line, which can be a pixel off:
+  fibers-distance's "3.7" read "3,7"); a minus is flat at mid-height; a dash after the number is a tick mark and is
+  dropped. Thousands separators are removed ("2,000"); anything else makes the label unread, never guessed.
+- **Unit signs** (`unitSigns`): a glyph that is no digit and is alike (correlation 0.85) at the start or end of
+  every label of an axis is left out: wages2025's "$320" is 320, droplet1's "75%" is 75 (in percent, the axis's own
+  unit, where its CSV has fractions).
+- **The scale check** (`consistentValues`): among linear and log scales through each pair of read values, the one
+  most read values agree with (within 2% of the least tick gap, or 1 px), refitted by least squares to those. It is
+  believed with at least three agreeing and at most a third as many read values against it. Ticks that are unread
+  or disagree get the scale's value, rounded to the roundest number within the tolerance (89.9083 from a tick half
+  a pixel off is 90). So one misread among several is corrected (dog-ages's "80" was read "60" by the first
+  templates), and without a scale nothing is offered: two labels, names, a repeated value.
+- **Templates** (digit-templates.js, generated). First try: the mean shape of each digit in bench1–3's own labels,
+  one font (JMP's Helvetica). On the real figures it misread Arial's "8" as "6" (dog-ages, step1, score2, comment1)
+  and didn't know other fonts' "1", "3", "5", "7" (adults1, wages2025, landing1's bold). Replaced by shapes drawn by
+  Chrome (tools/digit-fonts.html, run by tools/make-digit-templates.mjs) in 18 fonts of this Mac, each the mean over
+  nine sizes and four subpixel places, cut out by the reader's own segmentation. No template comes from a test image
+  now. Leaving each font out in turn, the other 17 tell all 180 of its digits. The floor for a digit's correlation
+  is 0.7: of 1,282 labels that their scale confirms, the least sure digit scores 0.72 and the rest 0.82 or more;
+  letters reach 0.6 (with a floor of 0.6 names read as "?5?1?").
+
+Measured with `npm run bench:labels` on the 93 images whose truth lists tick values (181 axes, 1,218 labels):
+
+| set | images | axes | labels read right | axes solved | wrong | unchecked (right) | none |
+|---|---|---|---|---|---|---|---|
+| bench1 | 32 | 64 | 448 of 480 | 64 | 0 | 0 | 0 |
+| bench2 | 32 | 64 | 448 of 480 | 64 | 0 | 0 | 0 |
+| bench3 | 9 | 18 | 72 of 81 | 9 | 0 | 9 (9) | 0 |
+| testgraphs | 2 | 3 | 19 of 19 | 2 | 0 | 1 (1) | 0 |
+| bench-nature | 14 | 24 | 98 of 121 | 18 | 0 | 2 (1) | 4 |
+| bench-plos | 4 | 8 | 29 of 37 | 5 | 0 | 0 | 3 |
+| all | 93 | 181 | 1,114 of 1,218 (91.5%) | 162 (89.5%) | 0 | 12 (11) | 7 |
+
+Solved: a scale found and every labeled tick's value right. Wrong: a scale found with a wrong value, the outcome that
+matters, and there is none. The first run, with one font and no shared line, rounding or disagreement rule, read 70%
+of the labels it covered, and its scale gave a wrong value on 73 of 108 axes: unrounded values such as 89.9083 on
+every JMP y axis, and hair3's doses taken for a log scale.
+
+The 104 labels not read one by one: JMP's "90" under the title's "p" in all 73 renderings (the scale gives it), 23
+names on Nature's category axes, and 8 on bench-plos (landing1's two names, grader1's six). The 19 axes not solved:
+- unchecked, every label read as a number and no scale to check it: bench3's x axes (two labels, "1" and "2"),
+  escape1 x (1 and 4), pathogen y (64 down to 1, and 0, on log(1 + y): neither linear nor log), hair3 x (doses 0, 5,
+  20, 50, 100, 200 as category names; read as written, where its CSV has 1 to 6);
+- none: names (cells1, hair2, protrusion1, protrusion2, landing1), and grader1's two axes, read from gridlines,
+  whose label boxes are not its labels (an axes.js matter).
+
+On the 45 real figures (83 axes with labels, most without tick truth): a scale on 61, unchecked 6, none 16. In 59 of
+the 61 every label was read and agrees. delta1's y axis has two false ticks (error-bar caps) that get the scale's
+unround values 154.3 and 145; kite2's "2" sits 13 px off its axis's even spacing, so the scale says 1.9 there and
+the tick is flagged as disagreeing. The 25 of these axes with truth are right; the other 36 give round, evenly
+stepped sequences that match the labels as read but were not each compared with the image by eye.
+
+Cost: 0.58 s for all 118 images (5 ms each, 45 ms at most, autocor1's 47 px digits), against 4.3 s for detectAxes.
+
+Not done, and known:
+- The app doesn't use it. Next: offer a confirmed scale's values in the axes panel as proposals the user can
+  accept or overtype, marking the ticks whose own label disagrees or wasn't read, with the scale type.
+- Exponents: phase1's and primates' "10" with a raised power reads as 10, 10, 10 (the raised digit is foreign), so
+  those log axes get nothing. Common enough to be worth reading next.
+- Two-label axes have nothing to check them. Offering unchecked readings would have been right on the 12 with
+  truth (hair3's doses are right as written) and wrong on the exponent axes above.
+- Decimal commas, rotated labels, dates. Fonts with old-style figures (Georgia). matplotlib's DejaVu Sans isn't on
+  this Mac; Verdana, its near relation, stands in, and no local figure tests it.
+
+Tests (test/labels.test.js, 16): the templates' leave-one-font-out; kinds by geometry, with the point-versus-comma
+regression from fibers-distance; text drawn from the templates at 12 to 28 px with minus, comma and point, every
+font, a box cut short, touching digits; the scale check (an unread and a misread tick, log, decimals, and the cases
+that must give no scale); synthetic axes with thousands, unit signs, a neighbor's glyphs beside and through a label,
+names; bench-plos (step1, score2, droplet1, landing1) and bench1's medium-dots (PNG and JPEG). Removing the shared
+line, the unit signs, the splitting, the rounding, the disagreement rule or the baseline rule each fails a test.
