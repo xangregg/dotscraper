@@ -17,7 +17,14 @@ function blank(width, height) {
     return { width, height, data: new Uint8ClampedArray(4 * width * height) };
 }
 
-/** Overlap count D in gray, 0 black to COUNT_MAX_SHOWN white; off-line pixels dark red. */
+/**
+ * Overlap count D in gray, 0 black to COUNT_MAX_SHOWN white; off-line pixels dark red.
+ *
+ * @param {Float32Array} D  width × height; NaN off the family's line
+ * @param {number} width
+ * @param {number} height
+ * @returns {import('../core/image.js').RgbaImage}
+ */
 export function countOverlay(D, width, height) {
     const out = blank(width, height);
     for (let p = 0; p < D.length; p++) {
@@ -31,7 +38,13 @@ export function countOverlay(D, width, height) {
     return out;
 }
 
-/** The image with masked pixels tinted. */
+/**
+ * The image with masked pixels tinted.
+ *
+ * @param {import('../core/image.js').RgbaImage} image
+ * @param {Uint8Array} mask  1 where masked
+ * @returns {import('../core/image.js').RgbaImage}
+ */
 export function maskOverlay(image, mask) {
     const out = blank(image.width, image.height);
     out.data.set(image.data);
@@ -44,7 +57,15 @@ export function maskOverlay(image, mask) {
     return out;
 }
 
-/** Flat colors per pixel class; thin marks in the family's color on top. */
+/**
+ * Flat colors per pixel class; thin marks in the family's color on top.
+ *
+ * @param {Uint8Array} classes  core/layers.js CLASS_BACKGROUND, CLASS_FAMILY or CLASS_OTHER per pixel
+ * @param {Uint8Array} thin  1 on thin marks
+ * @param {number} width
+ * @param {number} height
+ * @returns {import('../core/image.js').RgbaImage}
+ */
 export function classOverlay(classes, thin, width, height) {
     const out = blank(width, height);
     for (let p = 0; p < classes.length; p++) {
@@ -68,6 +89,13 @@ const RESIDUAL_MASKED = [150, 150, 150];
 /**
  * Signed residual along the color line, image t minus model t: white where they agree, red where the image is
  * darker (a dot missing), blue where lighter (a dot too many or misplaced), gray where masked.
+ *
+ * @param {Float32Array} imgT  the image's t per pixel, 0–255 units
+ * @param {Float32Array} modelT  the model's
+ * @param {Uint8Array} mask  1 where masked
+ * @param {number} width
+ * @param {number} height
+ * @returns {import('../core/image.js').RgbaImage}  full color at RESIDUAL_FULL units
  */
 export function residualOverlay(imgT, modelT, mask, width, height) {
     const out = blank(width, height);
@@ -84,7 +112,12 @@ export function residualOverlay(imgT, modelT, mask, width, height) {
     return out;
 }
 
-/** An RgbImage (floats) as an RgbaImage for display. */
+/**
+ * An RgbImage (floats) as an RgbaImage for display.
+ *
+ * @param {import('../core/render.js').RgbImage} rgb
+ * @returns {import('../core/image.js').RgbaImage}
+ */
 export function rgbOverlay(rgb) {
     const out = blank(rgb.width, rgb.height);
     for (let p = 0; p < rgb.width * rgb.height; p++)
@@ -92,6 +125,10 @@ export function rgbOverlay(rgb) {
     return out;
 }
 
+/**
+ * @param {number[]} rgb  0–255, rounded and clamped
+ * @returns {string}  a CSS color
+ */
 export function cssColor(rgb) {
     return `rgb(${rgb.map(v => Math.round(Math.min(255, Math.max(0, v)))).join(' ')})`;
 }

@@ -265,7 +265,13 @@ export function fromRgba(image) {
     return { width: image.width, height: image.height, data };
 }
 
-/** The smallest rectangle [x0, y0, x1, y1) holding two. */
+/**
+ * The smallest rectangle holding two.
+ *
+ * @param {number[]} a  [x0, y0, x1, y1), px
+ * @param {number[]} b
+ * @returns {number[]}
+ */
 export function unionRect(a, b) {
     return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
 }
@@ -286,6 +292,8 @@ export function unionRect(a, b) {
  * @param {number} kHalf  px, the blur kernel's half-width (0 without blur)
  * @param {{data: Float32Array, stride: number, blurred: boolean}[]} buffers  the model's planes that a snapshot
  *   saves: `stride` values per pixel; a `blurred` one is saved over the rectangle grown by kHalf
+ * @returns {object}  the store: newId, get, put, drop (records by id); near (the records of the dots near a
+ *   rectangle) and entries (all, by id); blurredRect; snapshot and restore. Each is documented where it is defined.
  */
 export function createDotStore(width, height, radius, kHalf, buffers) {
     const cell = Math.max(1, GRID_CELL_RADII * radius);
@@ -428,6 +436,9 @@ export function createDotStore(width, height, radius, kHalf, buffers) {
  * @param {RgbImage} background  composited under the dots; not modified (a later family's background can be an
  *                               earlier family's rendering)
  * @param {DotStyle} style
+ * @returns {object}  the model: image and transmittance (live); valueOf; add, addAll, remove, move; footprint and
+ *   influenceRect (the pixels a dot touches, before and after the blur); snapshot and restore; dots. Each is
+ *   documented where it is defined.
  */
 export function createDotModel(background, style) {
     const { width, height } = background;

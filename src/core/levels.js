@@ -54,15 +54,29 @@ const MAX_MISSING_LEVELS = 1; // overlap counts that may lack a level between me
  * @property {number} t      0–255 units along the line
  * @property {number[]} color  mean color of the flat pixels at the level
  * @property {number} count  flat pixels at the level
+ * @property {boolean} [inferred]  no flat pixel shows it: its color is the fit's (withMissingLevels), its count 0
  */
 
 /**
- * The line from B toward a seed color.
+ * A family measured as levels along a color line (measureFamily).
  *
- * @param {number[]} B
- * @param {number[]} seed
- * @returns {ColorLine}
+ * @typedef {object} LevelMeasure
+ * @property {'translucent'} kind  how it was measured (opaque.js measureOpaque's are 'opaque'), not whether it is
+ *   a family: see `translucent`
+ * @property {number[]} seed  0–255, the color the line was aimed at
+ * @property {ColorLine} line
+ * @property {{t: Float32Array, perp: Float32Array}} proj  every pixel's distance along the line and off it
+ * @property {Level[]} levels  the overlap levels, nearest B first
+ * @property {Level[]} beyond  plateaus past the last level (an opaque mark in the family's hue)
+ * @property {{alpha: number, c: number[], rms: number, maxAbs: number}|null} fit  α and the full color c the levels
+ *   give (fitGeometric); null without a level
+ * @property {number} pixels  flat pixels at the levels
+ * @property {boolean} translucent  two levels or more, and a fit a translucent family can have
+ * @property {number[]} [band]  0–255: a band or box in the family's own hue that was read as a level, and set apart
+ *   (style.js withoutBand, overBand, boxBand)
+ * @property {boolean} [box]  the band is a box under the dots (style.js boxBand)
  */
+
 /**
  * Where a vector lies against another: `m`, the multiple of w nearest v, and `off`, v's distance from that point.
  * With v and w two colors measured from a third, it is the test for a mix: on the line (off small) and between the
@@ -78,6 +92,13 @@ export function alongLine(v, w) {
     return { m, off: Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) };
 }
 
+/**
+ * The line from B toward a seed color.
+ *
+ * @param {number[]} B  0–255
+ * @param {number[]} seed  0–255
+ * @returns {ColorLine}
+ */
 export function colorLine(B, seed) {
     return { B, u: unit(sub(B, seed)) };
 }
@@ -335,7 +356,7 @@ export function countImage(proj, line, table, tol = EXACT_TOLERANCES) {
  * Translucent families (two or more levels) come first, by pixel count.
  *
  * @param {Scan} scan  its image, page color, flat mask and tolerances
- * @returns {object[]}  candidates: { seed, line, levels, beyond, fit, pixels, translucent }
+ * @returns {LevelMeasure[]}  the candidates
  */
 export function familyCandidates(scan) {
     const { image, B, flat } = scan;
@@ -415,7 +436,8 @@ export function familyCandidates(scan) {
  * @param {Scan|{image: object, B: number[], flat: Uint8Array, tol?: Tolerances}} scan  its image, the color the line
  *   starts from (B), the flat mask and the tolerances; a rule measuring without some pixels passes
  *   { ...scan, flat: rest }
- * @param {number[]} seed
+ * @param {number[]} seed  0–255
+ * @returns {LevelMeasure}
  */
 export function measureFamily(scan, seed) {
     const { image, B } = scan;
@@ -433,7 +455,7 @@ export function measureFamily(scan, seed) {
         }
     }
     return {
-        seed, line, proj, levels, beyond: found.beyond, fit,
+        kind: 'translucent', seed, line, proj, levels, beyond: found.beyond, fit,
         pixels: levels.reduce((s, L) => s + L.count, 0),
         translucent: levels.length >= 2 && plausible,
     };
@@ -450,7 +472,7 @@ function isPlausible(fit) {
  * Counts after the first level may skip up to MAX_MISSING_LEVELS; the fewest skips with a plausible fit win, then
  * the lowest rms. The missing levels get the fitted colors, with count 0 and `inferred` set.
  *
- * @returns {{levels: Level[], fit: object}|null}
+ * @returns {{levels: Level[], fit: {alpha: number, c: number[], rms: number, maxAbs: number}}|null}  fit: fitGeometric's
  */
 function withMissingLevels(B, line, levels) {
     const colors = [B, ...levels.map(L => L.color)];

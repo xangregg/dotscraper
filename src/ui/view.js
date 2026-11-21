@@ -35,6 +35,8 @@ const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axi
  * @param {function(number, number, {alt: boolean, point: {x: number, y: number}}): void} opts.onClick  image pixel
  *   clicked (a press and release without a drag), whether Option/Alt was held, and the exact point (image px)
  * @param {function(number): void} opts.onZoom  the new scale
+ * @returns {object}  the view: setImage, fit, setAxisMarks, setMarks and the rest that set what is drawn; zoomBy and
+ *   zoomTo; ZOOM_STEP. Each is documented where it is defined.
  */
 export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     const ctx = canvas.getContext('2d');

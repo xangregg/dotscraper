@@ -10,7 +10,26 @@ const CROP_HEIGHT = 20; // CSS px, label crops in the tick table
 const CROP_PAD = 2; // px of image around a label box
 const AGREE_PX = 1; // typed ticks off their fitted position by more than this are flagged
 
-/** Parse a typed tick value: accepts a Unicode minus and thousands separators. */
+/**
+ * @typedef {object} AxisEntry  what the user typed for an axis
+ * @property {'linear'|'log'|'category'} type
+ * @property {string[]} texts  per tick: its value, or its category's name
+ */
+
+/**
+ * The scale an entry implies (axisScale).
+ *
+ * @typedef {{kind: 'numeric', scale: {type: string, a: number, b: number}, known: object[], guesses: (number|null)[]}
+ *   | {kind: 'category', positions: number[], names: string[]}
+ *   | {kind: 'none', guesses: (number|null)[]}} AxisScale
+ */
+
+/**
+ * Parse a typed tick value: accepts a Unicode minus and thousands separators.
+ *
+ * @param {string|null|undefined} text
+ * @returns {number|null}  null when empty, NaN when it isn't a number
+ */
 export function parseValue(text) {
     const t = (text ?? '').trim().replace(/−/g, '-').replace(/,/g, '');
     if (t === '')
@@ -19,10 +38,24 @@ export function parseValue(text) {
     return Number.isFinite(v) ? v : NaN;
 }
 
+/**
+ * An entry with nothing typed.
+ *
+ * @param {import('../core/axes.js').Axis|null} axis
+ * @returns {AxisEntry}
+ */
 export function defaultEntry(axis) {
     return { type: 'linear', texts: axis ? axis.ticks.map(() => '') : [] };
 }
 
+/**
+ * The entries remembered for an image, or empty ones; one whose tick count no longer matches the detected ticks is
+ * dropped.
+ *
+ * @param {string} hash  image.js pixelHash of the image
+ * @param {import('../core/axes.js').Axes} axes
+ * @returns {{x: AxisEntry, y: AxisEntry}}
+ */
 export function loadEntries(hash, axes) {
     let stored = null;
     try {
@@ -41,6 +74,12 @@ export function loadEntries(hash, axes) {
     return out;
 }
 
+/**
+ * Remember an image's entries (in localStorage; quietly not, where storage is blocked).
+ *
+ * @param {string} hash  image.js pixelHash of the image
+ * @param {{x: AxisEntry, y: AxisEntry}} entries
+ */
 export function saveEntries(hash, entries) {
     try {
         localStorage.setItem(STORAGE_PREFIX + hash, JSON.stringify(entries));
@@ -51,8 +90,13 @@ export function saveEntries(hash, entries) {
 }
 
 /**
- * The scale an axis entry implies: numeric ({ kind: 'numeric', scale, known, guesses }) from at least two typed
- * values, categories ({ kind: 'category', positions, names }), or null.
+ * The scale an axis entry implies: numeric from at least two typed values (scale: core/axes.js fitScale's; known:
+ * the ticks with a value; guesses: a value for every tick, guessValues'), categories (the ticks' positions, px, and
+ * names), or none yet (guesses only). Null without an axis.
+ *
+ * @param {import('../core/axes.js').Axis|null} axis
+ * @param {AxisEntry} entry
+ * @returns {AxisScale|null}
  */
 export function axisScale(axis, entry) {
     if (!axis)
@@ -66,7 +110,13 @@ export function axisScale(axis, entry) {
     return scale ? { kind: 'numeric', scale, known, guesses } : { kind: 'none', guesses };
 }
 
-/** A pixel position (along the axis) in data terms: a number, a category name, or null. */
+/**
+ * A pixel position (along the axis) in data terms: a number, a category name, or null.
+ *
+ * @param {AxisScale|null} s
+ * @param {number} px
+ * @returns {number|string|null}
+ */
 export function toAxisData(s, px) {
     if (!s)
         return null;
@@ -83,12 +133,24 @@ export function toAxisData(s, px) {
     return null;
 }
 
-/** Data units per pixel at a position, or null. */
+/**
+ * Data units per pixel at a position, or null.
+ *
+ * @param {AxisScale|null} s
+ * @param {number} px
+ * @returns {number|null}
+ */
 export function axisResolution(s, px) {
     return s?.kind === 'numeric' ? resolution(s.scale, px) : null;
 }
 
-/** Format a data value with about as many significant digits as one pixel resolves, plus one. */
+/**
+ * Format a data value with about as many significant digits as one pixel resolves, plus one.
+ *
+ * @param {number|string|null|undefined} v  a value, a category name, or nothing ('–')
+ * @param {number|null} [res]  data units per px
+ * @returns {string}
+ */
 export function formatData(v, res) {
     if (v === null || v === undefined)
         return '–';
@@ -126,10 +188,10 @@ function labelCrop(image, box) {
  *
  * @param {HTMLElement} el
  * @param {string} name  'x' or 'y'
- * @param {object|null} axis  from detectAxes
- * @param {object} entry
+ * @param {import('../core/axes.js').Axis|null} axis  from detectAxes
+ * @param {AxisEntry} entry
  * @param {import('../core/image.js').RgbaImage} image
- * @param {function(object): void} onChange  the new entry
+ * @param {function(AxisEntry): void} onChange  the new entry
  */
 export function renderAxis(el, name, axis, entry, image, onChange) {
     el.replaceChildren();

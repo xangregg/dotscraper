@@ -16,6 +16,39 @@ import {
 } from './opaque.js';
 
 /** @typedef {import('./scan.js').Scan} Scan */
+/** @typedef {import('./levels.js').LevelMeasure|import('./opaque.js').OpaqueMeasure} FamilyMeasure */
+
+/**
+ * One dot family of an image, measured and ready to be masked and fitted (estimateStyle). families.js prepares one
+ * per family and adds the fields marked so.
+ *
+ * @typedef {object} Estimate
+ * @property {{color: number[], fraction: number}} background  what the dots lie on: 0–255, and its share of the image
+ * @property {FamilyMeasure[]} candidates  every family found in the image
+ * @property {number} family  this one's index among them
+ * @property {Uint8Array|null} [flat]  scan.js flatMask of the image
+ * @property {FamilyMeasure} [familyMeasure]  candidates[family]; absent when no family was found
+ * @property {import('./render.js').DotStyle|null} style  what the fit draws the dots with: color, alpha, levels,
+ *   radius and blur (px; null when no dot shape shows), measuredLevels, and for outlined dots ring, outline or
+ *   layered; null when no family was found
+ * @property {Float32Array|null} D  per pixel, the overlap count of the family's dots (translucent) or their
+ *   coverage, 0–1 (opaque); NaN where it can't be read
+ * @property {Float32Array} [fitT]  per pixel, what the fit compares its model with, when it isn't the image along
+ *   the family's line (opaque: the coverage in color units; outlines: the ring image)
+ * @property {{cx: number, cy: number, r: number}[]} isolated  whole single dots (shape.js isolatedDots), px
+ * @property {{sigma: number, offset: number, profile: object[]}|null} edge  the blur of the dots' edges (shape.js
+ *   edgeBlur or boundaryBlur)
+ * @property {string[]} notes  caveats, for display
+ * @property {{x: number, y: number}[]} [seeds]  px, centers for the fit to try first
+ * @property {import('./image.js').RgbaImage} [image]  families.js: the image to fit the family on (layers over the
+ *   dots divided out, or the family's own virtual image)
+ * @property {Float32Array} [base]  families.js, outlines: per pixel, what lies under the rings
+ * @property {Uint8Array} [outlineMask]  families.js, outlines: the mask the rings bring (layers.js buildMask)
+ * @property {number[][]|null} [fillFamilies]  0–255, the fill colors of one family's dots (outlined dots of a few
+ *   colors; a palette's, once fitted)
+ * @property {boolean} [palette]  families.js: dots of many distinct colors, split by color after the fit
+ * @property {'opaque'|'translucent'|'outline'} [scale]  families.js: the dots' colors vary, and how they were read
+ */
 
 const RINGED_MIN_SHARE = 0.5; // of the isolated dots, for the family to be outlined
 // A translucent "family" whose levels are all stacks of two other families' dots is their overlaps (bench2
@@ -65,7 +98,7 @@ export const NO_ISOLATED_NOTE = 'No isolated whole dot found, so the radius and 
  * @param {number[][]} [opts.others]  the other families' fills, 0–255
  * @param {boolean} [opts.ringsToOthers]
  * @param {boolean} [opts.jpeg]
- * @returns {object}  an estimate, as estimateStyle's; style.radius is null when no dot shape shows
+ * @returns {Estimate}  style.radius is null when no dot shape shows
  */
 export function opaqueFamilyEstimate(image, seed, opts = {}) {
     const scan = scanOf(image, opts);
@@ -92,9 +125,7 @@ export function opaqueFamilyEstimate(image, seed, opts = {}) {
  * @param {Scan} [opts.scan]  a scan of this image from an earlier call (scanOf, with the same `jpeg`): its page, flat
  *   mask and remembered answers are used again
  * @param {(fraction: number) => void} [opts.onProgress]  the share of the candidate search done (0–1)
- * @returns {object}  { background, candidates, family, style, D, isolated, edge, notes }
- *   style: { color, alpha, levels, radius, blur } ready for render.js; radius and blur are null when no isolated
- *   dot was found. notes: human-readable caveats for display.
+ * @returns {Estimate}  style is ready for render.js; its radius and blur are null when no isolated dot was found
  */
 export function estimateStyle(image, opts = {}) {
     const { width, height } = image;
@@ -107,7 +138,6 @@ export function estimateStyle(image, opts = {}) {
     let familyIndex = opts.family ?? 0;
     if (opts.seed) {
         fam = measureFamily(scan, opts.seed);
-        fam.kind = 'translucent';
         if (!fam.translucent) {
             const plain = measureOpaque(scan, opts.seed);
             fam = isDotFamily(plain) ? plain : strokedFamily(scan, opts.seed, plain) ?? plain;
@@ -162,6 +192,8 @@ export function estimateStyle(image, opts = {}) {
  * `onProgress` gets the share of the work done (0–1), by stage: the opaque clusters are most of it on large images.
  *
  * @param {Scan} scan
+ * @param {((fraction: number) => void)|null} [onProgress]
+ * @returns {FamilyMeasure[]}  translucent families, then opaque ones
  */
 export function findCandidates(scan, onProgress = null) {
     const { translucent, ink } = translucentFamilies(scan);
@@ -189,8 +221,6 @@ function translucentFamilies(scan) {
         const radius = own.length ? median(own.map(d => d.r)) : anyLone.length ? median(anyLone.map(d => d.r)) : null;
         return boxBand(scan, c, radius);
     });
-    for (const c of translucent)
-        c.kind = 'translucent';
     dropBlends(translucent, scan.B);
     return { translucent, ink };
 }
@@ -280,7 +310,7 @@ function overBand(scan, c) {
         return null;
     const line = colorLine(B, X1.color);
     return {
-        seed: X1.color, line, proj: projectOnLine(image, line), levels: [X1], beyond: rest,
+        kind: 'translucent', seed: X1.color, line, proj: projectOnLine(image, line), levels: [X1], beyond: rest,
         fit: { alpha: best.alpha, c: best.color, rms: 0, maxAbs: 0 }, pixels: X1.count, translucent: true, band,
     };
 }

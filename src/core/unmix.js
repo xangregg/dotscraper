@@ -268,10 +268,11 @@ export function familyImage(image, B, family, T, mixed) {
  * keep the image as it is.
  *
  * @param {import('./image.js').RgbaImage} image
- * @param {object[]} estimates  style.estimateStyle for each family (one without a style is passed through)
+ * @param {import('./style.js').Estimate[]} estimates  one for each family (one without a style is passed through)
  * @param {import('./scan.js').Tolerances} [tol]  as the estimates used
  * @param {{regions: {color: number[], mode: string}[], label: Uint8Array}|null} [layers]  background.js
- * @returns {object[]}  the estimates with `image` added (and D and notes replaced where separated)
+ * @returns {import('./style.js').Estimate[]}  the estimates with `image` added (and D and notes replaced where
+ *   separated)
  */
 export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers = null) {
     const translucent = estimates.map((e, k) => (e.style && e.familyMeasure?.kind !== 'opaque' && e.style.alpha < 1 ? k : -1)).filter(k => k >= 0);

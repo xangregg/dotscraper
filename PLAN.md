@@ -2848,3 +2848,30 @@ with exact colors the blue dots alone, their radius unknown, nothing to fit; wit
 5.4 px and the red rings at 6.4, 128 dots for 175 by hand, P 0.992, R 0.726. The test asks for the switch (0
 fittable families against 2), both radii, and P 0.95, R 0.68; it skips if step1 is absent or no longer noisy. The
 suite has no skipped test now.
+
+**A lint-like pass: JSDoc, vague types, and whether the medians should keep a sort** (2026-11-20)
+
+Checked with a throwaway script over src/ and tools/ (no linter is installed, and none was added): every function
+with a JSDoc block documents each parameter; exported functions have a block and a `@returns`; no `{object}` or
+`{object[]}` stands alone; the control-flow rules of CLAUDE.md; relative imports end in .js; nothing is declared
+or imported and unused.
+
+- Found: 26 functions with undocumented parameters, 32 without `@returns`, 10 exported without a block, about 20
+  bare object types, and two JSDoc blocks stranded above the wrong function (colorLine's above alongLine, which had
+  been inserted between them; ratioAlpha's above paletteColors). No control-flow or import slip, nothing unused.
+- The recurring shapes are typedefs now, where they are made, and the docs name them: `LevelMeasure` (levels.js) and
+  `OpaqueMeasure` (opaque.js), a family as measured; `Estimate` (style.js), a family ready to mask and fit, with
+  the fields families.js adds; `Axis`, `Axes` and `ClipEdge` (axes.js); `FitInput`, `FittedDot` and `FitResult`
+  (fit.js); `RingReading` (outline.js); `AxisEntry` and `AxisScale` (ui/axes-panel.js). The factories that return
+  an object of functions (createFit, createDotModel, createOutlineModel, createDotStore, createView) list their
+  members, each documented where it is defined.
+- One line of code: a translucent family's `kind` was set after the fact, in two places in style.js
+  (`for (const c of translucent) c.kind = 'translucent'`: `const` fixes the name, not the object, which the loop
+  tagged). measureFamily now returns it, as measureOpaque returns 'opaque', and so does the one measure built by
+  hand (style.js overBand), which the loop had been covering: without it landing1's two families lost their kind,
+  which the comparison of estimates over the 118 images showed (their dots were the same).
+
+**The sort in median, upperMedian and quantile**: each call sorts a copy. Over the profiles of all 118 images, the
+three with their sorts take 0.17 s of 1,024 s (0.016%): 0.06 s under fitFill, 0.04 under findColormap, 0.03 under
+radiusFromDistance, 0.02 under paletteColors, and no array is sorted twice for two statistics. A variant taking a
+sorted array would save nothing that shows, so there is none.

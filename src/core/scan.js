@@ -102,7 +102,13 @@ export function flatMask(image, tol = EXACT_TOLERANCES) {
     return flat;
 }
 
-// whether a color's pixels are thin as a whole: an opening by OUTLINE_OPENING keeps under OUTLINE_MAX_THICK of them
+/**
+ * Whether a color's pixels are thin as a whole: an opening by OUTLINE_OPENING keeps under OUTLINE_MAX_THICK of them.
+ *
+ * @param {Scan} scan
+ * @param {number[]} color  0–255; its pixels are those within CLUSTER_TOL of it
+ * @returns {boolean}
+ */
 export function isThin(scan, color) {
     return remembered(scan, 'thin', color, () => {
         const { image } = scan;
@@ -184,8 +190,15 @@ function solidShare(image, color, radius) {
     return all > 0 && kept >= REGION_MIN_SOLID * all;
 }
 
-// The share of the boundary of a color's pixels (within BOX_COLOR_TOL) in straight horizontal or vertical runs of at
-// least minRun px. O(pixels).
+/**
+ * The share of the boundary of a color's pixels (within BOX_COLOR_TOL) in straight horizontal or vertical runs of at
+ * least minRun px. O(pixels).
+ *
+ * @param {Scan} scan
+ * @param {number[]} color  0–255
+ * @param {number} minRun  px
+ * @returns {number}  0–1
+ */
 export function straightShare(scan, color, minRun) {
     return remembered(scan, `straight ${minRun}`, color, () => straightEdgeShare(scan.image, color, minRun));
 }

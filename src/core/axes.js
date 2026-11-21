@@ -88,6 +88,36 @@ const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of
  * @property {'tick'|'grid'} source
  */
 
+/**
+ * @typedef {object} Axis
+ * @property {Line} line  the axis line (for an axis read from gridlines, a line standing in for it)
+ * @property {Tick[]} ticks
+ * @property {number|null} spacing  px between ticks, when they are evenly spaced
+ * @property {boolean} regular  whether they are
+ */
+
+/**
+ * @typedef {object} Axes  detectAxes' result
+ * @property {Line[]} lines  every long straight gray line found
+ * @property {number[][]} backgrounds  0–255, the page's color first
+ * @property {Axis|null} x
+ * @property {Axis|null} y
+ */
+
+/**
+ * A line where a plot may clip its dots (clipEdges).
+ *
+ * @typedef {object} ClipEdge
+ * @property {'h'|'v'} dir  the cut's direction: a vertical cut runs down a column
+ * @property {number} pos  px, its position across
+ * @property {number} out  +1 when beyond is right or down, −1 when left or up
+ * @property {number} thickness  px, the axis line's there; 0 at a line's end
+ * @property {number|null} from  px, where it starts along (the other axis line's extent, when known)
+ * @property {number|null} to  px
+ * @property {number} [cut]  px, once dots are found cut there (layers.js plotClips): the first pixel row or column
+ *   beyond
+ */
+
 function luminance(d, i) {
     return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
 }
@@ -542,8 +572,7 @@ function gridLabels(image, backgrounds, ticks, gridlines, dir) {
  * with a dark baseline that continues their spacing (the economist's zero line).
  *
  * @param {import('./image.js').RgbaImage} image
- * @returns {{lines: Line[], backgrounds: number[][], x: object|null, y: object|null}}
- *   each axis: { line, ticks, spacing, regular }
+ * @returns {Axes}
  */
 export function detectAxes(image) {
     const backgrounds = backgroundColors(image);
@@ -616,7 +645,7 @@ export function detectAxes(image) {
  * labels on both sides bound nothing (the economist's zero line has data on both sides; a baseline through the
  * middle of a beeswarm would too).
  *
- * @param {{x: object|null, y: object|null}} axes  from detectAxes
+ * @param {Axes} axes  from detectAxes
  * @returns {{left: number|null, right: number|null, top: number|null, bottom: number|null}}  px, the axis lines'
  *   centers; null where unbounded
  */
@@ -650,11 +679,8 @@ export function plotBounds(axes) {
  * (autocor1: dots cut straight where the x axis line ends, at the plot's right, with no line there). Whether dots are
  * cut there is the mask's to read (layers.js buildMask), from a family's coverage.
  *
- * @param {{x: object|null, y: object|null}} axes  from detectAxes
- * @returns {{dir: 'h'|'v', pos: number, out: number, thickness: number, from: number|null, to: number|null}[]}
- *   dir: the cut's direction (a vertical cut runs down a column); pos px, its position; out: +1 when beyond is
- *   right or down, −1 when left or up; thickness: the line's there, px (0 at an end); from, to: its extent along,
- *   px (the other axis line's, when known)
+ * @param {Axes} axes  from detectAxes
+ * @returns {ClipEdge[]}
  */
 export function clipEdges(axes) {
     const bounds = plotBounds(axes);
@@ -729,6 +755,10 @@ export function toData(scale, px) {
 
 /**
  * Pixel position of a data value.
+ *
+ * @param {{type: string, a: number, b: number}} scale  from fitScale
+ * @param {number} value  data units
+ * @returns {number}  px
  */
 export function toPixel(scale, value) {
     const v = scale.type === 'log' ? Math.log10(value) : value;
@@ -737,6 +767,10 @@ export function toPixel(scale, value) {
 
 /**
  * How much one pixel is in data units at a position: |dv/dpx| (constant for linear scales).
+ *
+ * @param {{type: string, a: number, b: number}} scale  from fitScale
+ * @param {number} px  the position
+ * @returns {number}  data units per px
  */
 export function resolution(scale, px) {
     return scale.type === 'log' ? Math.abs(toData(scale, px) * Math.LN10 * scale.b) : Math.abs(scale.b);

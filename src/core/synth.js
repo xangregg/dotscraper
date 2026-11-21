@@ -233,7 +233,12 @@ function axisLines(axes) {
 // tick to its block)
 const LABEL_GAP = 6;
 
-/** Label blocks [x0, y0, x1, y1) in final px: centered on each tick, beyond its end. */
+/**
+ * Label blocks in final px: centered on each tick, beyond its end.
+ *
+ * @param {AxesSpec} [axes]
+ * @returns {number[][]}  [x0, y0, x1, y1) each
+ */
 export function labelBlocks(axes) {
     if (!axes)
         return [];

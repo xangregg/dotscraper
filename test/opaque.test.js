@@ -1028,6 +1028,9 @@ test('regression: landing1, translucent dots over violins of their own hue, ever
     const results = extractAll(image);
     assert.equal(results.length, 2);
     for (const r of results) {
+        // (a measure style.js overBand builds itself: it must say what kind it is, as measureFamily's do)
+        assert.equal(r.est.familyMeasure.kind, 'translucent');
+        assert.ok(r.est.familyMeasure.band, 'read over a band');
         assert.ok(Math.abs(r.est.style.alpha - 0.75) <= 0.03, `alpha ${r.est.style.alpha}`);
         assert.ok(r.est.style.radius >= 10.5 && r.est.style.radius <= 12.5, `radius ${r.est.style.radius}`);
     }

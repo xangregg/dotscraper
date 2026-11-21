@@ -3,6 +3,11 @@
 // There are two medians because the rules were measured with two, and at an even count they differ: `median` gives
 // the mean of the middle two, a value between the measurements (radii, widths), and `upperMedian` the upper of the
 // two, always one of the values given (a color channel that some pixel has, a count some glyph has).
+//
+// Each call sorts a copy, and there is no variant for an array the caller has sorted already: none is needed as
+// these are used. Over the profiles of the 118 test images (2026-11-20) the three, sorts included, took 0.17 s of
+// 1,024 s, 0.016%; the largest arrays are a dot's pixels (fit.js fitFill, 0.06 s in all), and no caller asks two
+// statistics of one array. Measure again before adding one: it would pay only for a large array asked repeatedly.
 
 const ascending = (x, y) => x - y;
 

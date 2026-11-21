@@ -228,6 +228,12 @@ export function dilate(mask, width, height, r) {
 /**
  * Pixels of the mask farther than r from every non-mask pixel (a disc erosion; the image border is not treated
  * as outside).
+ *
+ * @param {ArrayLike<number>} mask  nonzero where set, width × height
+ * @param {number} width
+ * @param {number} height
+ * @param {number} r  px
+ * @returns {Uint8Array}  1 or 0 per pixel
  */
 export function erode(mask, width, height, r) {
     const inv = new Uint8Array(mask.length);
@@ -243,6 +249,12 @@ export function erode(mask, width, height, r) {
 /**
  * Opening by a disc of radius r: the union of all discs of radius r that fit inside the mask. Removes parts
  * thinner than 2r and keeps blobs that contain such a disc.
+ *
+ * @param {ArrayLike<number>} mask  nonzero where set, width × height
+ * @param {number} width
+ * @param {number} height
+ * @param {number} r  px
+ * @returns {Uint8Array}  1 or 0 per pixel
  */
 export function opening(mask, width, height, r) {
     return dilate(erode(mask, width, height, r), width, height, r);
@@ -408,7 +420,7 @@ export function components8(mask, width, height) {
  * @param {ArrayLike<number>} D  the family's coverage
  * @param {number[]} fill  0–255
  * @param {number[]} outline  0–255
- * @param {object[]} cuts  clip edges with `cut`
+ * @param {import('./axes.js').ClipEdge[]} cuts  the edges the dots are cut at, each with `cut`
  * @param {Uint8Array} thin  marked in place
  */
 function bareFill(image, classes, D, fill, outline, cuts, thin) {
@@ -509,9 +521,9 @@ function clipAt(D, width, height, edge, radius) {
  *   image and radius, px
  * @param {number} width
  * @param {number} height
- * @param {object[]} edges  where a plot may clip (axes.clipEdges)
- * @returns {object[][]}  per family, the edges its dots are clipped at, each with `cut`: the first pixel row or
- *   column beyond, px. None for a family without a radius.
+ * @param {import('./axes.js').ClipEdge[]} edges  where a plot may clip (axes.clipEdges)
+ * @returns {import('./axes.js').ClipEdge[][]}  per family, the edges its dots are clipped at, each with `cut`: the
+ *   first pixel row or column beyond, px. None for a family without a radius.
  */
 export function plotClips(families, width, height, edges) {
     const measured = families.filter(f => f.D && f.radius > 0);
@@ -613,20 +625,23 @@ function overInk(fm) {
  * Classify pixels and build the mask of pixels the fit should ignore.
  *
  * @param {import('./image.js').RgbaImage} image
- * @param {object} estimate  from style.estimateStyle (uses D, style, background)
+ * @param {import('./style.js').Estimate} estimate  uses D, style and familyMeasure (and outlineMask, for a family
+ *   fitted by its rings)
  * @param {object} [opts]
  * @param {number} [opts.dilate]  px, mask dilation (default MASK_DILATE_BASE + MASK_DILATE_BLURS × blur)
  * @param {{left: number|null, right: number|null, top: number|null, bottom: number|null}} [opts.bounds]  px, the
  *   plot area's sides (axes.plotBounds); pixels more than OUTSIDE_MARGIN_RADII × radius beyond them are masked
  * @param {number[][]} [opts.exclude]  boxes [x0, y0, x1, y1) px masked as other ink: text and legend markers
  *   (annotations.annotationBoxes)
- * @param {object[]} [opts.clips]  lines where the plot may clip its dots (axes.clipEdges), or, with `cut`, lines
+ * @param {import('./axes.js').ClipEdge[]} [opts.clips]  lines where the plot may clip its dots (axes.clipEdges), or, with `cut`, lines
  *   where it does (plotClips, which also asks the other families); beyond one that cuts this
  *   family's coverage, everything is masked
  * @returns {{classes: Uint8Array, thin: Uint8Array, mask: Uint8Array, dilate: number,
  *            stats: {background: number, family: number, other: number, thin: number, masked: number,
- *                    maskedFamily: number, outside: number}}}
- *   counts in pixels; maskedFamily is the family pixels the mask removes from the fit
+ *                    maskedFamily: number, outside: number, clipped?: import('./axes.js').ClipEdge[]}}}
+ *   classes: CLASS_BACKGROUND, CLASS_FAMILY or CLASS_OTHER per pixel; thin: 1 on thin marks in the family's color;
+ *   mask: 1 where the fit should not look; counts in pixels: maskedFamily is the family pixels the mask removes
+ *   from the fit, outside those beyond the plot; clipped: the edges the dots are cut at, each with its cut
  */
 export function buildMask(image, estimate, opts = {}) {
     const { width, height } = image;

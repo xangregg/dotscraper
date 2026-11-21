@@ -131,6 +131,14 @@ const GROUP_LINK_SHARE = 0.2;
  * them in one color (then one family explains both) or split one color in two (ellipse: on white and on the
  * ellipse). So families are linked to the groups they explain in a pooled match, and the dots are matched again
  * within each connected set of families and groups: a dot found in the wrong group's color counts as wrong.
+ *
+ * @param {string} name  the row's
+ * @param {{x: number, y: number, group?: string}[]} truth  px
+ * @param {{est: object, fit: {dots: object[], radius: number}}[]} results  extract.js extractAll's, one per family
+ * @param {number} ms  the extraction's time
+ * @returns {object}  the row: name, n (truth dots), found, precision, recall, countError (found − n), rmse (px, over
+ *   matched dots), houghPrecision and houghRecall (NaN: not scored by group), flagged, ms, radius (the families'
+ *   mean, px), families, and the truth dots missed and found dots extra
  */
 export function groupRow(name, truth, results, ms) {
     const found = results.flatMap((res, k) => res.fit.dots.map(d => ({ ...d, family: k })));
@@ -179,6 +187,13 @@ export function groupRow(name, truth, results, ms) {
 /**
  * Score lane data (beeswarm, jitter): the layout chose each dot's x, so a found dot belongs to the nearest lane
  * center and is matched by y alone within its lane. RMSE is in y only.
+ *
+ * @param {string} name  the row's
+ * @param {{x: number, y: number, lane: number}[]} truth  px
+ * @param {number[]} laneCenters  px, each lane's x, left to right
+ * @param {{fit: {dots: object[], radius: number}}[]} results  extract.js extractAll's
+ * @param {number} ms  the extraction's time
+ * @returns {object}  the row, as groupRow's
  */
 export function laneRow(name, truth, laneCenters, results, ms) {
     const found = results.flatMap(res => res.fit.dots);
@@ -210,6 +225,12 @@ export function laneRow(name, truth, laneCenters, results, ms) {
 /**
  * Score every family's dots against jittered truth cells: matched within JITTER_BOX (scaled so one tolerance fits);
  * positions can't be scored, so rmse is NaN.
+ *
+ * @param {string} name  the row's
+ * @param {{x: number, y: number}[]} truth  px, each dot's cell
+ * @param {{fit: {dots: object[], radius: number}}[]} results  extract.js extractAll's
+ * @param {number} ms  the extraction's time
+ * @returns {object}  the row, as groupRow's
  */
 export function jitterRow(name, truth, results, ms) {
     const found = results.flatMap(r => r.fit.dots);

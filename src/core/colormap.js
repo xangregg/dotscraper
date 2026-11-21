@@ -206,11 +206,6 @@ function largestChain(points) {
 }
 
 /**
- * α from the count ratios of flat pixels on the curve: the second histogram peak sits at 2 − α.
- *
- * @returns {number|null}
- */
-/**
  * A palette's colors, from fitted dots: each dot's own color is the median of its pixels PALETTE_INSET inside it and
  * as far beyond every other dot's rim (one dot over the background: its one-dot color, exact in a PNG), taken from
  * dots with PALETTE_MIN_OWN such pixels, PALETTE_UNIFORM of them that color: a fitted dot partly over a missed one,
@@ -336,6 +331,12 @@ function isPalette(points, votes) {
     return peaks >= PALETTE_MIN_PEAKS && top > PALETTE_TOP_SHARE * votes;
 }
 
+/**
+ * α from the count ratios of flat pixels on the curve: the second histogram peak sits at 2 − α.
+ *
+ * @param {number[]} ratios  each flat pixel's distance from B over its direction's one-dot distance
+ * @returns {number|null}
+ */
 function ratioAlpha(ratios) {
     const nb = Math.ceil(RATIO_MAX / RATIO_BIN);
     const hist = new Float64Array(nb + 1);
@@ -617,11 +618,12 @@ function lightest(m, width, height, x, y) {
  * The virtual family as a candidate for style.estimateStyle: its line toward P, with the levels the colormap's α
  * implies (the level finder reads a compressed image's broad first level as two).
  *
- * @param {object} measured  style.measureFamily on the virtual image, seeded with P
- * @param {number[]} B
- * @param {number[]} P
- * @param {number} alpha
- * @returns {object}
+ * @param {import('./levels.js').LevelMeasure} measured  levels.js measureFamily on the virtual image, seeded with P
+ * @param {number[]} B  the background, 0–255
+ * @param {number[]} P  the virtual family's one-dot color, 0–255
+ * @param {number} alpha  0–1, the colormap's
+ * @returns {import('./levels.js').LevelMeasure}  as measured, with two levels at 1 and 2 − α dots and the fit they
+ *   imply
  */
 export function colormapCandidate(measured, B, P, alpha) {
     const level = r => ({ t: r * colorDistance(P, B), color: B.map((v, ch) => v + r * (P[ch] - v)), count: 0 });

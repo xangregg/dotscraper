@@ -58,7 +58,10 @@ function candidateStyle(c) {
  *
  * @param {import('./scan.js').Scan} scan  of the image the candidates were found in
  * @param {number[]} B  the background the regions were told from (the page, or the first family's)
- * @returns {object[]|null}  the new candidates, or null if nothing merged
+ * @param {import('./style.js').FamilyMeasure[]} candidates  the families found
+ * @param {{color: number[], mode: string}[]} regions  background.js backgroundRegions': shaded regions, 'under' or
+ *   'over' the dots
+ * @returns {import('./style.js').FamilyMeasure[]|null}  the new candidates, or null if nothing merged
  */
 function mergeAcrossRegions(scan, B, candidates, regions) {
     const under = regions.filter(r => r.mode === 'under').map(r => r.color);
@@ -178,10 +181,11 @@ function unreadMask(D, width, height) {
  * The estimate as it was otherwise.
  *
  * @param {import('./image.js').RgbaImage} image
- * @param {object} est  an opaque family's estimate with an outline
+ * @param {import('./style.js').Estimate} est  an opaque family's estimate with an outline
  * @param {number[][]} others  0–255, the other families' fill colors
  * @param {number[][]} backgrounds  0–255, the page's first
- * @returns {object}  the estimate
+ * @returns {import('./style.js').Estimate}  set up for its rings (style.ring and layered, D, fitT, base,
+ *   outlineMask), or `est` itself
  */
 function ringEstimate(image, est, others, backgrounds) {
     const fam = est.familyMeasure;
@@ -316,8 +320,10 @@ function familiesExplainInk(image, candidates) {
  * @param {boolean} [opts.jpeg]
  * @param {(label: string, fraction: number) => void} [opts.onProgress]  what is being done and the share of the
  *   whole done (0–1, by SCAN_STAGES; stages that don't run are skipped over)
- * @returns {{image: import('./image.js').RgbaImage, layers: object|null, estimates: object[]}}  image: with
- *   overlays removed; estimates: one per family candidate, each with the `image` to fit it on (estimates[0] is
+ * @returns {{image: import('./image.js').RgbaImage, layers: object|null, estimates: import('./style.js').Estimate[]}}
+ *   image: with overlays removed; layers: background.js backgroundRegions' (the shaded regions and each pixel's), or
+ *   null when a reading settled the image before them; estimates: one per family candidate, each with the `image`
+ *   to fit it on (estimates[0] is
  *   the only one, without a style, when no family is found)
  */
 export function estimateFamilies(image, opts = {}) {

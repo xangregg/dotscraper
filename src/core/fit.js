@@ -245,7 +245,7 @@ export function houghCenters(D, weight, width, height, r, grad = houghGradient(D
  * @param {{x: number, y: number}[]} peaks  px, inside the image, strongest first
  * @param {number} nms  px
  * @param {number} width  px, the image's
- * @returns {object[]}  the peaks kept, in order
+ * @returns {{x: number, y: number}[]}  the peaks kept (the objects given), in order
  */
 export function suppressNear(peaks, nms, width) {
     const size = NMS_CELL * nms;
@@ -391,17 +391,58 @@ function blurPlane(src, width, height, sigma) {
 }
 
 /**
+ * What a fit is given (extract.js fitInput makes one from a family's estimate and mask).
+ *
+ * @typedef {object} FitInput
+ * @property {import('./image.js').RgbaImage} image
+ * @property {import('./render.js').DotStyle} style  render style with levels (from style.estimateStyle, overrides
+ *   applied)
+ * @property {{B: number[], u: number[]}} line  the family's color line
+ * @property {Uint8Array} mask  1 = ignore
+ * @property {Float32Array} [D]  the family's overlap count or coverage image: fitDots' first centers come from it
+ * @property {Float32Array} [base]  t per pixel under the dots, for outlined dots (style.layered: outline.js)
+ * @property {Float32Array} [imgT]  the image's values to compare, if not its projection on the line (opaque
+ *   families: coverage against the local background, in color units)
+ * @property {{x: number, y: number}[]} [seeds]  px, centers to try first besides Hough's (fitDots)
+ */
+
+/**
+ * A fitted dot, as assessed (createFit's assess).
+ *
+ * @typedef {object} FittedDot
+ * @property {number} x  px
+ * @property {number} y  px
+ * @property {number} seX  px, the position's standard error from the loss's curvature (Infinity when flat)
+ * @property {number} seY  px
+ * @property {number} margin  what removing the dot would cost, in λ (the price of a dot)
+ * @property {number} visible  0–1, the share of its disc that is not masked
+ * @property {number} depth  the overlap count at its center, to a tenth
+ * @property {string[]} flags  'weak' (margin under FLAG_MARGIN), 'hidden' (visible under FLAG_VISIBLE), 'deep'
+ *   (deeper than the measured levels), 'close' (flagClose)
+ * @property {number} [z]  outlined dots: the drawing order
+ */
+
+/**
+ * @typedef {object} FitResult
+ * @property {FittedDot[]} dots  sorted by x
+ * @property {number} radius  px, refitted
+ * @property {number} sigma  a robust standard deviation of the residual over the unmasked pixels inside dots, in
+ *   t units (0–255 scale); NaN without any
+ * @property {number} lambda  the price of a dot, in loss units
+ * @property {number} loss  over the unmasked pixels, without the dots' price
+ * @property {number} rounds
+ * @property {object[]} log  one entry per stage ({ stage, … }: 'candidates', 'round', 'radius', 'assess', and
+ *   'doubled' or 'coincident' before a fit made again at a larger radius), with counts and times
+ * @property {number} ms  the fit's time, refits included
+ */
+
+/**
  * A fit in progress: the image along the color line, the weights, the incremental model, and the dots.
  *
- * @param {object} input
- * @param {import('./image.js').RgbaImage} input.image
- * @param {object} input.style   render style with levels (from style.estimateStyle, overrides applied)
- * @param {{B: number[], u: number[]}} input.line  the family's color line
- * @param {Uint8Array} input.mask  1 = ignore
- * @param {Float32Array} [input.base]  t per pixel under the dots, for outlined dots (style.layered: outline.js)
- * @param {Float32Array} [input.imgT]  the image's values to compare, if not its projection on the line (opaque
- *                                     families: coverage against the local background, in color units)
- * @param {{x: number, y: number}[]} [input.seeds]  px, centers to try first besides Hough's (fitDots)
+ * @param {FitInput} input
+ * @returns {object}  the fit's state and steps: style (live: the radius is refitted), lambda, weight and imgT (per
+ *   pixel); add, remove, refineAll, refineDot, pin, births, splits, deaths, merges, fitFills, refitRadius, bestZ;
+ *   totalLoss, assess, birthFailures, modelImage, dots, ids, position, near. Each is documented where it is defined.
  */
 export function createFit(input) {
     const { image, line, mask } = input;
@@ -1134,12 +1175,13 @@ export function createFit(input) {
 /**
  * Run the whole fit.
  *
- * @param {object} input  as createFit, plus D (overlap count image)
+ * @param {FitInput} input  with D
  * @param {object} [opts]
  * @param {boolean} [opts.refitRadius]  default true
  * @param {{x: number, y: number}[]} [opts.initial]  start from these centers instead of the Hough candidates
- * @param {function(object): void} [onProgress]  { stage, round, dots, loss }
- * @returns {object}  { dots (assessed), radius, sigma, lambda, loss, rounds, log, ms }
+ * @param {function({stage: string, round: number, dots: {x: number, y: number}[], loss: number}): void} [onProgress]
+ *   called as the fit goes, at most every PROGRESS_INTERVAL ms
+ * @returns {FitResult}
  */
 export function fitDots(input, opts = {}, onProgress = () => {}) {
     if (!(input.style.radius > 0))
@@ -1272,7 +1314,7 @@ function fitOnce(input, opts, onProgress) {
  *
  * @param {{x: number, y: number, flags: string[]}[]} dots  one family's, px
  * @param {number} radius  px
- * @returns {object[]}  the same array
+ * @returns {{x: number, y: number, flags: string[]}[]}  the same array
  */
 export function flagClose(dots, radius) {
     const close = FLAG_CLOSE_RADII * radius;
@@ -1305,11 +1347,11 @@ export function flagClose(dots, radius) {
  * best (bestZ), after the others are in. Dots marked `pinned` (placed or moved by hand) stay where they are: the
  * user's placement overrides the fit's.
  *
- * @param {object} input  as createFit
+ * @param {FitInput} input
  * @param {{x: number, y: number, z?: number, added?: boolean, pinned?: boolean}[]} dots  px
  * @param {number} x  px, the edit
  * @param {number} y  px
- * @returns {{dots: object[], sigma: number, lambda: number, from: number[]}}  dots sorted by x; from[i]: the index
+ * @returns {{dots: FittedDot[], sigma: number, lambda: number, from: number[]}}  dots sorted by x; from[i]: the index
  *   in `dots` of dots[i]
  */
 export function refitNear(input, dots, x, y) {

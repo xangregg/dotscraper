@@ -222,8 +222,9 @@ function erfc(x) {
  *
  * @param {Float32Array} D
  * @param {number} width
- * @param {object[]} dots  from isolatedDots
- * @returns {{sigma: number, offset: number, profile: {rel: number, d: number}[]}}
+ * @param {{cx: number, cy: number, r: number}[]} dots  from isolatedDots: centroids and area radii, px
+ * @returns {{sigma: number, offset: number, profile: {rel: number, d: number}[]}}  sigma px; offset px: where the
+ *   edge lies from the area radius; profile: the binned D against the distance from the area radius, px
  */
 export function edgeBlur(D, width, dots) {
     const nb = Math.ceil(2 * EDGE_RING / PROFILE_BIN) + 1;
@@ -263,6 +264,12 @@ export function edgeBlur(D, width, dots) {
 /**
  * Edge blur from a family's boundaries, for families without isolated dots: D against the signed distance to the
  * D = ½ boundary, pooled within BOUNDARY_PROFILE_REACH px, fitted with the same erf as edgeBlur.
+ *
+ * @param {Float32Array} D
+ * @param {number} width
+ * @param {number} height
+ * @returns {{sigma: number, offset: number, profile: {rel: number, d: number}[]}}  sigma and offset px; profile: the
+ *   binned D against the signed distance, px, positive inside
  */
 export function boundaryBlur(D, width, height) {
     const inMask = new Uint8Array(D.length);
@@ -305,7 +312,17 @@ export function boundaryBlur(D, width, height) {
     return { sigma: best.sigma, offset: best.offset, profile };
 }
 
-// share of the pixels whose centers lie within r of (cx, cy) where v > 0.5
+/**
+ * The share of the pixels whose centers lie within r of (cx, cy) where v > 0.5.
+ *
+ * @param {ArrayLike<number>} v  width × height
+ * @param {number} width
+ * @param {number} height
+ * @param {number} cx  px
+ * @param {number} cy  px
+ * @param {number} r  px
+ * @returns {number}  0–1; 0 when no pixel center lies in the disc
+ */
 export function discShare(v, width, height, cx, cy, r) {
     let count = 0;
     let on = 0;

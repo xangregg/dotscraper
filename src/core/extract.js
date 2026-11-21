@@ -1,7 +1,7 @@
 // From an image to its dots. The app takes the steps one at a time, with the user's changes between them: the scan
-// in a worker (scanFamilies), each family's mask on the page (excludedBoxes, familyClips, maskOptions), the fit in another worker
-// (fitInput), and the dots' fill colors after it (dotFills). The bench and the tests take them all at once
-// (extractAll). Both take them from here, so that the bench measures what the app does.
+// in a worker (scanFamilies), each family's mask on the page (excludedBoxes, familyClips, maskOptions), the fit in
+// another worker (fitInput), and the dots' fill colors after it (dotFills). The bench and the tests take them all
+// at once (extractAll). Both take them from here, so that the bench measures what the app does.
 
 import { estimateFamilies } from './families.js';
 import { restoreChroma, jpegNoise } from './jpeg.js';
@@ -13,6 +13,9 @@ import { dotFamilies } from './outline.js';
 import { paletteColors, paletteFamilies } from './colormap.js';
 
 /** @typedef {import('./image.js').RgbaImage} RgbaImage */
+/** @typedef {import('./style.js').Estimate} Estimate */
+/** @typedef {import('./axes.js').Axes} Axes */
+/** @typedef {import('./axes.js').ClipEdge} ClipEdge */
 
 // families with a radius: what can be fitted
 function fittable(prepared) {
@@ -35,7 +38,7 @@ function fittable(prepared) {
  * @param {boolean} [opts.tryNoisy]
  * @param {(label: string, fraction: number) => void} [opts.onProgress]  what is being done and the share of the
  *   whole done (0–1)
- * @returns {{work: RgbaImage, prepared: {image: RgbaImage, layers: object|null, estimates: object[]},
+ * @returns {{work: RgbaImage, prepared: {image: RgbaImage, layers: object|null, estimates: Estimate[]},
  *            switched: boolean, exact?: number, found?: number}}
  *   work: the image as analyzed (the source, or its chroma restored); prepared: estimateFamilies' result on it;
  *   switched: the noisy scan won, with `found` fittable families against `exact`
@@ -76,12 +79,12 @@ export function excludedBoxes(work, radius) {
  * The edges at which the plot clips each family's dots: the axis lines and their far ends (axes.js clipEdges), where
  * a family's coverage, or all the families' together, is cut straight (layers.js plotClips).
  *
- * @param {object} axes  axes.js detectAxes' result
+ * @param {Axes} axes  axes.js detectAxes' result
  * @param {{D: ArrayLike<number>|undefined, radius: number|undefined}[]} families  every family of the image: its
  *   coverage or count image and the radius in effect, px
  * @param {number} width  px, the image's
  * @param {number} height
- * @returns {object[][]}  per family, its clip edges, each with `cut`
+ * @returns {ClipEdge[][]}  per family, its clip edges, each with `cut`
  */
 export function familyClips(axes, families, width, height) {
     return plotClips(families, width, height, clipEdges(axes));
@@ -91,11 +94,12 @@ export function familyClips(axes, families, width, height) {
  * What layers.js buildMask is told to mask around a family, besides other ink: what lies beyond the axes, the edges
  * the plot clips its dots at, and the boxes to leave out.
  *
- * @param {object} axes  axes.js detectAxes' result
+ * @param {Axes} axes  axes.js detectAxes' result
  * @param {number[][]} exclude  boxes [x0, y0, x1, y1) px (excludedBoxes)
- * @param {object[]} [clips]  the family's clip edges (familyClips); without them the mask reads the cuts from the
+ * @param {ClipEdge[]} [clips]  the family's clip edges (familyClips); without them the mask reads the cuts from the
  *   family's own coverage alone
- * @returns {{bounds: object, clips: object[], exclude: number[][]}}
+ * @returns {{bounds: {left: number|null, right: number|null, top: number|null, bottom: number|null},
+ *            clips: ClipEdge[], exclude: number[][]}}  bounds: px, the plot area's sides (axes.js plotBounds)
  */
 export function maskOptions(axes, exclude, clips = clipEdges(axes)) {
     return { bounds: plotBounds(axes), clips, exclude };
@@ -105,10 +109,11 @@ export function maskOptions(axes, exclude, clips = clipEdges(axes)) {
  * What fit.js fitDots needs for one family.
  *
  * @param {RgbaImage} image  the image the family is fitted on (its estimate's own, when it has one)
- * @param {object} est  the family's estimate
+ * @param {Estimate} est  the family's estimate
  * @param {Uint8Array} mask  buildMask's
- * @param {object} [style]  the style to fit with, when it isn't the estimate's (the user's radius, α or blur)
- * @returns {object}
+ * @param {import('./render.js').DotStyle} [style]  the style to fit with, when it isn't the estimate's (the user's
+ *   radius, α or blur)
+ * @returns {import('./fit.js').FitInput}
  */
 export function fitInput(image, est, mask, style = est.style) {
     return { image, style, line: est.familyMeasure.line, mask, D: est.D, imgT: est.fitT, base: est.base, seeds: est.seeds };
@@ -120,7 +125,7 @@ export function fitInput(image, est, mask, style = est.style) {
  * colors are read from the fitted dots themselves (colormap.js paletteColors, paletteFamilies).
  *
  * @param {RgbaImage} work  the image as analyzed
- * @param {object} est  the family's estimate
+ * @param {Estimate} est  the family's estimate
  * @param {{x: number, y: number}[]} dots  px
  * @param {number} radius  px, the fit's
  * @returns {{colors: number[][], which: {family: number, sure: boolean}[]}|null}  the fill colors (0–255) and, per
@@ -147,8 +152,10 @@ export function dotFills(work, est, dots, radius) {
  *
  * @param {RgbaImage} source  the image as decoded
  * @param {boolean} [jpeg]  a JPEG file
- * @returns {{est: object, layers: object, fit: object, jpegAuto: boolean, fill?: number}[]}  per family: its
- *   estimate, buildMask's result and fitDots'; jpegAuto: noisy color matching was turned on for the JPEG noise
+ * @returns {{est: Estimate, layers: object, fit: import('./fit.js').FitResult, jpegAuto: boolean, fill?: number}[]}
+ *   per family: its estimate, layers.js buildMask's result (classes, thin, mask, stats) and fit.js fitDots';
+ *   jpegAuto: noisy color matching was turned on for the JPEG noise; fill: its color's index, for a family told
+ *   apart by fill color
  * @throws {Error} when a family has no style to fit with (its notes say why)
  */
 export function extractAll(source, jpeg = false) {

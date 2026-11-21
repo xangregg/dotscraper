@@ -193,6 +193,7 @@ test('a box under translucent dots in their own hue is a band, not one of their 
     const dist = c => Math.hypot(...c.map((v, ch) => v - box[ch]));
     assert.ok(fam.band && dist(fam.band) <= 3, `band ${fam.band}`);
     assert.ok(fam.box, 'marked a box');
+    assert.equal(fam.kind, 'translucent');
     assert.ok(fam.levels.every(L => dist(L.color) > 3), `levels ${fam.levels.map(L => L.color.map(Math.round))}`);
     // (one dot over the box, 181, 231, 209, lies on the line near level 3, 177, and joins the geometric fit: α 0.35)
     near(est.style.alpha, 0.29, 0.07, 'α');

@@ -47,7 +47,9 @@ export function isDotsExport(text) {
  * @param {string} text  the export
  * @param {string} imageName
  * @param {string} hash  pixelHash of the image
- * @returns {object}  the truth, as Save truth writes it
+ * @returns {{image: string, hash: string, note: string, families: {family: number, color: number[]}[],
+ *            dots: {x: number, y: number, family: number, fill?: number, fillSure?: boolean}[]}}  the truth, as Save
+ *   truth writes it (see the top of this file)
  */
 export function truthFromExport(text, imageName, hash) {
     const rows = text.replace(/^﻿/, '').trim().split(/\r?\n/).map(l => l.split(','));

@@ -105,6 +105,9 @@ const FILL_ALPHA_DEFAULT = 0.5; // when too few pairs show it
  * @param {number} style.fillAlpha  αf, 0–1
  * @param {number} style.ringT  t of the ring color K
  * @param {number} [style.blur]  px, sd of the Gaussian applied after compositing
+ * @returns {object}  the model: image and transmittance (live planes); valueOf; add, addAll, remove, move; zOf,
+ *   setFill, fillOf and fillRadius (a dot's drawing order and its fill); footprint and influenceRect (the pixels a
+ *   dot touches, before and after the blur); snapshot and restore; dots. Each is documented where it is defined.
  */
 export function createOutlineModel(base, width, height, style) {
     const { radius, ring, fillAlpha, ringT } = style;
@@ -509,7 +512,14 @@ export function dotFamilies(image, dots, families, radius, fillRadius) {
     });
 }
 
-/** P per pixel: n·(X − B) / n·(K − B), 0 for the fills, 1 for K. */
+/**
+ * P per pixel: n·(X − B) / n·(K − B), 0 for the fills, 1 for K.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} B  the page, 0–255
+ * @param {number[]} n  the fill plane's normal (fillPlane)
+ * @returns {Float32Array}  width × height
+ */
 export function planeValue(image, B, n) {
     const { width, height, data } = image;
     const sK = n[0] * (K[0] - B[0]) + n[1] * (K[1] - B[1]) + n[2] * (K[2] - B[2]);
@@ -612,6 +622,12 @@ function overSegment(a, width, height, dx, dy, sign, isMin) {
 /**
  * What is under the rings in P: the largest of linear openings in OPEN_DIRECTIONS directions, each with a segment
  * longer than a ring is across. O(pixels · OPEN_DIRECTIONS · (2r + OPEN_EXTRA)).
+ *
+ * @param {Float32Array} P  width × height
+ * @param {number} width
+ * @param {number} height
+ * @param {number} radius  px, the rings'
+ * @returns {Float32Array}  width × height, in P's units
  */
 export function underRings(P, width, height, radius) {
     const len = 2 * Math.ceil(radius + OPEN_EXTRA / 2) + 1;
@@ -858,13 +874,30 @@ const PAIR_MIN_INSIDE = 8;
 const PAIR_MIN_OUTSIDE = 40;
 
 /**
+ * The rings read in a ring image P (outlinesInP).
+ *
+ * @typedef {object} RingReading
+ * @property {Float32Array} P  the ring image: fills near 0, rings toward 1
+ * @property {Float32Array} under  what is under the rings, in P's units (underRings)
+ * @property {Float32Array} A  the rings' own ink, 0–1: P over what is under it; NaN where it can't be read
+ * @property {Float32Array} D  A in whole rings (A / the ring's α); NaN where A is
+ * @property {{radius: number, inner: number, blur: number, alpha: number, rms: number, rings: number}} ring  the
+ *   ring's style from the isolated rings: outer radius px, inner radius over it, edge blur px, αk 0–1, the rms of
+ *   the annulus fitted to them (P units), and how many were used
+ * @property {number} fillAlpha  αf, 0–1: how far a fill dims the rings under it
+ * @property {boolean} fillAlphaMeasured  from overlapping pairs; else assumed
+ * @property {number} pairs  the overlapping pairs it was measured on
+ * @property {{x: number, y: number, r: number}[]} isolated  px, the isolated rings used
+ */
+
+/**
  * Outlined dots whose fills vary by dot, if the image has them: the fill plane, P and what is under the rings, the
  * ring's style and αf. Null when there is no fill plane or no consistent ring in it.
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  0–255
- * @returns {{plane: object, P: Float32Array, under: Float32Array, A: Float32Array, ring: object,
- *            fillAlpha: number, fillAlphaMeasured: boolean, pairs: number, isolated: object[]}|null}
+ * @returns {(RingReading & {plane: {n: number[], rms: number, oneColor: boolean}})|null}  plane: fillPlane's
+ *   result, the fills' plane
  */
 export function findOutlines(image, B) {
     const plane = fillPlane(image, B);
@@ -883,7 +916,8 @@ export function findOutlines(image, B) {
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  the page, 0–255
  * @param {number[][]} known  unit directions from the page of colors already some family's (fills, outlines)
- * @returns {object[]}
+ * @returns {(RingReading & {plane: null, hollow: {dir: number[], color: number[]}})[]}  one per ring color; hollow:
+ *   the unit direction of its darkening from the page, and the color its rings show, 0–255
  */
 export function findHollowRings(image, B, known = []) {
     const { width, height, data } = image;
@@ -980,8 +1014,7 @@ function hollowInside(image, rings, ring) {
  * instead (relativeDarkness). Every fill, and every edge between two fills, is then 0, and a ring about 0.21. Null when no consistent ring shows.
  *
  * @param {import('./image.js').RgbaImage} image
- * @returns {{plane: null, P: Float32Array, under: Float32Array, A: Float32Array, ring: object,
- *            fillAlpha: number, fillAlphaMeasured: boolean, pairs: number, isolated: object[]}|null}
+ * @returns {(RingReading & {plane: null})|null}
  */
 export function findHueOutlines(image) {
     const found = outlinesInP(relativeDarkness(image), image.width, image.height);
@@ -1047,6 +1080,7 @@ export function localFill(image) {
  * @param {boolean} [opts.blackRings]  when no ring shows with dark ink masked, try opaque black rings (MASK_INK)
  * @param {function(object[], object): boolean} [opts.hollow]  hollow rings: a test of the isolated rings and the
  *   ring's style that must pass, made before the work that follows; no αf is measured (fillAlpha 0, pairs 0)
+ * @returns {RingReading|null}
  */
 export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     const rings = isolatedRings(P, width, height);

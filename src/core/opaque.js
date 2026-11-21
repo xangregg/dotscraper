@@ -16,6 +16,40 @@ import { alongLine, colorLine } from './levels.js';
 
 /** @typedef {import('./scan.js').Scan} Scan */
 
+/**
+ * A color measured as an opaque dot family (measureOpaque), with the fields a translucent one has (levels.js
+ * LevelMeasure), so that the two are handled alike after.
+ *
+ * @typedef {object} OpaqueMeasure
+ * @property {'opaque'} kind
+ * @property {number[]} seed  the fill, 0–255
+ * @property {number[]|null} outline  0–255: an outline that shows its own color
+ * @property {number[]|null} stroke  0–255: a stroke too thin to show its color, in the darkest mix seen
+ * @property {import('./levels.js').ColorLine} line  from the family's background to the color it is fitted in
+ * @property {number[]} background  0–255, what the dots usually lie on
+ * @property {number[][]} table  [background, fit color]: the levels a render needs
+ * @property {Float32Array} D  per pixel, the dots' coverage, 0–1; NaN where it can't be read
+ * @property {{cx: number, cy: number, r: number}[]} isolated  whole single dots (shape.js isolatedDots)
+ * @property {number|null} radius  px, the outline's or stroke's included
+ * @property {number} dots  dot-shaped centers found at that radius
+ * @property {number} strongDots  those seen over DOT_STRONG_ARC of their edge
+ * @property {number} coverage  0–1, the share of the family's pixels inside those dots
+ * @property {number} pixels  pixels of the fill's color (and the outline's within reach)
+ * @property {Uint8Array} edgeInk  per pixel, other ink read as the dots' background: 1 + its index in inkColors
+ * @property {number[][]} inkColors  0–255
+ * @property {{x: number, y: number}[]} centers  px, the centers found
+ * @property {number} [fillRadius]  px, the fill inside an outline or stroke
+ * @property {boolean} [pageFill]  the fill is the page's color, inside an outline; then fitColor (the outline's,
+ *   0–255) and fillCenters (px, the fills' centers, for the fit to start from)
+ * @property {import('./levels.js').Level[]} levels  one: the fit color, at its distance from the background
+ * @property {import('./levels.js').Level[]} beyond  none
+ * @property {{alpha: number, c: number[], rms: number, maxAbs: number, underdetermined: boolean}} fit  α 1, c the fill
+ * @property {boolean} translucent  false
+ * @property {number} [interior]  0–1, the share of the color's pixels with all eight neighbors that color
+ *   (opaqueFamilies)
+ * @property {number[][]} [under]  0–255, the families drawn over this one (opaqueFamilies)
+ */
+
 // Opaque families (PLAN.md phase 5) are color clusters, not directions: a beeswarm's dots and the violin shading
 // under them can share a hue, and compressed images (violin) have dot interiors too noisy to be flat.
 const CLUSTER_BIN = 8; // 0–255 units per channel, color histogram bins
@@ -705,10 +739,11 @@ export function strokeColor(image, color, B) {
  * @param {object} [opts]
  * @param {number[]|null} [opts.stroke]  0–255
  * @param {number} [opts.fillRadius]  px, the fill inside the stroke
- * @param {{fill: number[], reach: number}[]|null} [opts.rings]  other families' fills, and how far (px) their rings
- *   reach beyond them
+ * @param {{fill: number[], reach: number, whole?: boolean}[]|null} [opts.rings]  other families' fills, and how far
+ *   (px) their rings reach beyond them; whole: every thin pixel of this color within reach is theirs (outlineRings)
  * @param {number} [opts.radius]  px, the dots' radius when known otherwise (a found family's outline color as a family
  *   of its own: its isolated components are text's specks)
+ * @returns {OpaqueMeasure}
  */
 export function measureOpaque(scan, color, others = [], outline = null, opts = {}) {
     const { width, height } = scan.image;
@@ -1526,6 +1561,13 @@ function radiusPlausible(radius, isolatedCount) {
     return radius >= DOT_MIN_RADIUS || (radius >= SMALL_DOT_MIN_RADIUS && isolatedCount >= SMALL_DOT_MIN_ISOLATED);
 }
 
+/**
+ * Whether a measured color is a dot family: a plausible radius, enough strong centers, and its pixels mostly inside
+ * the dots, or isolated dots or many strong centers to make up for it.
+ *
+ * @param {OpaqueMeasure} f
+ * @returns {boolean}
+ */
 export function isDotFamily(f) {
     return radiusPlausible(f.radius, f.isolated.length) && f.strongDots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE_ANY
         && (f.coverage >= DOT_MIN_COVERAGE || f.isolated.length >= DOT_MIN_ISOLATED || f.strongDots >= DOT_MANY_STRONG);
@@ -1543,6 +1585,10 @@ export function isDotFamily(f) {
  * and every family is measured again against the others for the fit (measuredForFit).
  *
  * @param {Scan} scan  its image, backgrounds (the page first, then regions under the dots) and tolerances
+ * @param {import('./levels.js').LevelMeasure[]} translucent  the translucent families found
+ * @param {number[][]} [ink]  0–255
+ * @param {((fraction: number) => void)|null} [onProgress]
+ * @returns {OpaqueMeasure[]}  the families, each measured against the others, most dots first
  */
 export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
     // The search's state, passed through its stages. `out` is the families found so far, which the screens of later
@@ -1920,8 +1966,15 @@ function ringFill(image, color, ring) {
     return best ? [best.key >> 16, (best.key >> 8) & 255, best.key & 255] : null;
 }
 
-// The family of a fill color inside a stroke (strokeColor), or null when no stroke shows or it isn't a dot family.
-// `plain` is the color measured without one: its radius is the fill's.
+/**
+ * The family of a fill color inside a stroke (strokeColor), or null when no stroke shows or it isn't a dot family.
+ *
+ * @param {Scan} scan
+ * @param {number[]} color  the fill, 0–255
+ * @param {OpaqueMeasure} plain  the color measured without a stroke: its radius is the fill's
+ * @returns {OpaqueMeasure|null}  with fillRadius, and strokeOff: how far the stroke's color lies off the line from
+ *   the page to the fill, 0–255 units
+ */
 export function strokedFamily(scan, color, plain) {
     const stroke = strokeColor(scan.image, color, scan.backgrounds[0]);
     if (!stroke)
