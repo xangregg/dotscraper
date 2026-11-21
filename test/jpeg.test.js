@@ -7,7 +7,8 @@ import { restoreChroma, jpegNoise } from '../src/core/jpeg.js';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels } from '../tools/truth-csv.mjs';
-import { extractAll } from '../src/core/extract.js';
+import { readTruthJson } from '../tools/truth-json.mjs';
+import { extractAll, scanFamilies } from '../src/core/extract.js';
 import { groupRow } from '../tools/bench.mjs';
 
 const BENCH = new URL('../bench1/', import.meta.url).pathname;
@@ -104,21 +105,36 @@ test('jpegNoise: the bench renders have none and their JPEGs have it', { skip: !
     }
 });
 
-const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
-const PRIMATES1 = 'primates1-10.1038-s41586-026-11005-5.png';
+const PLOS = new URL('../bench-plos/', import.meta.url).pathname;
+const STEP1 = 'step1-10.1371-journal.pone.0360641';
 
-// Written for the web capture of primates1, a PNG of a JPEG. The PDF capture that replaced it (2026-11-14) is clean
-// and needs no fallback, and a JPEG made here doesn't reproduce the failure (jpeg-js keeps full chroma), so the test
-// waits for a JPEG-derived image under that name.
-const primates1Skip = !existsSync(NATURE + PRIMATES1) ? 'bench-nature absent'
-    : !jpegNoise(readImage(NATURE + PRIMATES1)).likely && 'primates1 is no longer a PNG of a JPEG';
+// On step1, a PNG with JPEG noise (first written for the web capture of primates1, a PNG of a JPEG, which a clean
+// PDF capture replaced; a JPEG made here doesn't reproduce it, as jpeg-js keeps full chroma). Skipped if step1 is
+// ever replaced by a clean capture too.
+const step1Skip = !existsSync(`${PLOS}${STEP1}.png`) ? 'bench-plos absent'
+    : !jpegNoise(readImage(`${PLOS}${STEP1}.png`)).likely && 'step1 no longer has JPEG noise';
 
-test('regression: a PNG made from a JPEG is analyzed as a JPEG when no family shows with exact colors', { skip: primates1Skip }, () => {
-    // before: "No dot family found" (the blue dots' edges leave the white–blue line, so no isolated dot passed)
-    const results = extractAll(readImage(NATURE + PRIMATES1), false);
-    assert.equal(results.length, 1);
-    assert.equal(results[0].jpegAuto, true);
-    assert.ok(Math.abs(results[0].fit.radius - 13) < 1, `radius ${results[0].fit.radius}`);
-    const n = results[0].fit.dots.length;
-    assert.ok(n >= 26 && n <= 28, `${n} dots`); // 27, every dot in the image (checked on an overlay)
+test('regression: a PNG with JPEG noise is analyzed as a JPEG when no family with a radius shows with exact colors', { skip: step1Skip }, () => {
+    // before (primates1): "No dot family found" (the blue dots' edges leave the white–blue line, so no isolated dot
+    // passed). step1 with exact colors: the blue dots alone, their radius unknown, so nothing to fit, and the red
+    // rings not at all; with noisy matching both, at 5.4 and 6.4 px.
+    const image = readImage(`${PLOS}${STEP1}.png`);
+    const exact = scanFamilies(image).prepared.estimates;
+    assert.equal(exact.filter(e => e.style?.radius).length, 0, `with exact colors: ${exact.map(e => e.style?.radius).join(', ')}`);
+    const scan = scanFamilies(image, { tryNoisy: true });
+    assert.equal(scan.switched, true);
+    assert.equal(scan.exact, 0);
+    assert.equal(scan.found, 2);
+    assert.notEqual(scan.work, image, 'analyzed with its chroma restored');
+    const results = extractAll(image, false);
+    assert.equal(results.length, 2);
+    assert.ok(results.every(r => r.jpegAuto));
+    const blue = results.find(r => r.est.style.color[2] > r.est.style.color[0]);
+    const red = results.find(r => r.est.style.color[0] > r.est.style.color[2]);
+    assert.ok(Math.abs(blue.fit.radius - 5.45) < 0.5, `blue radius ${blue.fit.radius}`);
+    assert.ok(Math.abs(red.fit.radius - 6.3) < 0.6, `ring radius ${red.fit.radius}`);
+    // measured: 73 blue dots and 55 rings, 128 for 175 by hand (those under the curve and the dashed line are missed)
+    const truth = readTruthJson(`${PLOS}truth/${STEP1}.json`);
+    const r = groupRow('step1', truth.dots, results, 0);
+    assert.ok(r.precision >= 0.95 && r.recall >= 0.68, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });

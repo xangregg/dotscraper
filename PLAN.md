@@ -2838,3 +2838,13 @@ with none extra. Without bareFill the dark gray gets two hidden dots under its n
 outlineRings 18 of 30 outline pixels beside the black dots read as black dot, and 8 with it (the wedge where an
 outline runs into the disc). phase1's own regression now asks for P 0.9, at most 18 black dots, and every fitted
 radius within 0.6 px of 19.4.
+
+**The noisy-matching switch has a test that runs again** (2026-11-20)
+
+The one test asserting that a PNG with JPEG noise is switched to noisy color matching was written on primates1's web
+capture, skipped itself since a clean PDF capture replaced that image (2026-11-14), and so nothing that ran checked
+the switch. It is now on step1 (bench-plos), a noisy PNG (13.75% of the background pixels near marks slightly off):
+with exact colors the blue dots alone, their radius unknown, nothing to fit; with noisy matching the blue dots at
+5.4 px and the red rings at 6.4, 128 dots for 175 by hand, P 0.992, R 0.726. The test asks for the switch (0
+fittable families against 2), both radii, and P 0.95, R 0.68; it skips if step1 is absent or no longer noisy. The
+suite has no skipped test now.
