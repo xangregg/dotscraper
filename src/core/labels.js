@@ -4,7 +4,7 @@
 // so three labels read right give the scale, a misreading shows as a tick that doesn't fit, and a label that
 // can't be read gets the scale's value (consistentValues). Without a scale nothing is checked, and a caller should
 // offer nothing as read: two labels and category names end there. A number with an exponent ("10" with a raised 3,
-// as log axes are labeled) is read as its power.
+// as log axes are labeled) is read as its power, and so is scientific notation: "1e+05", and "2 × 10" with a raised 3.
 //
 // A label's box from axes.js is where to look, not what to read: boxes are cut short by the search band (cells1's
 // "100" boxed as "00"), lose a part across a decimal point (autocor1's "1.0" as "0") and take in a neighbor (JMP's
@@ -14,8 +14,9 @@
 // the plot's title hanging into "90", the rotated title beside "60", a currency sign.
 //
 // Digits are told apart by correlation with templates of the fonts figures are set in (digit-templates.js), each
-// glyph scaled to one height. Anything that is no digit, point, comma or minus makes its label unread, never guessed; a sign alike in
-// every label of the axis (a "$" before, a "%" after) is left out (unitSigns).
+// glyph scaled to one height, and so are the signs of scientific notation (e, E, +, ×). Anything else that is no
+// point, comma or minus makes its label unread, never guessed; a sign alike in every label of the axis (a "$"
+// before, a "%" after) is left out (unitSigns).
 
 import { DIGIT_TEMPLATES, TEMPLATE_WIDTH, TEMPLATE_HEIGHT } from './digit-templates.js';
 import { median, upperMedian } from './stats.js';
@@ -61,6 +62,22 @@ const MINUS_CENTER = [0.3, 0.8];
 // that their axis's scale confirms (2026-11-21), the least sure digit scores 0.72 and all but that one 0.82 or more;
 // letters reach 0.6
 const DIGIT_MIN_SCORE = 0.7;
+// Scientific notation, "1e+05" as R writes it and "2 × 10³": its signs (e, E, +, ×, and the x typed for ×) are told
+// by templates as digits are, a glyph being the sign it is most like when that is at least SIGN_MIN_SCORE and more
+// than its likeness to any digit. "e", "+" and "×" are lower than digits, at most SIGN_MAX_HEIGHT × H and at least
+// SIGN_MIN_HEIGHT, and "E" as tall as they are. Measured on bench-r, R's renderings with digits 9–28 px tall, in the
+// 160 labels read (2026-11-21): e scores 0.87–0.97 at 0.68–0.78 H, + 0.90–0.99 at 0.60–0.78, × 0.83–0.99 at
+// 0.53–0.65 (a typed x 0.97 at 0.75), E 0.95–0.97. The score alone doesn't tell a sign from every letter (of 16
+// fonts' letters a "c" reaches 0.85 as an e, an "F" 0.83 as an E, a "÷" 0.89 as a plus): what a label reads as
+// must still be a number, and the axis's scale must agree
+const SIGN_MIN_SCORE = 0.75;
+const SIGN_MAX_HEIGHT = 0.9;
+const SIGN_MIN_HEIGHT = 0.45;
+// A multiplication sign stands apart from its numbers: glyphs this × H apart or less are one word when one of them is
+// the sign (bench-r: 0.30–0.65, plotmath's spacing and typed spaces in Helvetica; 0.67 in another rendering), where
+// WORD_GAP ends any other word
+const TIMES_MAX_GAP = 0.9;
+const SIGN_READ = { x: '×' }; // a template's character to the sign it is read as, where they differ
 const SIGN_LIKENESS = 0.85; // correlation of two labels' glyphs at which they are one unit sign
 const SHARED_LINE_MIN = 2; // labels read cleanly, of one axis, for their line to be taken for all of its labels
 // consistentValues: a read value agrees with a scale when the scale puts it within SCALE_TOL of the least gap
@@ -131,10 +148,11 @@ const MINOR_MAX_TOL = 0.02;
  * A label as read.
  *
  * @typedef {object} LabelReading
- * @property {string} text         the glyphs as read, "?" for one that is no digit, point, comma or minus; an exponent
- *   after "^" ("10^-3")
- * @property {number|null} value   the number (a power for a number with an exponent), or null when the text isn't one
- * @property {number} score        the least sure digit's correlation with its template (1 without digits)
+ * @property {string} text         the glyphs as read, "?" for one that is no digit, point, comma, minus or sign of
+ *   scientific notation ("1e+05"); an exponent after "^" ("10^-3", "2×10^3")
+ * @property {number|null} value   the number (a power for a number with an exponent, times the number before a
+ *   "×"), or null when the text isn't one
+ * @property {number} score        the least sure digit's or sign's correlation with its template (1 without any)
  * @property {number[]} box        [x0, y0, x1, y1), px: the glyphs read, an exponent's included
  */
 
@@ -210,8 +228,9 @@ function runs(has) {
 
 /**
  * The glyphs of the label a box points at: the line of text through the box (or the line given), cut at empty
- * columns into glyphs and at wide gaps and foreign glyphs into words, and of the words the one nearest `near`,
- * with the raised glyphs after it, its exponent.
+ * columns into glyphs and at wide gaps and foreign glyphs into words (a multiplication sign keeps the numbers beside
+ * it in its word), and of the words the one nearest `near`, with the raised glyphs after it, its exponent. Touching
+ * digits are cut apart, and a minus sign from the glyph it touches.
  *
  * @param {RgbaImage} image
  * @param {number[][]} backgrounds
@@ -279,33 +298,72 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
         }
         return { x0: a, x1: b, y0, y1 };
     };
-    const all = runs(Array.from({ length: width }, (_, x) => {
-        for (let y = line[0]; y < line[1]; y++) {
+    const inkedColumn = (x, y0, y1) => {
+        for (let y = y0; y < y1; y++) {
             if (c[y * width + x] >= GLYPH_INK)
                 return true;
         }
         return false;
-    })).map(([a, b]) => glyphOver(a, b));
-    const seed = all.filter(g => g.x1 > sx0 && g.x0 < sx1);
+    };
+    const cut = runs(Array.from({ length: width }, (_, x) => inkedColumn(x, line[0], line[1]))).map(([a, b]) => glyphOver(a, b));
+    const seed = cut.filter(g => g.x1 > sx0 && g.x0 < sx1);
     if (!seed.length)
         return null;
+    // the tall glyphs among some, and their rows
+    const tallOf = glyphs => {
+        const tallest = Math.max(...glyphs.map(g => g.y1 - g.y0));
+        const tall = glyphs.filter(g => g.y1 - g.y0 >= DIGIT_MIN_HEIGHT * tallest);
+        return { tall, top: Math.min(...tall.map(g => g.y0)), bottom: Math.max(...tall.map(g => g.y1)) };
+    };
+    // An exponent touching its base (plotmath's "10" with a raised 5 at 9 px: no empty column between the 0 and the
+    // 5, so the two are one glyph, taller than the digits). Given the digits' line, the glyph rises above it, and
+    // its last columns have no ink below an exponent's rows: they are cut off as a glyph of their own when what is
+    // left then keeps to the line (it doesn't for a tall letter). From there on the exponent is found as one
+    // standing apart is, and anything else raised is what it would be standing apart.
+    const cutRaised = (g, top, bottom) => {
+        if (g.y0 >= top - over)
+            return [g];
+        const bandEnd = top + Math.floor(RAISED_MAX_BOTTOM * (bottom - top));
+        let at = g.x1;
+        while (at > g.x0 && !inkedColumn(at - 1, bandEnd, bottom))
+            at--;
+        if (at === g.x0 || at === g.x1)
+            return [g];
+        const base = glyphOver(g.x0, at);
+        if (base.y0 < top - over)
+            return [g];
+        // (the base's rows are the line's: a raised 4's tip may hang over its last columns)
+        return [{ ...base, y0: Math.max(base.y0, top) }, glyphOver(at, g.x1)];
+    };
     // the digits' line: the one given, or that of the tall glyphs under the box
     let top = line[0];
     let bottom = line[1];
     if (!opts.line) {
-        const tallest = Math.max(...seed.map(g => g.y1 - g.y0));
-        const tall = seed.filter(g => g.y1 - g.y0 >= DIGIT_MIN_HEIGHT * tallest);
-        top = Math.min(...tall.map(g => g.y0));
-        bottom = Math.max(...tall.map(g => g.y1));
+        const own = tallOf(seed);
+        [top, bottom] = [own.top, own.bottom];
+        // … unless the one that starts it is a base with its exponent: the line is then the other glyphs', on its
+        // baseline
+        const highest = own.tall.filter(g => g.y0 === top);
+        const others = seed.filter(g => g !== highest[0]);
+        if (highest.length === 1 && others.length) {
+            const lower = tallOf(others);
+            if (Math.abs(lower.bottom - highest[0].y1) <= over && cutRaised(highest[0], lower.top, lower.bottom).length === 2)
+                [top, bottom] = [lower.top, lower.bottom];
+        }
     }
+    const all = cut.flatMap(g => cutRaised(g, top, bottom));
     const H = bottom - top;
     // a glyph running beyond the line is not of a number (a letter with a descender, a rotated title, a currency
     // sign), a comma's tail aside: it ends a word, as a wide gap does
     const foreign = g => g.y0 < top - over || (g.y1 > bottom + over && g.y1 - g.y0 > COMMA_MAX_HEIGHT * H);
+    const inImage = g => ({ x0: g.x0 + rect[0], x1: g.x1 + rect[0], y0: g.y0 + rect[1], y1: g.y1 + rect[1] });
+    const times = g => glyphSign(cover, inImage(g), H)?.sign === '×';
+    // (a multiplication sign holds the number before it and the power after it together, spaced as they are)
+    const apart = (a, b) => b.x0 - a.x1 > WORD_GAP * H && (b.x0 - a.x1 > TIMES_MAX_GAP * H || !(times(a) || times(b)));
     const words = [];
     let word = [];
     for (const g of all) {
-        if (word.length && (foreign(g) || g.x0 - word[word.length - 1].x1 > WORD_GAP * H)) {
+        if (word.length && (foreign(g) || apart(word[word.length - 1], g))) {
             words.push(word);
             word = [];
         }
@@ -345,6 +403,51 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
         // (the cut's column is the gray between the two: it goes to neither)
         return cuts.slice(1).map((b, k) => glyphOver(cuts[k] + (k > 0 ? 1 : 0), b));
     };
+    const digitScore = g => classifyDigit(glyphGrid(cover, inImage(g))).score;
+    // A minus sign touching its neighbor, as small type has it ("1e-03" at R's default size: the minus runs into the
+    // "0", or the "e" into the minus): the glyph's first columns, flat and at mid-height, when what is left is more
+    // of a digit than the whole, or its last, when what is left is an "e". A "4" starts flat too, with the tip of
+    // its bar (as wide as a minus in Gill Sans), and is less of a 4 without it; a plus's arms leave neither.
+    const cutMinus = g => {
+        const rowsAt = x => {
+            let y0 = g.y1;
+            let y1 = g.y0;
+            for (let y = g.y0; y < g.y1; y++) {
+                if (c[y * width + x] >= GLYPH_INK) {
+                    y0 = Math.min(y0, y);
+                    y1 = Math.max(y1, y + 1);
+                }
+            }
+            return [y0, y1];
+        };
+        // how many columns from `from` on, by `step`, are flat together and at mid-height: 0 unless a minus's width
+        const flat = (from, step) => {
+            let rows = [g.y1, g.y0];
+            let n = 0;
+            for (let x = from; x >= g.x0 && x < g.x1; x += step) {
+                const [a, b] = rowsAt(x);
+                if (Math.max(rows[1], b) - Math.min(rows[0], a) > MINUS_MAX_HEIGHT * H)
+                    break;
+                rows = [Math.min(rows[0], a), Math.max(rows[1], b)];
+                n++;
+            }
+            const middle = ((rows[0] + rows[1]) / 2 - top) / H;
+            return n < g.x1 - g.x0 && n >= MINUS_MIN_WIDTH * H && middle >= MINUS_CENTER[0] && middle <= MINUS_CENTER[1] ? n : 0;
+        };
+        const start = flat(g.x0, 1);
+        if (start) {
+            const rest = glyphOver(g.x0 + start, g.x1);
+            if (rest.y1 - rest.y0 >= DIGIT_MIN_HEIGHT * H && digitScore(rest) > digitScore(g))
+                return [glyphOver(g.x0, g.x0 + start), rest];
+        }
+        const end = flat(g.x1 - 1, -1);
+        if (end) {
+            const rest = glyphOver(g.x0, g.x1 - end);
+            if (/e/i.test(glyphSign(cover, inImage(rest), H)?.sign ?? ''))
+                return [rest, glyphOver(g.x1 - end, g.x1)];
+        }
+        return [g];
+    };
     // the rows an exponent's glyphs lie in, [bandStart, bandEnd)
     const bandStart = top - Math.floor(RAISED_MAX_RISE * H);
     const bandEnd = top + Math.floor(RAISED_MAX_BOTTOM * H);
@@ -353,13 +456,6 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
     // band (a title's descender). Cut from the band's own rows, not the line's: a raised "1" has its flag and a
     // minus sign may have all of itself above the line's first row.
     const raisedFrom = from => {
-        const inkedColumn = (x, y0, y1) => {
-            for (let y = y0; y < y1; y++) {
-                if (c[y * width + x] >= GLYPH_INK)
-                    return true;
-            }
-            return false;
-        };
         const above = Math.max(0, bandStart - 1);
         const high = x => inkedColumn(x, above, bandEnd) && !inkedColumn(x, bandEnd, bottom);
         // the band's rows with ink over columns [a, b)
@@ -390,7 +486,8 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
             if (y0 < bandStart)
                 break;
             // a minus sign touching the digit after it (primates2's raised "-2") is the run's first columns, flat
-            // and at mid-height: a "1" starts flat with its flag, higher up, a round digit is flat for a column
+            // and at mid-height: a "1" starts flat with its flag, higher up, a round digit is flat for a column,
+            // and a "4" with the tip of its bar is less of a digit without it
             let cut = x;
             let flat = [y1, y0];
             while (cut < x1) {
@@ -401,8 +498,9 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
                 cut++;
             }
             const middle = ((flat[0] + flat[1]) / 2 - y0) / (y1 - y0);
-            if (cut < x1 && cut - x >= MINUS_MIN_WIDTH * (y1 - y0) && middle >= MINUS_CENTER[0] && middle <= MINUS_CENTER[1]) {
-                const [r0, r1] = rowsOf(cut, x1);
+            const [r0, r1] = cut < x1 ? rowsOf(cut, x1) : [y0, y1];
+            const minus = cut < x1 && cut - x >= MINUS_MIN_WIDTH * (y1 - y0) && middle >= MINUS_CENTER[0] && middle <= MINUS_CENTER[1];
+            if (minus && digitScore({ x0: cut, x1, y0: r0, y1: r1 }) > digitScore({ x0: x, x1, y0, y1 })) {
                 out.push({ x0: x, x1: cut, y0: flat[0], y1: flat[1] }, { x0: cut, x1, y0: r0, y1: r1 });
             }
             else {
@@ -420,9 +518,8 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
         number = number.slice(0, -1);
     const after = raisedFrom(number[number.length - 1].x1);
     const exponent = after.some(g => g.y1 - g.y0 >= RAISED_MIN_HEIGHT * H);
-    const inImage = g => ({ x0: g.x0 + rect[0], x1: g.x1 + rect[0], y0: g.y0 + rect[1], y1: g.y1 + rect[1] });
     return {
-        glyphs: (exponent ? number : nearest).flatMap(splitWide).map(inImage), raised: exponent ? after.map(inImage) : [],
+        glyphs: (exponent ? number : nearest).flatMap(splitWide).flatMap(cutMinus).map(inImage), raised: exponent ? after.map(inImage) : [],
         height: H, top: top + rect[1], bottom: bottom + rect[1], cover,
     };
 }
@@ -457,7 +554,8 @@ export function glyphKinds({ glyphs, height: H, top }) {
 
 /**
  * A glyph on the templates' grid: its own height scaled to TEMPLATE_HEIGHT, its width by the same factor and
- * centered (a "1" stays narrow), sampled bilinearly from the coverage.
+ * centered (a "1" stays narrow), sampled bilinearly from the coverage. A glyph wider than the grid loses its sides
+ * (a plus, as wide as it is tall, the ends of its arms).
  *
  * @param {Cover} cover
  * @param {Glyph} g
@@ -526,21 +624,63 @@ export function classifyDigit(grid, templates = DIGIT_TEMPLATES) {
 }
 
 /**
- * The glyphs of one line as text: each by its kind, a digit by its template.
+ * The sign of scientific notation a glyph's grid is most like, among those given.
+ *
+ * @param {Float32Array} grid  glyphGrid's
+ * @param {string} signs  the templates' characters to try: of "eE+×x"
+ * @param {{name: string, signs: Object<string, ArrayLike<number>>}[]} [templates]  each font's signs on the grid
+ * @returns {{sign: string, score: number}}  sign: "e", "E", "+" or "×" (an "x" is one); score: the best correlation
+ */
+export function classifySign(grid, signs, templates = DIGIT_TEMPLATES) {
+    let best = { sign: '', score: -1 };
+    for (const font of templates) {
+        for (const ch of signs) {
+            const score = correlation(grid, font.signs[ch]);
+            if (score > best.score)
+                best = { sign: SIGN_READ[ch] ?? ch, score };
+        }
+    }
+    return best;
+}
+
+// The sign a glyph is, of those its height against the digits' H allows, or null when it is like none: "E" is as
+// tall as a digit, the others lower.
+function glyphSign(cover, g, H) {
+    const h = g.y1 - g.y0;
+    const signs = (h >= DIGIT_MIN_HEIGHT * H ? 'E' : '') + (h <= SIGN_MAX_HEIGHT * H && h >= SIGN_MIN_HEIGHT * H ? 'e+×x' : '');
+    if (!signs)
+        return null;
+    const s = classifySign(glyphGrid(cover, g), signs);
+    return s.score >= SIGN_MIN_SCORE ? s : null;
+}
+
+/**
+ * The glyphs of one line as text: each by its kind, a digit or a sign of scientific notation by its template.
  *
  * @param {Cover} cover
  * @param {{glyphs: Glyph[], height: number, top: number}} line  the glyphs, with their digits' height and top, px
- * @returns {{text: string, score: number}}  score: the least sure digit's correlation with its template
+ * @returns {{text: string, score: number}}  score: the least sure digit's or sign's correlation with its template
  */
 function lineText(cover, line) {
     let text = '';
     let score = 1;
     glyphKinds(line).forEach((kind, i) => {
-        if (kind !== 'digit') {
+        if (kind !== 'digit' && kind !== '?') {
             text += kind;
             return;
         }
-        const d = classifyDigit(glyphGrid(cover, line.glyphs[i]));
+        const g = line.glyphs[i];
+        const d = kind === 'digit' ? classifyDigit(glyphGrid(cover, g)) : null;
+        const s = glyphSign(cover, g, line.height);
+        if (s && (!d || s.score > d.score)) {
+            text += s.sign;
+            score = Math.min(score, s.score);
+            return;
+        }
+        if (!d) {
+            text += '?';
+            return;
+        }
         text += d.score >= DIGIT_MIN_SCORE ? d.digit : '?';
         score = Math.min(score, d.score);
     });
@@ -566,12 +706,14 @@ function glyphsRead(found, signs = [0, 0]) {
         const top = Math.min(...tall.map(g => g.y0));
         const power = lineText(found.cover, { glyphs: found.raised, height: Math.max(...tall.map(g => g.y1)) - top, top });
         const base = /^(-?)(\d+)$/.exec(number.text);
+        // … or of ten, times a number before it: "2×10" with a raised 3
+        const times = /^(-?)(\d+\.?\d*|\.\d+)×10$/.exec(number.text);
         let value = null;
-        if (base && /^-?\d+$/.test(power.text)) {
+        if ((base || times) && /^-?\d+$/.test(power.text)) {
             // (ten's powers from their decimal text: 10 ** -5 is a bit off 0.00001)
-            const v = base[2] === '10' ? Number(`1e${power.text}`) : Number(base[2]) ** Number(power.text);
+            const v = times ? Number(`${times[2]}e${power.text}`) : base[2] === '10' ? Number(`1e${power.text}`) : Number(base[2]) ** Number(power.text);
             if (Number.isFinite(v))
-                value = base[1] ? -v : v;
+                value = (times ?? base)[1] ? -v : v;
         }
         return { text: `${number.text}^${power.text}`, value, score: Math.min(number.score, power.score), box };
     }
@@ -579,7 +721,8 @@ function glyphsRead(found, signs = [0, 0]) {
     const trimmed = number.text.replace(/-+$/, '');
     // thousands separators go; what is left must be a plain number
     const plain = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(trimmed) ? trimmed.replace(/,/g, '') : trimmed;
-    return { text: trimmed, value: /^-?(\d+\.?\d*|\.\d+)$/.test(plain) ? Number(plain) : null, score: number.score, box };
+    // (… or one with its power of ten after an "e", which Number reads as written: "1e+05", "2.5E-3")
+    return { text: trimmed, value: /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(plain) ? Number(plain) : null, score: number.score, box };
 }
 
 /**

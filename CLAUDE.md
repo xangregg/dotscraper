@@ -38,7 +38,7 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         from shapes), shape.js (isolated dots, components, edge blur), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines,
                         ticks, labels, scales), labels.js (reading tick labels' numbers: glyphs, digits by template, raised
-                        exponents, the check by the axis's scale; digit-templates.js, generated: the digits' shapes in 18 fonts), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
+                        exponents, scientific notation ("1e+05", "2 × 10³"), the check by the axis's scale; digit-templates.js, generated: the shapes of the digits and of the signs e, E, +, × in 18 fonts), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
                         whole images whose fills vary, and single outlined families), annotations.js (text lines and legend markers, masked), families.js (all of the
@@ -57,6 +57,8 @@ bench1/ bench2/ bench3/  the user's own JMP renderings (PNG and JPEG) of one dat
                         with scale, tick and plot-area header lines (bench1: 100 dots, bench2: 204 with more ties,
                         bench3: 204 as beeswarms, x a lane). Exact ground truth; the user's to commit or not.
                         Tests using them skip when they're absent.
+bench-r/                R's renderings with tick labels in scientific notation, drawn by bench-r/make.R, each with a
+                        CSV of its points and tick values: for the label benchmark and tests (which skip without it)
 tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
 tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
 tools/measure-dots.mjs  phase 0 measurement of a translucent dot family (levels, alpha, radius, blur)
@@ -64,7 +66,7 @@ tools/truth-csv.mjs     truth sets in data units (benchN/data.csv) and their pix
 tools/truth-json.mjs    truth placed by hand (Save truth JSON, px, in testgraphs/truth/ and bench-nature/truth/); run
                         directly, it converts an old Save CSV export to one
 tools/label-bench.mjs   benchmark of the tick-label reader against the tick values the truth files list
-tools/make-digit-templates.mjs  writes src/core/digit-templates.js from tools/digit-fonts.html (digits drawn by Chrome)
+tools/make-digit-templates.mjs  writes src/core/digit-templates.js from tools/digit-fonts.html (digits and signs drawn by Chrome)
 tools/                  bench and index scripts
 test/*.test.js          node:test + node:assert/strict
 ```

@@ -3170,3 +3170,144 @@ read backwards, three decades for one, a wrong leading digit (7 and 2), a third 
 at 2 and 5 only, a 40 px decade, as many ticks off the multiples as on, and a linear axis of whole numbers labeled
 at its ends. Each condition removed or loosened in turn fails a test (one or two multiples enough, any tolerance,
 ticks off ignored, read values off ignored, a power of ten counted as a multiple).
+
+**Scientific notation read: "1e+05" and "2 × 10³"** (2026-11-21)
+
+Two more ways figures write large and small numbers, both unread until now (the "e", the "+" and the "×" were no
+number's glyphs): the power of ten after an "e", as R writes it in base graphics and ggplot2 ("1e+05", "1e-03"),
+JMP ("1e+5") and Excel ("1.E+05"), and a number times a power of ten ("2 × 10³"). No local figure has either, so
+the evidence is a new set of R's own renderings, `bench-r/` (21 images drawn by `bench-r/make.R`, each with a CSV
+of its points and tick values; R 4.6.0 on macOS, text in Helvetica, digits 9 to 28 px tall).
+
+What the reader did with them before: "1e+05" read "1??05"; "2 × 10³" read "2?10^3" where the sign stood close, and
+where its spaces were wider than a word's gaps the label was the "10³" alone, read as 1000 for 8000 (no scale took
+it, four labels being one value).
+
+The rules (labels.js):
+- **Signs by template.** digit-templates.js now has the shapes of e, E, +, × and the x typed for × in the same 18
+  fonts, drawn by Chrome like the digits (the digit templates are byte for byte the same). A glyph is the sign it
+  is most like at 0.75 or more (`SIGN_MIN_SCORE`) and more than it is like any digit; e, + and × must be 0.45 to
+  0.9 of the digits' height, E as tall as a digit. In bench-r's 160 labels read: e scores 0.87–0.97 at 0.68–0.78
+  of the height, + 0.90–0.99 at 0.60–0.78, × 0.83–0.99 at 0.53–0.65, E 0.95–0.97.
+- **The number's grammar.** A plain number may end in e or E, an optional sign and digits, and is then what
+  `Number` makes of it ("1e-07", "2.5e+03", "2.E+05"). Before a raised exponent, "number × 10" is that number times
+  the power (text "2×10^3"). Anything else with a sign in it stays unread: "1e", "e5", "2+3", "+5", "2×10" without
+  an exponent, "2×5^3".
+- **A multiplication sign keeps its word together.** Glyphs up to 0.9 of the digits' height apart are one word when
+  one of them is the sign (`TIMES_MAX_GAP`; 0.45 ends any other word). Measured gaps beside it: 0.30–0.65, in
+  plotmath's spacing and with typed spaces.
+- **A minus sign touching its neighbor is cut off.** At R's default device size (digits 9 px) the "e" of "1e-01"
+  runs into the minus, and at 96 dpi (12 px) the minus into the "0". The glyph's flat first columns at mid-height
+  are a minus when what is left is more of a digit than the whole; its flat last columns when what is left is an
+  "e".
+
+Two bugs found on the way, both with regression tests from Chrome's own pixels:
+- The first version of the minus cut took the tip of a 4's bar for a minus where the bar starts well left of the
+  diagonal: Gill Sans's "1454" at 17 px read "1-154". Hence "more of a digit than the whole": a 4 is less of a 4
+  without its tip.
+- The exponent reader committed on 2026-11-21 had the same flaw: Arial's "10" with a raised 4 at 16 px read
+  "10^-?". It has the same condition now.
+A check of "4" alone, "1454" and "10⁴" in 20 fonts at 18 sizes in Chrome (15 of the template fonts plus Georgia,
+Futura, Optima, Palatino and Symbol) gives the same readings as the committed reader everywhere else.
+
+What a score of 0.75 does not exclude, measured on every letter and common symbol of 16 fonts at four sizes: as an
+"e", a "c" reaches 0.85, an "o" 0.76; as an "E", an "F" 0.83 and an "L" 0.81; as a plus, "÷" 0.89 and "±" 0.78; as
+"×", an "X" 0.80. The guard is the grammar and the scale check, as for a digit and a letter that look alike ("l"
+scores 0.99 as a 1): "1c5" is no label a figure has, and three labels must fit one scale.
+
+Results on bench-r (`npm run bench:labels -- --set bench-r`): 191 of 209 labels read right, 38 of 42 axes solved,
+0 wrong, 1 unchecked, 3 none. Every "e" axis is solved at every size, the default 72 dpi included; so are the "×"
+axes from 96 dpi up, with a typed × and x, decimals before the sign, and ggplot2's parsed labels. Not solved:
+- log-e-turned y: R's default turns the y labels along the axis, and turned text isn't read (none).
+- times-r72 x (none): at 9 px two of the three plotmath exponents touch the zero under them, the pair is one glyph
+  and the label's line is taken from it. The same leaves one label unread, with the scale still found, on
+  times-log x (96 dpi) and gg-times-bw x. An exponent that touches its base is not cut from it.
+- times-r72 y (none): a typed "³" at 9 px is 4 px tall, under an exponent's least height: "8×10?".
+- small-e-r72 y (unchecked): plain decimals at 9 px, "0.00025" read "000025" in two of six labels. Not scientific
+  notation: a decimal point lost between digits.
+
+Nothing else moved. The other six sets of the label benchmark are identical (1,114 of 1,218 labels, 162 of 181 axes
+solved, 0 wrong; with bench-r 1,305 of 1,427 and 200 of 223). Of the 229 labeled axes of the 118 local images, all
+read the same values and scales; five unread axes of category names show an "e", "E" or "+" in their text where
+they showed "?" (protrusion1, escape2, landing1, myeloid1, violin-beeswarm). Of 2,760 digits read in those images,
+none is more like a sign than like its digit (the nearest by 0.09). Reading the labels of all 118 images takes
+0.62 s, as before.
+
+In the app (page check, images dropped on the view): log-e-default opens as "x log, read · y log, read" with 0.001
+to 100000 on x, five read and four from the scale, and times-r96 as "x linear, read · y linear, read" with 0 to
+600000 and 2000 to 8000; 40 dots found of 40 in both; no console errors. The About text names the forms read.
+
+Tests (10 new in test/labels.test.js): the signs' templates told by the other fonts', and no digit more like a
+sign; "e" numbers at 12 to 28 px in R's, JMP's and Excel's forms; "×" numbers spaced, unspaced, with decimals, a
+minus and a typed x; the number kept across the spaces; signs that make no number; a low glyph that is no sign; a
+touching minus, drawn and in R's own "1e-03" and "1e-01", with R's "1e+05" whole; the 4s of Gill Sans and Arial;
+digits lower than their line; axes of both forms; and bench-r's images. Each rule removed or loosened in turn
+fails a test (15 mutations: either cut, either cut's condition, the join, the join for any glyph, the score, the
+height limits, the sign-over-digit comparison either way, the base 10, the mantissa, the typed x, the "e" grammar).
+
+Not done, and known:
+- An exponent touching its base (above): the nearest next step, since plotmath's and ggplot2's "10⁵" at small
+  sizes would fail the same way.
+- A minus drawn half inside its "e", so that less than a quarter of the digits' height shows, is read as no minus
+  ("1e03"). No renderer sets text so (R's touch at 9 px, and the whole minus shows); found by drawing it.
+- "e", minus and digit all three touching stay unread.
+- ggplot2's default theme (gray panel, white grid lines, no axis line): the axes are not found, so nothing is read.
+  This is axes.js's, and older than this change; it is why bench-r has no such image.
+- Other fonts than Helvetica are covered by templates and drawn tests only: bench-r is R on macOS. matplotlib
+  (DejaVu Sans) and Excel's own renderings are not measured.
+- A leading plus ("+5") and a centered dot for the sign ("2·10³") are not read.
+
+**An exponent touching its base, cut from it** (2026-11-21)
+
+At small sizes plotmath's exponent follows its base with no empty column between them: "10" with a raised 5 at
+9 px digits is a "1" and one glyph of the 0 and the 5, taller than the digits. The label's line was taken from that
+glyph, the other digits were too low to be digits, and nothing read: 4 labels of bench-r (two on times-r72 x,
+which lost its scale, one each on times-log x and gg-times-bw x).
+
+The rule (labels.js `cutRaised`, in `labelGlyphs`): given the digits' line, a glyph that rises above it and whose
+last columns have no ink below an exponent's rows is cut before those columns, when what is left then keeps to the
+line (a tall letter's stem doesn't). The left part is a digit of the line, its rows the line's, and the cut-off
+part is found again as an exponent standing apart is. Without a line from the axis's other labels, the label's own
+line came from its tallest glyph: when the one glyph that starts highest is cut this way against the line of the
+others, on their baseline, the line is theirs.
+
+The base's rows are the line's because an exponent may hang over the base's last columns: STIX's "10" with a
+raised 9 a pixel closer than touching read "16^9" (the 9's bowl over the 0 makes a 6) until the base was kept to
+its line. That case is a regression test from Chrome's pixels.
+
+Results: all four labels read, and times-r72 x has its scale. bench-r is now 195 of 209 labels and 39 of 42 axes
+solved, 0 wrong (from 191 and 38); the other six sets of the label benchmark are identical (1,114 of 1,218; 162 of
+181; 0 wrong), and so are the texts and scales of all 229 labeled axes of the 118 local images. Reading them takes
+0.67 s (0.62 before).
+
+A wider check, since bench-r has four such labels: "10" with a raised power (2 to 9, -3, 12) drawn by Chrome in 16
+fonts at 13 sizes (12 to 40 px type), the exponent 0.66 of the size and a third of the digits' height above them,
+at four distances from the base. Of 2,080 labels each:
+
+| gap, × the type size | right, before → now | unread | wrong |
+|---|---|---|---|
+| 0.04 (apart) | 1,970 → 1,978 | 100 → 92 | 10 → 10 |
+| 0 (touching) | 1,553 → 1,848 | 524 → 227 | 3 → 5 |
+| -0.04 (a pixel closer) | 812 → 1,692 | 1,265 → 378 | 3 → 10 |
+| -0.08 | 261 → 1,306 | 1,818 → 760 | 1 → 14 |
+
+The wrong readings are exponent digits misread, a factor of ten or more each: with or without the cut about one
+label in 200 to 400 at realistic distances, all at 12 to 20 px type (exponent digits 6 to 9 px tall) and all with a
+template score of 0.81 or less, where about four in five of the right ones score more. They were there before for exponents
+standing apart (the first row); the cut adds its own where the exponent overlaps the base and loses its first
+columns (a 4 without its tip reads 1, a 6 reads 5). The axis's scale is the guard, as for every reading. A higher
+score asked of exponent digits would trade most of them for unread labels, times-r72's among them (0.73–0.77):
+not done.
+
+Tests (3 new in test/labels.test.js, and two assertions on bench-r): R's own "4 × 10⁵" at 9 px; drawn powers of
+one and two digits touching, after a number and a "×", and set lower; STIX's 9 over the 0; a touching raised minus
+left alone; a tall letter with a flag and a slash between digits left whole, and a 7; an axis whose labels share a
+line. Each condition removed fails a test (7 mutations: the rise above the line, the base keeping to it, the line
+from the other glyphs, its baseline, which glyph is the highest, the base's rows, the cut itself).
+
+Not done, and known:
+- A raised minus sign touching the base (it doesn't rise above the line as a digit does), and two exponent digits
+  touching each other, stay unread.
+- An exponent set so low that it rises less above the digits than a foreign glyph must (15% of the label's height)
+  is not cut.
+- A typed "³" at 9 px, turned labels and ggplot2's gray theme are as before.

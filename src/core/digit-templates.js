@@ -2,7 +2,8 @@
 //
 // The shape of each digit in 18 fonts, for labels.js: how dark each cell of a 10 × 14 grid is when the digit
 // is scaled to the grid's height and centered, the mean over sizes and places on the pixel grid as a browser draws
-// it (tools/digit-fonts.html).
+// it (tools/digit-fonts.html). And the signs of scientific notation the same way: one wider than the grid (a plus
+// is as wide as it is tall) loses its sides.
 
 export const TEMPLATE_WIDTH = 10;
 export const TEMPLATE_HEIGHT = 14;
@@ -227,8 +228,137 @@ const FONTS = {
     },
 };
 
-/** @type {{name: string, digits: Object<string, Float32Array>}[]}  digits: row-major, 0–1 */
-export const DIGIT_TEMPLATES = Object.entries(FONTS).map(([name, digits]) => ({
-    name,
-    digits: Object.fromEntries(Object.entries(digits).map(([d, cells]) => [d, Float32Array.from(cells.replace(/ /g, ''), cell => parseInt(cell, 16) / 15)])),
-}));
+// "e" and "E" before an exponent, the plus after them, the multiplication sign and the "x" typed for it
+const SIGNS = {
+    'Helvetica': {
+        'e': '01479a8521 27cddddc93 7deb87add9 bea42128dc dd510013bd ed754446bd eedccccdee eebaaaaaaa ec43222233 dd41000289 ce921126cc 9dd9669cda 39dddddca4 1369aa9732',
+        'E': 'deeeeeeeec decbbbbbba dc21111111 db10000000 dc20000000 dd54444442 dfedddddd5 dda9999994 dc21111100 db10000000 db10000000 dc31111111 decccccccb deeeeeeeed',
+        '+': '0003993000 0004bb4100 0004cd5100 0005dd5100 0005dd5100 3347dd7433 cccdeedccc dddeffeddd 6669ee9666 1115dd5211 0005dd5100 0005dd5100 0005dd5100 0004bc4100',
+        '×': '8310000138 d83101139d dd831139dd bed8449ddb 5bed9addb5 16ceeeeb51 128effd720 139effe831 38dedded83 8dec77ced8 deb6226ced ec610026cd b61000026b 5100000015',
+        'x': 'aa51001499 cdb3003adc 9ee8227de9 4cec65cec3 16decbed61 029effe910 014cffc300 014dffc400 029eefe920 16debced61 4cec45dec4 aed7128ee9 dea2013bed dc410015cd',
+    },
+    'Helvetica bold': {
+        'e': '137acba720 4adeeeeda4 befeeeffeb efea66befd ffc4225dfe ffc8779dfe ffeeeeefff ffedccdddc ffa4334444 ffb4112788 efea559cdd beeeddeeec 5adeeefeb5 2479bba842',
+        'E': 'cddddddddb effeeeeeec efd9999997 efa2111111 efa2111110 efda999993 efffffffe5 efedddddc4 efb3222221 efa1000000 efa2111111 efdaaaaaa9 effffffffe deeeeeeeed',
+        '+': '0016996100 0029dd9200 002aeea200 002aeea200 113aeea311 89acffda98 eeeffffeee effffffffe ccceffeccc 224beeb422 012aeea200 002aeea200 002aeea200 0029dd9200',
+        '×': '9510000159 cb510015bc eec5115cee efec66cefe befeddefeb 5ceffffeb4 25dffffd51 26dffffd61 5ceffffec5 cefeddefeb efeb55cefe eeb4115cee cb410015bc 8410000147',
+        'x': '9983002899 ddd8227ddd dffd55cfed 9efecbefe8 3cefeefeb3 16dffffd51 02aeffe920 029effe920 15dffffd51 3beffffeb3 8efecdffe8 dffd56dffc efe823aefe ddb3114cdd',
+    },
+    'Arial': {
+        'e': '0269bba731 39cddddda4 9dea768dea ce932126dd dc411113bd ec866667be eeedddddee edbbaaabba ea42222223 dc41000168 de821015cc aed9547bec 4adddcddc6 138bccb952',
+        'E': 'deeeeeeeeb eebbbbbbb9 db21111111 db10000000 db21111100 ec54444442 eeeeeeeed5 eda9999993 db20000000 db10000000 db10000000 db21111111 eeccccccca deeeeeeeed',
+        '+': '0014993000 0015cb4100 0016cc5100 0016dc5100 1127dd6211 677aee9777 dddeffeddd cccdeedccc 4558dd8544 1126dd5111 0016dc5100 0016cc5100 0015cb4100 0014883000',
+        '×': '9410001248 ca411125ac dda42249dd ceda66adec 8deecbdec8 39deeeec83 24aeffea41 25aeffeb41 4adeeeeda4 9dedaadeda dec9449ded dd932249dd c94100149c 8310000137',
+        'x': 'bb510015bb cdb3113bdc 8de9229dd8 3bed66dea2 15ceddec41 017dffd610 003cffb300 015cffc410 02aeeeea20 18de9aed81 5ceb34bec5 bed5115deb dd820029ed db300013bd',
+    },
+    'Arial bold': {
+        'e': '137abb9731 49deeeeda4 aefeddefea cfeb669efd efd5214cfe efd7556bfe efeddddefe efeedddddd efc6555555 efd5212886 dfea437cdc befeccdefc 4beffeeec7 148bccb952',
+        'E': 'deeeeeeeec effeeeeeec efc7777776 ef91000000 efa3222221 efdaaaaa95 efffffffe7 efecbbbbb6 efa2111111 ef91000000 ef91111100 efc8888887 efffffffed deeeeeeeed',
+        '+': '0016996100 0029dda200 002aeea200 112aeea211 334befb433 ccceffeccc ffffffffff eeeefffeee aabdffdbaa 223aeeb322 002aeea200 002aeea200 0029dd9200 0017aa7100',
+        '×': '8621001268 cc721127cc eed7337cee efed88defe ceffeeffeb 6ceffffeb5 27dffffd72 28dffffe82 7cefffffd7 cefeddefed efec77cefe eec6226cee cb621126cc 7520000257',
+        'x': 'cc92014bcc eed723aeed efec57efec befecdffd7 4cfffffe92 17efffeb30 03bfffe710 14cfffea20 29effffd71 6dffeffec4 cefeacffea efea35dffd ffc5128efe dd71013bdd',
+    },
+    'Helvetica Neue': {
+        'e': '026abba731 39cddddda4 9dd9669dea cd721127dd db311113ad db766666be eeedddddee edcccccccb d932222233 da21000168 dd721014bc aec8546bdc 4adddcddc6 138bcdca52',
+        'E': 'beeeeeeeea becaaaaaa8 bd41111111 bd40000000 bd41000000 be64444431 bfedddddd4 beb9999993 bd41000000 bd40000000 bd40000000 bd41111111 becbbbbbb8 beeeeeeeeb',
+        '+': '0002882000 0003bb3000 0003bb3000 0003cc3000 0003cc3000 2224cc4222 bbbceecbbb cdddeedddc 5557dd7555 1113cc3111 0003cc3000 0003cc3000 0003cb3000 0002ba3000',
+        '×': '7310000137 c73100137c dc731137dd add7337dda 4adc88dda4 14bdeeeb41 016defd620 127deed731 26cdccdc62 6cdb55bdc6 cdb5115bdc db510015bd a51000015a 4100000014',
+        'x': 'ba300015bb cd92013bdb aed6228dd7 4cec56dd92 16decdeb31 029eeec510 014dfea200 016dfec510 14bedeea30 2add79dd82 7dd823bec6 ceb3115ceb dc510128dd c8200013ac',
+    },
+    'Arial Narrow': {
+        'e': '0149bb9510 15bddddb51 3beb77bdb3 7dc4224bd7 ad821127da bea66669db ceeddddeec cecbbbbbb9 bd63222222 bd72001476 8db31129c9 4cda549dd5 27dddcdd82 026bccb730',
+        'E': '4deeeeeec2 5edbbbbba2 5d61111110 5d60000000 5e61111000 5e84444420 5eeeeeed81 5ec9999960 5d61000000 5d60000000 5d60000000 5e62111110 5edcccccb3 4eeeeeeed4',
+        '+': '0003992000 0004bb3000 0014cb3100 0014cc3100 1125cc4211 6679dd8766 cddeeeeddc bccdeedccb 4557dd7554 1115cc4111 0014cc3100 0014cb3100 0014bb3000 0003882000',
+        '×': 'a831011389 cc731138cc cdc7337cdc 8cec77cdc8 3adeccdd93 15beeedb41 137dffd720 138deed831 26ceeeec62 5bddbbddb4 adda55bdda cdb5226bdc bb621127bc 8621001278',
+        'x': '8b920028b8 5cc6116cc5 2adb33bd92 15dd88dc40 029eddd810 014ceeb300 0029ee8100 003aeea200 016deec610 03bebada30 17dc55cd71 4cd8228db4 8db3114cd8 bc710027ca',
+    },
+    'Verdana': {
+        'e': '026acdca51 3addddddc7 9ed8546bec de621114ce eb3111129e ec988889be eeddddddee ea66666666 ea21111111 ec31000000 de93100114 aedb7557ac 49dedddded 136abccba7',
+        'E': '7bbbbbbbb7 9eedddddc7 9e73333321 9e61000000 9e61000000 9ea7777774 9eeeddddd8 9e96555553 9e61000000 9e60000000 9e61000000 9e72111111 9edcbbbbb7 8eeeeeeee9',
+        '+': '0002992000 0002cc2000 0002cc2000 0002cc2000 0003dc2000 2234dd4322 cccdeedccc cccdeecccc 2224dd4222 0003dc2000 0002cc2000 0002cc2000 0002cc2000 0002991000',
+        '×': '5200000015 c52100115c dc520025cd cdc5225cec 4bdc66cdc5 14beddec51 025dffd620 126dffd621 25ceddec52 5cdb55bdc5 cdc5214bdc dc510014bd b51000014b 5100000014',
+        'x': 'b82000016a dd710014cd cec5103bec 6deb329dd6 28dea8dd82 02aeeeea21 014cffc410 003cefc410 029deeea20 17dd9aed81 5cea34bed6 bec4115cec dd510017de d72000029d',
+    },
+    'Tahoma': {
+        'e': '025acdca41 28cdddddc6 7dd8446beb cd821115dd dc411113bd ed988889ce eeeddddded ed76666665 ec31111111 ed51000000 ceb4110125 7eec8557ab 38deeddddc 126abccba6',
+        'E': '5abbbbbba4 6dedddddc4 6da3333321 6d91000000 6d91000000 6ec7777751 6eeedddda1 6eb6555541 6d91000000 6d91000000 6d91000000 6d92111110 6eecbbbbb4 6deeeeeed5',
+        '+': '0002882000 0003bb3000 0003cc3000 0003cc3000 0003cc4000 2235dd5322 bbbceecbbb cccdeedccc 3335dd6433 0003cc4100 0003cc3000 0003cc3000 0002bb3000 0002992000',
+        '×': '6200000025 c52000125c ec620125ce cec5225cec 5bdc76cec5 14beedec41 026dffd620 126dfed620 25ceddec62 6ceb55bdc6 cec4124bdc ec510014bd b41000014b 5100000014',
+        'x': 'ba4000029b cda20018dc 9ed7115de9 4cec43bec4 16debaed61 029eeee920 014cffc300 003bffc300 018effe910 15cebbed61 3bec45deb3 9ed6117ee9 de92003bed db300015cd',
+    },
+    'Trebuchet MS': {
+        'e': '0148aa9731 27cdddddb5 7dec98adeb cea42237dd dd521113ae ed977778ce eeedddddee ec87777777 eb32111111 ec51000000 dea3111141 aedb7569b6 4adeddddd8 138bcdca73',
+        'E': '3deeeeeed3 3eecccccb2 3ec2111110 3ec1000000 3ec2111100 3ee8887300 3eeeddd500 3ed5444200 3ec1000000 3ec1000000 3ec1000000 3ec3222210 3eedccccb2 3deeeeeed2',
+        '+': '0014994100 0015bb5100 0016bb5100 0016cc6100 1126cc6211 667add9666 cccdeedccc cddeeeedcc 6669dd9665 1127cc6211 0016cc6100 0016bb5100 0015bb5100 0014994100',
+        '×': '5210000015 a62100126a dc721126bd cdc7226bdc 7cdc88bdc8 38cddddc83 139deed941 028dffd831 16bdeeec72 5bddaacdb6 bdd9448ddb cc842138cd b83110138b 7410000137',
+        'x': 'aa410015aa cda2013bdc 9ed6229ed7 3cec57de92 16decdeb30 019effc510 004cfe8200 014cfe8200 02aefed610 17debdec41 4ceb47deb3 aed6129ee9 de92013bed db310014cd',
+    },
+    'Lucida Grande': {
+        'e': '0148aba620 16bddddd92 4ceb669ed7 9ec4213aeb ce921127ec deb8778aed dfeeddeeed eeb8888887 de92111111 ceb3000000 8ed8210011 4ced954468 25adedccdb 0148abcba7',
+        'E': '1bcccccc81 2debaaaa70 2dd3111110 2dd2000000 2dd3000000 2dd4222100 2dedccc910 2dea999710 2dd3000000 2dd2000000 2dd2000000 2dd3111110 2dea999981 1deeeeeed2',
+        '+': '0001782000 0002ab3000 0002bc3000 0002bc3000 0003bc3000 1223bc4221 aabbeebbaa cccdeedccc 4445cd6444 0003bc3000 0002bc3000 0002bc3000 0002bc3000 0002ab2000',
+        '×': '3100000013 a31000013a da310013ad bda3113adb 4bda44adb4 14bebbeb41 014ceec410 013ceeb410 13adccea31 3adc44bda3 adb4114bda db410014bd b41000014b 4100000014',
+        'x': 'a820000169 dd810014cc cec5112aeb 6deb427dd6 28dea7cd92 12aeeeeb31 014dffd610 015dffd510 13beeeea20 29dd7aed82 7dd724bed6 bea2115dec dc410027de c61000029d',
+    },
+    'Roboto': {
+        'e': '0026897410 15bcdddc82 5cdc88bed7 aeb5224aeb ce721116dc dd743346dd eedccccded eedccccccb ed53333332 dd51000111 cea3111266 8eda5459cb 39dedcddc7 127bddca62',
+        'E': '6cdddddcc5 7edbbbbba4 7e92111111 7e81000000 7e81000000 7e93222210 7eedcccc60 7edaaaa950 7e91111100 7e81000000 7e81000000 7e91111110 7edaaaaa94 6eeeeeeee7',
+        '+': '0014aa4100 0015cc5100 0015dd6100 0015dd6100 1126dd6211 777aeea777 dddeffeddd cccdeedccc 3348ee8433 0116dd6110 0015dd6100 0015dd6100 0015cd5100 0014aa4100',
+        '×': '7210000137 c83100138c dc931139dd ded9339ded 8dedaadec8 38deeeed82 13aeffe931 13aeffe931 28deeeed82 8cedaadec7 ded9339dec dd931139dd c83100138c 8310000138',
+        'x': '8840001488 aca2002aca 7dd7118dd7 3bec44ceb3 15ceabec41 027eeee710 013bfeb300 002afea200 017dffd710 04becceb40 2aed65dda2 7de8228ed7 ceb3113beb cd610016cc',
+    },
+    'Gill Sans': {
+        'e': '136abcb842 39cdeeedb5 9dedbacdda cec7435add dd842236ce ed976668ce eeddccccdd ed98777777 dd73222222 dd93211112 ced9432348 9dedcaabcd 39cdeeeedc 137bcdddb7',
+        'E': '2acccccca1 2deedddda1 2dd6333320 2dd3000000 2dd3000000 2dd4222210 2deddddc81 2deddddc81 2dd5322210 2dd3000000 2dd3000000 2dd5222221 2dedccccb2 2ceeeeeec2',
+        '+': '0014983000 0015bb4100 0016cc5100 0016dc5100 1126dd5111 5569dd8555 cccdeedccc dddeffeddd 6679ee9666 2237dd6222 0016dd5100 0016cc5100 0016cc5100 0014983100',
+        '×': 'a521001259 da521125ad eda5235add cedb66bddc 8ceecceec8 39deeeec83 14aeffea41 25beffeb52 5beeeeeda4 adecaadeda dec8448ced dc831138cd b83100138b 7310000137',
+        'x': '952000138a db511128de eeb4226ded beea46ceda 6ceebceeb4 27deffec51 139effd720 128effd620 26ceeeec51 5ceebceeb4 beeb55ceea dec4226ced ec620127ce c72000127c',
+    },
+    'Avenir': {
+        'e': '1369bba852 49ccccccb6 adb8556acc db5211139c c72111125c c64433446c dccbbbbccd da99999999 c532222222 c721000112 db51000159 bdb74348bc 5acdcbcdc9 148bccca73',
+        'E': '6ddeddddc4 7d97777772 7d41000000 7c30000000 7c30000000 7d53222220 7edccccc91 7d97777751 7d41000000 7c30000000 7c30000000 7d41000000 7d97777763 7deeeeeed7',
+        '+': '0002892000 0002ab3000 0003bb3000 0003bb3000 0013bb3100 2235bc5322 bbbceecbbb bbbceecbbb 3335cc5333 1113bb4111 0003bb3000 0003bb3000 0002ab3000 0002992000',
+        '×': '6310001236 b63111137b cb632236bc bdb6447cdb 6bdc88ccb6 27cedddb62 138deed831 137deed731 36bddddb62 6bcb88bcb6 bdb6227cdb cb621127cc a62100127b 6210000126',
+        'x': 'a82000128a cc720027cc adc5115cd8 4bda44ada3 16cdaadb51 028deed620 014ceeb410 027deec610 15bdbcdb41 3ada56cda3 8dc5227dd8 cc721139dc d9310014bd b41000015b',
+    },
+    'Times New Roman': {
+        'e': '0137aba731 15a979cca4 4b94227cd9 8c62114bec bd97667bdc cda8888898 cc53222222 cc52100001 cd82000013 cec5100027 9eea522379 5cedc99ab6 27ceeedc83 1269bba731',
+        'E': 'bedcbbbcda 4ee522237a 2dd3000018 2dd3000112 2dd4001271 2de52236a1 2decbbcda1 2dd52238a1 2dd3000281 2dd3000010 2dd3000001 2dd4000015 4ee622236c ceedcccdec',
+        '+': '0002871000 0002981000 0002981000 0002981000 1113982111 3334ba4333 aaabddaaaa 7789cb8777 1113a82111 0002981000 0002981000 0002981000 0002981000 0002771000',
+        '×': '4100000014 9410000149 b94201249b 8b942249b8 39ca55ac83 139cbbc831 014aeea411 025beeb521 149cabc941 4ac9449ca4 9b942249c9 b94111149b 8421001149 3110000114',
+        'x': '8987327888 cdd9326cc8 aeea327c93 4ced75ba31 17decba410 029eed6200 014ced6100 014beea300 028bbed820 16a75cec51 4a8326deb3 aa4113aed9 d931128eed cb6114addd',
+    },
+    'Times New Roman bold': {
+        'e': '0148aba731 15aca8cc83 4bdc538dd7 8dea326deb bee9326dec ceeb879ded deec999999 deeb422222 ceeb410000 cefd720013 aefeb52248 6cffeb8897 38defedc83 137abba741',
+        'E': 'ceedcccdec 8ffd5335bd 6efd30113a 6efd313416 6efd316601 6efd55b600 6efebdd600 6efe8bd600 6efd43a600 6efd315501 6efd302302 6efd300126 8ffe73359d deeedddeee',
+        '+': '0002a92000 0003cb2000 0003cb2000 0003cb2000 1113cc3111 4446dd5444 ccddeeddcc bbbceecbbb 2224cc4222 0013cb3100 0003cb2000 0003cb2000 0003bb2000 0002882000',
+        '×': '5210000125 b62100126b cb621126bc bdb6336bdb 6cdc77cdb6 26cddddb62 138deed831 128deed831 26bddddc62 6bdc88cdb6 bdb7337cdb dc721137cd b73100127b 6210000126',
+        'x': 'abbba77aaa cdedb449c9 aefec54aa4 6dffe99a51 29effdc720 15cefec410 029effd610 015cffe920 004befec51 027cdffea2 15a79effd6 4a945cffeb bd844beffd cdb78bdddd',
+    },
+    'STIX Two Text': {
+        'e': '01369a8621 15ab9acc83 5ab6336cc7 9c931129db bd732238dd cdba999bdd dd86666666 dd63222222 dd72000000 cdb3100013 aed9311149 5ceda768a9 27ceedddb5 0259bcca52',
+        'E': 'bccccccccb 6de75556ad 2dd511113b 2cd4000017 2cd4100361 2cd5112781 2ceb99bd91 2ce8557c91 2cd5111581 2cd4100121 2cd4000003 2cd4100019 5de643459d ceeddddded',
+        '+': '0002a91000 0003cb2000 0003cb2000 0003cb2000 0003cb2000 3335dc4333 bbcceecbbb bbbceecbbb 2224cc3222 0003cb2000 0003cb2000 0003cb2000 0002ba2000 0002981000',
+        '×': '2000000002 9300000029 da3000029d bda20029db 4bda339db4 14bdaadb41 014ceec410 013beeb410 039dccda30 29db55bd92 9db4224bda db410014bd b41000024b 4100000014',
+        'x': 'aaaa6249aa ceeb5249dc 8dea3128c7 3aed735b82 15bdb7a931 027decb410 013aee9310 0139eec510 016bbdea31 15a959dd82 3ab524bec6 9c72127deb dc62127dee dc9313acdd',
+    },
+    'Courier New': {
+        'e': '2479aa9752 6abbaabca6 aa754457aa a52111125a 7321111126 7544444457 cbaaaaaaab 8776666667 6332222222 8310000001 b621000012 aa84333359 59bcbaabbb 2478998875',
+        'E': 'aaa99999a9 7c9666668b 4b6111124a 3a50000139 3a51124124 3a62269101 3bbaaca100 3b977aa100 3a52268100 3a51122113 3a50000016 3a51000126 6c85555558 dddddddddd',
+        '+': '0001651000 0002882000 0002982000 0002982000 0002992000 1113a93111 7889cc9887 99abddaa99 3345ba5433 0113992110 0002992000 0002982000 0002982000 0002761000',
+        '×': '5211011235 952111236a b9532236ab aca6446ab9 6aca77bca5 36bdccca52 248cedc632 247cedc732 36bcccca63 6bba67aba5 ab953369b9 b94211259b 9421001259 4210001125',
+        'x': 'aa821138aa da721138bd ca521125ac 8b942249b8 38b9559b73 137bbbb731 024add9410 125bcca520 25ab88b951 5ab6337ba5 bb621126ba c73111148c da721127bd cb921139cc',
+    },
+    'Menlo': {
+        'e': '026acdc931 3addddddb5 9ed9547ceb de821125dd ed522224bd eecbbbbbde eedddddddd eb43333333 ea21111111 ec31000000 dd82100113 9eda54469a 49dedccddc 137abccb96',
+        'E': '2bcccccca2 3deccccca2 3dc3222220 3dc2000000 3dc2111100 3de9999871 3deddddda1 3dd4333320 3dc2000000 3dc2000000 3dc2000000 3dc2111110 3debbbbba2 3deeeeeed3',
+        '+': '0014a94100 0015dc5100 0015dc5100 0015dc5100 1126dd5211 5568ee8655 dddefeeddd ccdeeeedcc 4458ed7544 1126dd5111 0015dc5100 0015dc5100 0015cc5100 0014994100',
+        '×': '5100000015 b62000026b dc620027cd dec6227ced 8dec78ced8 38dedded82 139effe931 128effe821 27ceeeec72 7ced99dec6 ced8338dec dd821138dd c83100138c 7210000127',
+        'x': 'a82000028a cd710017dc 9ec5115ce9 3beb44beb3 14ceaaec41 017deed710 003aeea200 003ceec300 02aeeeea20 17dd88dd71 5dda23aed5 beb3113ceb dd510015dd d81000027d',
+    },
+};
+
+const grids = shapes => Object.fromEntries(Object.entries(shapes).map(([ch, cells]) => [ch, Float32Array.from(cells.replace(/ /g, ''), cell => parseInt(cell, 16) / 15)]));
+
+/** @type {{name: string, digits: Object<string, Float32Array>, signs: Object<string, Float32Array>}[]}  row-major, 0–1 */
+export const DIGIT_TEMPLATES = Object.entries(FONTS).map(([name, digits]) => ({ name, digits: grids(digits), signs: grids(SIGNS[name]) }));
