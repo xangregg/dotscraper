@@ -960,7 +960,7 @@ const plosSkip = name => !existsSync(`${PLOS}truth/${name}.json`) && `bench-plos
 
 const MICROPLASTICS1 = 'microplastics1-10.1371-journal.pone.0362569';
 const MYELOID1 = 'myeloid1-10.1371-journal.pone.0362747';
-const SCORE1 = 'score1-10.1371_journal.pone.0361996';
+const SCORE1 = 'score1-10.1371-journal.pone.0361996';
 const BOXDOTS1 = 'boxdots1-10.1371-journal.pone.0361404';
 
 test('regression: microplastics1, a thin gray border bar is no translucent level of the black dots', { skip: plosSkip(MICROPLASTICS1) }, () => {

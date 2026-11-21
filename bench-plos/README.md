@@ -10,8 +10,8 @@ authors under that license; the BSD Zero Clause License of this repository's cod
 ## What is here
 
 - **`<name>-<DOI>.png`**: a figure, or one panel of a figure, captured from the published article and cropped to the
-  plot. The article's DOI is in the file name, with `/` written as `-` (in one name as `:`). Which numbered figure
-  each one is was not recorded; the DOI leads to the article.
+  plot. The article's DOI is in the file name, with `/` written as `-`. Which numbered figure each one is was not
+  recorded; the DOI leads to the article.
 - **`<name>-<DOI>.csv`**: for some figures, the plotted values in data units, with the axis tick values in header
   lines, taken from the data the article publishes. The benchmark places them in the image through the detected
   ticks.
