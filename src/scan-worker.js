@@ -2,8 +2,9 @@
 // and on the main thread the browser called the page unresponsive. It only wraps src/core/ functions.
 //
 // Messages in: { op, ...args }, one at a time (to stop one, the page terminates the worker):
-//   'scan'   { image, jpeg, tryNoisy }: extract.js scanFamilies on the image as decoded. With tryNoisy, the scan is
-//            made with exact and with noisy color matching, and the one that finds more families with a radius wins.
+//   'scan'   { image, jpeg, tryNoisy, bounds }: extract.js scanFamilies on the image as decoded. With tryNoisy, the
+//            scan is made with exact and with noisy color matching, and the one that finds more families with a
+//            radius wins. `bounds` are the plot's sides (axes.js plotBounds): a family beyond them is left out.
 //            The result is scanFamilies' without the image as analyzed, which the page makes for itself.
 //   'seed'   { image, seed, jpeg }: estimateStyle of a picked color.
 //   'opaque' { image, jobs: [{ seed, opts }] }: opaqueFamilyEstimate for each.
@@ -15,8 +16,8 @@ import { estimateStyle, opaqueFamilyEstimate } from './core/style.js';
 
 const progress = (label, fraction) => self.postMessage({ type: 'progress', label, fraction });
 
-function scan({ image, jpeg, tryNoisy }) {
-    const { work, ...result } = scanFamilies(image, { jpeg, tryNoisy, onProgress: progress });
+function scan({ image, jpeg, tryNoisy, bounds }) {
+    const { work, ...result } = scanFamilies(image, { jpeg, tryNoisy, bounds, onProgress: progress });
     return result;
 }
 

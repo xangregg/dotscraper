@@ -3311,3 +3311,106 @@ Not done, and known:
 - An exponent set so low that it rises less above the digits than a foreign glyph must (15% of the label's height)
   is not cut.
 - A typed "³" at 9 px, turned labels and ggplot2's gray theme are as before.
+
+**Axes without axis lines: the edges of a filled panel (ggplot2's default theme)** (2026-11-21)
+
+ggplot2's default theme draws no axis lines: the plot is a gray panel (230, 230, 230) on a white page, the
+gridlines are white, and the tick marks, 2 px wide and 4 or 5 long at 110 dpi, leave the panel's bottom and left
+edges into the page. detectAxes found nothing to hang ticks on, since an axis was a dark line. What it found
+instead were the gridlines' antialiased rims (white is a background color, but 246 beside 230 is neither), as light
+"gridlines" standing in for ticks, with scraps of dots for labels. Five such plots are now in bench-r (gg-gray at
+72, 110 and 300 dpi, and with labels in each scientific notation).
+
+The rule (axes.js `panelEdges`, used by `detectAxes`):
+- A panel is the extent of a background color other than the page's, the page being the background at the image's
+  border (in these plots the panel is the commoner color). It is kept when it is a rectangle: its first and last
+  rows and columns are of its color at least 0.8 of the way across (`PANEL_EDGE_MIN_FILL`; gridlines cross them, a
+  few percent in all). Dots of one color, bands and ellipses are backgrounds by their area too, 20 of the 118 local
+  images have one, and their first row is a sliver.
+- Its four edges are lines of no thickness, tried as axis lines when no dark line of that direction is an axis,
+  and before gridlines stand in. Dark lines keep their precedence where both would do (a panel inside axis lines:
+  the lines and their ticks leave its edges too).
+- Along an edge a tick is no wider than it is long (a line's thickness measures a tick's width elsewhere), and its
+  darkness is read from its second pixel: the first is the edge's own row, panel, page and stroke blended (194 at
+  72 dpi, where the tick is 146).
+Everything after that is as for an axis line: labels, the plot's bounds, the clip edges.
+
+Results. All ten axes of the five plots are found, at the panel's edges, with every tick and its label, at 72, 110
+and 300 dpi (ticks 3, 5 and 12 px long). The label benchmark on bench-r: 26 images, 228 of 245 labels read right,
+47 of 52 axes solved, 0 wrong (21 images, 195 of 209, 39 of 42 before); eight of the ten new axes are solved, and
+gg-gray-small's two are not, their digits 6 px tall ("50" read "?0"). The other six sets are identical (1,114 of
+1,218; 162 of 181; 0 wrong). detectAxes gives the same lines, ticks and label boxes as before on all 118 local
+images and bench-r's other 21. It takes 4% longer over those 144 images (5.14 s from 4.96).
+
+The dots, checked once through a copy of the benchmark with bench-r registered (R's data placed through the
+detected ticks): 40 of 40 found on gg-gray, gg-gray-small, gg-gray-log-e and gg-gray-times, precision and recall
+1.000, RMSE 0.11 to 0.21 px. In the app gg-gray opens as "x linear, read · y linear, read" with 25, 50, 75 and 10
+to 40, the axes drawn along the panel's edges, and 40 dots found.
+
+Tests (4 new in test/axes.test.js): a drawn panel plot with blended edge rows and light first tick pixels; the
+edges of a rectangle, and none for an ellipse, for a band fanning out to full height at its ends, for the same
+turned, and for a page of one color; no axis from a panel without tick marks, and dark axis lines before a panel's
+edges; bench-r's three sizes. Each rule removed fails a test (8 mutations: the fill, for rows and for columns
+alone, the page by the border, a tick's width, its second pixel, the order, the edges themselves).
+
+Not done, and known:
+- gg-gray-hi (300 dpi): the app finds the 40 dots, and beside them a second family, dark gray and translucent with
+  no radius, which is the labels' text; the benchmark's fit of every family stops on it ("The dot radius is
+  unknown"). Fixed in the next entry. bench-r is not in the dot benchmark yet.
+- The app's hint about JPEG-like noise shows on these plots: the gridlines' rims are background pixels slightly
+  off.
+- A panel without tick marks (seaborn's darkgrid, ggplot2 with `axis.ticks` blank) gets no axis: its white
+  gridlines are not ink, so they can't stand in. Several panels in one image (facets) are taken as one extent.
+- Text 6 px tall (ggplot2 at 72 dpi) is under what the label reader reads.
+
+**A family with no ink inside the plot is no family; and three more details of a panel's edges** (2026-11-21)
+
+The false family on gg-gray-hi, looked into. It is not the labels' text alone: the tick labels' gray (60 at their
+cores) and the tick marks' (38) lie on the gray line from the panel's 230, at steps that fit two levels of a
+translucent family exactly (α 0.87, full color 35), with 54 and 99 flat pixels. The text is thick enough at 300 dpi
+not to be thin, and seven level-2 pieces are too few for the nesting rule to judge (20). It shows on the gray theme
+only: on a white page the gridlines' gray is the commonest color in that direction and takes the line, with text
+and ticks beyond its one level (theme_bw, theme_classic, theme_minimal and base R at 300 dpi: no such family); at
+200 dpi the text has too few flat pixels.
+
+Its ink is the axes' own, all of it beyond them. So the rule is about where a family is, not what its colors fit
+(extract.js `insidePlot`): with the plot's bounds, a family whose ink lies less than 1% inside them is left out of
+the scan's result (`PLOT_MIN_INK`), its ink being the pixels its count image gives half a dot or more
+(`INK_MIN_COUNT`: the false family's image also gave 0.1 or less to 8,000 pixels of gridline rims inside the plot).
+Nothing is left out when the axes bound nothing, or when no family would remain. The app passes the bounds to the
+scan worker, and extractAll finds the axes before the scan.
+
+Measured on all 191 families the scan finds in the 144 images (the 118 local ones and bench-r): the false family
+has 0.000 of its 3,390 ink pixels inside the plot; every other family 0.287 or more (the lowest are black and
+near-black dots, whose color is the text's too: molar1 0.287, droplet1 0.314, Laser 0.396).
+
+A second 300 dpi plot, 7 in square, still failed, for want of a y axis, and showed three things about a panel's
+edges that the 5 by 4 in one had not:
+- Its y ticks stand 2 px off the panel, and the edge's own pixel between is white, the end of the gridline at the
+  tick. A tick at an edge may now begin up to 0.3% of the image's width out, at least 3 px
+  (`EDGE_TICK_GAP_FRACTION`), and its length is from the edge.
+- With the ticks found, the labels were taken from inside the panel: the gridlines' rims, between the panel's
+  color and their own, are ink, and made a "label" beside every tick, five to the page's four. An edge has its
+  labels on its ticks' side only.
+- The x axis's first tick sits at the panel's corner, 2 px left of it. Seen in part, from 2 px beyond the edge's
+  end, it was placed 2 px off, and from the y edge it was a fifth y tick. Ticks are now looked for as far beyond
+  an edge's ends as they may stand off it and are wide: the tick is seen whole, at 139.2 where the scale's
+  spacing puts it, and from the y edge it is wider than long.
+On bench-r's five gray plots this moved five tick positions by 0.1 or 0.2 px and nothing else.
+
+Results. gg-gray-hi and the 7 in plot: one family each, 40 dots of 40. extractAll on the other gray plots: 40 of 40
+as before. The label benchmark is unchanged (bench-r 228 of 245 labels, 47 of 52 axes, 0 wrong; the other sets
+identical). detectAxes gives the same result as before this entry on every image but those five. The dot
+benchmark's 144 rows are identical to RESULTS.md's apart from times, with no failure: no family of its images is
+left out (RESULTS.md was not regenerated).
+
+Tests (2 new in test/extract.test.js, 1 in test/axes.test.js): a drawn graph with three dots of another color under
+its axis, left out with the bounds, kept without them and with bounds that would leave nothing; gg-gray-hi through
+extractAll; and a drawn panel with its ticks apart, a label missing on the page, rims inside and a tick at the
+corner. Each rule removed fails a test (10 mutations: the filter, its two thresholds, the empty case, the bounds in
+extractAll; the gap, the length from the edge, the other side, the reach beyond the ends, the second pixel).
+
+Not done, and known:
+- The translucent rules still accept text and ticks as two levels where both lie inside the plot's bounds or the
+  axes bound nothing (labels above or right of a plot whose axes are at its left and bottom are inside).
+- bench-r is in the label benchmark only.

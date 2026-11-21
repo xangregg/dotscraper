@@ -145,3 +145,16 @@ times <- ggplot(data.frame(u, v), aes(u, v)) + geom_point(colour = "#17becf", si
     scale_y_continuous(breaks = atv, labels = parsed(c("0", "2 %*% 10^3", "4 %*% 10^3", "6 %*% 10^3", "8 %*% 10^3")))
 gg("gg-times-bw", times + theme_bw(), u, v)
 gg("gg-times", times + theme_classic(), u, v, dpi = 150)
+
+# --- ggplot2's default theme: a gray panel with white grid lines and no axis lines, the ticks at its edges ---
+
+a <- runif(N, 2, 98)
+b <- runif(N, 3, 47)
+gray <- ggplot(data.frame(a, b), aes(a, b)) + geom_point(colour = "#d62728", size = 2.5)
+gg("gg-gray", gray, a, b)
+gg("gg-gray-small", gray, a, b, dpi = 72)
+# ggsave's own resolution, 300 dpi
+gg("gg-gray-hi", gray, a, b, width = 5, height = 4, dpi = 300)
+gg("gg-gray-log-e", ggplot(data.frame(x, y), aes(x, y)) + geom_point(colour = "#2ca02c", size = 2.5) + scale_x_log10() + scale_y_log10(),
+    x, y, xlog = TRUE, ylog = TRUE)
+gg("gg-gray-times", times, u, v)

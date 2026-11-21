@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
-import { detectAxes, fitScale, toData, toPixel, resolution, guessValues, plotBounds } from '../src/core/axes.js';
+import { detectAxes, backgroundColors, panelEdges, fitScale, toData, toPixel, resolution, guessValues, plotBounds } from '../src/core/axes.js';
 import { synthGraph, scatterPoints, labelBlocks } from '../src/core/synth.js';
 import { readPng, readImage } from '../tools/png.mjs';
 
@@ -383,4 +383,177 @@ test('regression: cells1, the bars\' names under their baseline are the x axis\'
     // "L5PTs" and "GrCs", under the two bars (centered about 430 and 661 px)
     near(ax.x.ticks[0].pos, 430, 6, 'L5PTs');
     near(ax.x.ticks[1].pos, 661, 6, 'GrCs');
+});
+
+function fill(image, [x0, y0, x1, y1], color) {
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++)
+            image.data.set([...color, 255], 4 * (y * image.width + x));
+    }
+}
+
+const PANEL = [60, 20, 420, 290]; // px, [x0, y0, x1, y1)
+const PANEL_X_TICKS = [120, 200, 280, 360];
+const PANEL_Y_TICKS = [70, 130, 190, 250];
+
+// A plot as ggplot2's default theme draws it: a gray panel on a white page, white gridlines across it, no axis
+// lines, and dark tick marks 2 px wide leaving the panel's bottom and left edges, with labels beyond them. The row
+// under the panel and the column left of it are its color blended with the page's, as an edge between pixels is,
+// and a tick's first pixel there is lighter than the rest of it. Dots are red discs.
+//
+// `apart`: as ggplot2 drew one 7 in wide at 300 dpi. The y ticks stand 2 px off the panel, and the edge's pixel
+// between is white, the end of the gridline at the tick; the gridlines have rims between their color and the
+// panel's, drawn here in the 40 px beside the left edge; and the x axis has a tick with its label just left of the
+// panel's corner.
+function panelPlot({ ticks = true, apart = false } = {}) {
+    const image = { width: 440, height: 340, data: new Uint8ClampedArray(4 * 440 * 340).fill(255) };
+    const [x0, y0, x1, y1] = PANEL;
+    fill(image, PANEL, [230, 230, 230]);
+    fill(image, [x0, y1, x1, y1 + 1], [244, 244, 244]);
+    fill(image, [x0 - 1, y0, x0, y1], [240, 240, 240]);
+    for (const x of PANEL_X_TICKS) {
+        fill(image, [x - 1, y0, x + 1, y1], [255, 255, 255]);
+        if (ticks) {
+            fill(image, [x - 1, y1, x + 1, y1 + 1], [194, 194, 194]);
+            fill(image, [x - 1, y1 + 1, x + 1, y1 + 6], [51, 51, 51]);
+        }
+        fill(image, [x - 8, y1 + 10, x + 8, y1 + 20], [77, 77, 77]);
+    }
+    for (const y of PANEL_Y_TICKS) {
+        fill(image, [x0, y - 1, x1, y + 1], [255, 255, 255]);
+        if (ticks && apart) {
+            fill(image, [x0 - 1, y - 1, x0, y + 1], [255, 255, 255]);
+            fill(image, [x0 - 8, y - 1, x0 - 3, y + 1], [51, 51, 51]);
+        }
+        else if (ticks) {
+            fill(image, [x0 - 1, y - 1, x0, y + 1], [158, 158, 158]);
+            fill(image, [x0 - 6, y - 1, x0 - 1, y + 1], [51, 51, 51]);
+        }
+        // (apart: the top tick has no label, so that the page has fewer labels than the panel has rims)
+        if (!apart || y !== PANEL_Y_TICKS[0])
+            fill(image, [x0 - 30, y - 5, x0 - 12, y + 5], [77, 77, 77]);
+    }
+    if (apart) {
+        for (const y of PANEL_Y_TICKS) {
+            fill(image, [x0, y - 2, x0 + 40, y - 1], [242, 242, 242]);
+            fill(image, [x0, y + 1, x0 + 40, y + 2], [242, 242, 242]);
+        }
+        fill(image, [x0 - 4, y1, x0 - 2, y1 + 6], [51, 51, 51]);
+        fill(image, [x0 - 11, y1 + 10, x0 + 5, y1 + 20], [77, 77, 77]);
+    }
+    const rng = createRng(11);
+    for (const { x: cx, y: cy } of scatterPoints(rng, { n: 30, box: [x0 + 10, y0 + 10, x1 - 10, y1 - 10] })) {
+        for (let y = Math.floor(cy - 5); y <= cy + 5; y++) {
+            for (let x = Math.floor(cx - 5); x <= cx + 5; x++) {
+                if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= 5)
+                    image.data.set([214, 39, 40, 255], 4 * (y * image.width + x));
+            }
+        }
+    }
+    return image;
+}
+
+test('a gray panel with tick marks at its edges and no axis lines: the edges are the axes', () => {
+    const image = panelPlot();
+    const ax = detectAxes(image);
+    assert.ok(ax.x.line.edge && ax.y.line.edge);
+    assert.deepEqual([ax.x.line.pos, ax.x.line.from, ax.x.line.to, ax.x.line.thickness], [290, 60, 420, 0]);
+    assert.deepEqual([ax.y.line.pos, ax.y.line.from, ax.y.line.to], [60, 20, 290]);
+    assert.deepEqual(ax.x.ticks.map(t => t.source), ['tick', 'tick', 'tick', 'tick']);
+    PANEL_X_TICKS.forEach((x, i) => near(ax.x.ticks[i].pos, x, 0.01, 'x tick'));
+    PANEL_Y_TICKS.forEach((y, i) => near(ax.y.ticks[i].pos, y, 0.01, 'y tick'));
+    assert.deepEqual(ax.x.ticks.map(t => t.label), PANEL_X_TICKS.map(x => [x - 8, 300, x + 8, 310]));
+    assert.deepEqual(ax.y.ticks.map(t => t.label), PANEL_Y_TICKS.map(y => [30, y - 5, 48, y + 5]));
+    // the panel's edges bound the plot, as axis lines do
+    assert.deepEqual(plotBounds(ax), { left: 60, right: null, top: null, bottom: 290 });
+    // the edges are no lines of ink
+    assert.ok(ax.lines.every(l => !l.edge));
+});
+
+test('panelEdges: a filled rectangle that is not the page; not a band, an ellipse or the page itself', () => {
+    const image = panelPlot();
+    const edges = panelEdges(image, backgroundColors(image));
+    assert.deepEqual(edges.map(l => [l.dir, l.pos, l.from, l.to]), [['h', 20, 60, 420], ['h', 290, 60, 420], ['v', 60, 20, 290], ['v', 420, 20, 290]]);
+    // an ellipse of one color, a confidence region's fill, as wide as a panel: its first row is a sliver of it
+    const ellipse = { width: 440, height: 340, data: new Uint8ClampedArray(4 * 440 * 340).fill(255) };
+    for (let y = 0; y < 340; y++) {
+        for (let x = 0; x < 440; x++) {
+            if (((x - 220) / 180) ** 2 + ((y - 170) / 130) ** 2 <= 1)
+                ellipse.data.set([213, 221, 240, 255], 4 * (y * 440 + x));
+        }
+    }
+    assert.equal(backgroundColors(ellipse).length, 2);
+    assert.deepEqual(panelEdges(ellipse, backgroundColors(ellipse)), []);
+    // a band that fans out from its middle to full height at both ends (a fit's confidence band): two straight
+    // sides, its first and last columns, and no straight top or bottom. And the same turned a quarter.
+    for (const turned of [false, true]) {
+        const fan = { width: 440, height: 340, data: new Uint8ClampedArray(4 * 440 * 340).fill(255) };
+        for (let y = 0; y < 340; y++) {
+            for (let x = 0; x < 440; x++) {
+                const [u, v] = [Math.abs(x - 220) / 180, Math.abs(y - 170) / 130];
+                if (u <= 1 && v <= 1 && (turned ? u <= v : v <= u))
+                    fan.data.set([205, 213, 232, 255], 4 * (y * 440 + x));
+            }
+        }
+        assert.equal(backgroundColors(fan).length, 2);
+        assert.deepEqual(panelEdges(fan, backgroundColors(fan)), [], turned ? 'turned' : 'fan');
+    }
+    // a page of one color has no panel
+    assert.deepEqual(panelEdges(synthGraph(plot()).image, [[255, 255, 255]]), []);
+});
+
+test('a panel without tick marks gives no axis, and dark axis lines come before a panel\'s edges', () => {
+    // labels alone beside a panel: nothing says where on its edge a value is
+    const bare = detectAxes(panelPlot({ ticks: false }));
+    assert.ok(!bare.x?.line && !bare.y?.line);
+    // a panel inside axis lines of their own: the lines and their ticks leave its edges too, as strokes do
+    const spec = plot();
+    const { image } = synthGraph(spec);
+    const framed = { width: image.width, height: image.height, data: new Uint8ClampedArray(image.data) };
+    for (let p = 0; p < framed.width * framed.height; p++) {
+        const [x, y] = [p % framed.width, Math.floor(p / framed.width)];
+        if (x >= 62 && x < 405 && y >= 20 && y < 289 && framed.data[4 * p] === 255 && framed.data[4 * p + 1] === 255 && framed.data[4 * p + 2] === 255)
+            framed.data.set([240, 240, 233, 255], 4 * p);
+    }
+    assert.equal(panelEdges(framed, backgroundColors(framed)).length, 4);
+    const ax = detectAxes(framed);
+    assert.ok(!ax.x.line.edge && !ax.y.line.edge);
+    near(ax.x.line.pos, 290.5, 0.2, 'x axis');
+    near(ax.y.line.pos, 60.5, 0.2, 'y axis');
+    assert.equal(ax.x.ticks.length, 6);
+});
+
+const BENCH_R = new URL('../bench-r/', import.meta.url).pathname;
+
+test('bench-r: ggplot2\'s default theme at 72, 110 and 300 dpi, the ticks at the gray panel\'s edges', { skip: !existsSync(BENCH_R + 'gg-gray.png') && 'bench-r absent' }, () => {
+    for (const [name, xGap, yGap] of [['gg-gray-small', 110.8, 63.6], ['gg-gray', 169.3, 97.2], ['gg-gray-hi', 377.4, 225.9]]) {
+        const ax = detectAxes(readImage(`${BENCH_R}${name}.png`));
+        assert.ok(ax.x.line.edge && ax.y.line.edge, name);
+        // 25, 50, 75 below and 10 to 40 beside: evenly spaced, each with its label
+        assert.equal(ax.x.ticks.length, 3, name);
+        assert.equal(ax.y.ticks.length, 4, name);
+        assert.ok(ax.x.regular && ax.y.regular, name);
+        near(ax.x.spacing, xGap, 0.5, `${name} x spacing`);
+        near(ax.y.spacing, yGap, 0.5, `${name} y spacing`);
+        assert.ok([...ax.x.ticks, ...ax.y.ticks].every(t => t.label && t.source === 'tick'), name);
+    }
+});
+
+test('regression: ticks that stand off a panel\'s edge, gridline rims inside it, and a tick at its corner', () => {
+    // ggplot2's gray theme, 7 in wide at 300 dpi: no y tick touched the left edge, so there was no y axis; with the
+    // ticks found, the rims of the gridlines inside the panel were their labels where they outnumbered the page's,
+    // and the plot was bounded on the wrong side; and the x tick at the corner, seen in part, was a fifth y tick
+    // and the x axis's first, 2 px off its place
+    const ax = detectAxes(panelPlot({ apart: true }));
+    assert.ok(ax.x.line.edge && ax.y.line.edge);
+    assert.equal(ax.y.ticks.length, 4);
+    PANEL_Y_TICKS.forEach((y, i) => near(ax.y.ticks[i].pos, y, 0.01, 'y tick'));
+    // a tick's length is from the edge: its 5 px and the 3 between
+    assert.deepEqual(ax.y.ticks.map(t => t.length), [8, 8, 8, 8]);
+    assert.deepEqual(ax.y.ticks.map(t => t.label), PANEL_Y_TICKS.map((y, i) => (i ? [30, y - 5, 48, y + 5] : null)));
+    assert.deepEqual(plotBounds(ax), { left: 60, right: null, top: null, bottom: 290 });
+    // the corner's tick is the x axis's first, with its label
+    assert.equal(ax.x.ticks.length, 5);
+    near(ax.x.ticks[0].pos, 57, 0.01, 'corner tick');
+    assert.deepEqual(ax.x.ticks[0].label, [49, 300, 65, 310]);
 });

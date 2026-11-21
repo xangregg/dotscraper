@@ -17,9 +17,44 @@ import { paletteColors, paletteFamilies } from './colormap.js';
 /** @typedef {import('./axes.js').Axes} Axes */
 /** @typedef {import('./axes.js').ClipEdge} ClipEdge */
 
+// A family has ink inside the plot. One with next to none there is the axes' own ink: on ggplot2's gray theme at 300
+// dpi the tick labels' gray and the tick marks', darker, are the two levels of a translucent "family" beside the
+// dots', with no whole dot and so no radius, which stood in the app's list and stopped extractAll. Its ink is all
+// beyond the axes.
+const PLOT_MIN_INK = 0.01; // share of the family's ink that lies within the plot's bounds
+// … its ink being the pixels its count image gives half a dot or more: the same image gave 0.1 or less to 8,000
+// pixels of the gridlines' rims inside the plot, grays between the panel's and the page's
+const INK_MIN_COUNT = 0.5;
+
 // families with a radius: what can be fitted
 function fittable(prepared) {
     return prepared.estimates.filter(e => e.style?.radius).length;
+}
+
+// The scan's result without the families that have no ink inside the plot (PLOT_MIN_INK). As it is when the axes
+// bound nothing, or when no family would be left: then the axes are in doubt, not the families.
+function insidePlot(prepared, bounds) {
+    if (!bounds)
+        return prepared;
+    const { left, right, top, bottom } = bounds;
+    const kept = prepared.estimates.filter(e => {
+        if (!e.D)
+            return true;
+        const { width } = e.image;
+        let ink = 0;
+        let inside = 0;
+        for (let p = 0; p < e.D.length; p++) {
+            if (!(e.D[p] >= INK_MIN_COUNT))
+                continue;
+            ink++;
+            const x = p % width + 0.5;
+            const y = Math.floor(p / width) + 0.5;
+            if ((left === null || x > left) && (right === null || x < right) && (top === null || y > top) && (bottom === null || y < bottom))
+                inside++;
+        }
+        return inside >= PLOT_MIN_INK * ink;
+    });
+    return kept.length ? { ...prepared, estimates: kept } : prepared;
 }
 
 /**
@@ -32,10 +67,14 @@ function fittable(prepared) {
  * cost pathogen precision (0.972 → 0.637), which worked as it was. A family counts once it has a radius: without
  * one it can't be fitted (step1: the blue dots, radius unknown with exact colors, 5.4 px with noisy matching).
  *
+ * With the plot's `bounds`, a family whose ink lies beyond them is left out (insidePlot).
+ *
  * @param {RgbaImage} source  the image as decoded
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]  noisy color matching from the start (a JPEG file, or the user's choice)
  * @param {boolean} [opts.tryNoisy]
+ * @param {{left: number|null, right: number|null, top: number|null, bottom: number|null}} [opts.bounds]  px, the
+ *   plot's sides that the axes show (axes.js plotBounds)
  * @param {(label: string, fraction: number) => void} [opts.onProgress]  what is being done and the share of the
  *   whole done (0–1)
  * @returns {{work: RgbaImage, prepared: {image: RgbaImage, layers: object|null, estimates: Estimate[]},
@@ -49,14 +88,14 @@ export function scanFamilies(source, opts = {}) {
     // the noisy pass takes about as long as the first (beeswarm-boxplot: 19 s and 33 s), so each gets half the bar
     const share = tryNoisy ? 0.5 : 1;
     const work = jpeg ? restoreChroma(source) : source;
-    const prepared = estimateFamilies(work, { jpeg, onProgress: (label, f) => report(label, share * f) });
+    const prepared = insidePlot(estimateFamilies(work, { jpeg, onProgress: (label, f) => report(label, share * f) }), opts.bounds);
     if (!tryNoisy)
         return { work, prepared, switched: false };
     const restored = restoreChroma(source);
-    const noisy = estimateFamilies(restored, {
+    const noisy = insidePlot(estimateFamilies(restored, {
         jpeg: true,
         onProgress: (label, f) => report(`Trying noisy color matching: ${label.charAt(0).toLowerCase()}${label.slice(1)}`, 0.5 + 0.5 * f),
-    });
+    }), opts.bounds);
     const exact = fittable(prepared);
     const found = fittable(noisy);
     return found > exact ? { work: restored, prepared: noisy, switched: true, exact, found } : { work, prepared, switched: false };
@@ -159,14 +198,14 @@ export function dotFills(work, est, dots, radius) {
  * @throws {Error} when a family has no style to fit with (its notes say why)
  */
 export function extractAll(source, jpeg = false) {
-    const { work, prepared, switched } = scanFamilies(source, { jpeg, tryNoisy: !jpeg && jpegNoise(source).likely });
-    const missing = prepared.estimates.find(e => !e.style);
-    if (missing)
-        throw new Error(missing.notes.join(' '));
     // The axes are the image's as decoded, as in the app, where they are found before the scan and carry the tick
     // values the user types. Read on the image as analyzed instead, the plot's sides moved by up to 0.08 px on six
     // PNGs with JPEG noise, and no dot of any test image changed.
     const axes = detectAxes(source);
+    const { work, prepared, switched } = scanFamilies(source, { jpeg, tryNoisy: !jpeg && jpegNoise(source).likely, bounds: plotBounds(axes) });
+    const missing = prepared.estimates.find(e => !e.style);
+    if (missing)
+        throw new Error(missing.notes.join(' '));
     const clips = familyClips(axes, prepared.estimates.map(e => ({ D: e.D, radius: e.style.radius })), work.width, work.height);
     return prepared.estimates.flatMap((est, k) => {
         const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius), clips[k]));

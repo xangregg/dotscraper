@@ -78,6 +78,15 @@ const OTHER_SIDE_MAX_WIDTH = 1.5; // × the tick spacing
 const AXIS_CORNER_TOL = 3; // px
 const CATEGORY_MIN_LABELS = 2;
 const BACKGROUND_MIN_FRACTION = 0.05; // any flat color covering this share of the image is a background (panels)
+// A panel is a rectangle filled with a background color that is not the page's (ggplot2's default theme: gray, with
+// white gridlines and no axis lines; the tick marks leave its edges). Its first and last rows and columns are of
+// its color at least this share of its width and height: gridlines cross them, a few percent in all, while the
+// first row of a band, an ellipse or a crowd of dots of one color is a sliver of it (panelEdges).
+const PANEL_EDGE_MIN_FILL = 0.8;
+// A tick at a panel's edge may begin a few pixels out from it: ggplot2 at 300 dpi, 7 in wide, leaves 2 px of page
+// between the panel and its y ticks, and the edge's own pixel there is white too, a gridline's end. As a share of
+// the image dimension across the edge, and at least TICK_MIN_LENGTH px; labels begin a tick's length farther out.
+const EDGE_TICK_GAP_FRACTION = 0.003;
 const GRID_BASELINE_TOL = 0.03; // × spacing: a dark baseline this close to the gridlines' progression is a tick
 const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of the line's length of either end
 
@@ -90,6 +99,8 @@ const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of
  * @property {number} to         px, end along the line
  * @property {number} luminance  0–255, mean over the line
  * @property {boolean} dark
+ * @property {boolean} [edge]    a panel's edge standing in for an axis line (panelEdges): no ink of its own,
+ *   thickness 0, `pos` the boundary between the panel's last row or column and the page's first
  */
 
 /**
@@ -184,6 +195,59 @@ export function grayInk(image, backgrounds) {
     return out;
 }
 
+/**
+ * The edges of filled panels, as lines: where a plot is drawn on a panel of its own color with no axis lines, its
+ * axes are the panel's edges, and the tick marks leave them into the page (ggplot2's default theme). A panel is the
+ * extent of a background color other than the page's (the one at the image's border), kept when it is a rectangle:
+ * its first and last rows and columns are of that color PANEL_EDGE_MIN_FILL of the way across.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[][]} backgrounds  from backgroundColors
+ * @returns {Line[]}  four per panel, thickness 0, `edge` true
+ */
+export function panelEdges(image, backgrounds) {
+    const { width, height, data } = image;
+    const like = (p, B) => Math.hypot(data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]) <= INK_TOL;
+    const border = [];
+    for (let x = 0; x < width; x++)
+        border.push(x, (height - 1) * width + x);
+    for (let y = 0; y < height; y++)
+        border.push(y * width, y * width + width - 1);
+    const onBorder = backgrounds.map(B => border.filter(p => like(p, B)).length);
+    const page = backgrounds[onBorder.indexOf(Math.max(...onBorder))];
+    const edges = [];
+    for (const B of backgrounds.filter(b => b !== page)) {
+        const rows = new Int32Array(height);
+        const cols = new Int32Array(width);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                if (like(y * width + x, B)) {
+                    rows[y]++;
+                    cols[x]++;
+                }
+            }
+        }
+        // [first, last + 1) of the rows or columns that the color runs along, as a line must
+        const extent = (counts, least) => {
+            const first = counts.findIndex(n => n >= least);
+            return first < 0 ? null : [first, counts.findLastIndex(n => n >= least) + 1];
+        };
+        const ys = extent(rows, LINE_MIN_FRACTION * width);
+        const xs = extent(cols, LINE_MIN_FRACTION * height);
+        if (!ys || !xs)
+            continue;
+        const full = (counts, [a, b], length) => counts[a] >= PANEL_EDGE_MIN_FILL * length && counts[b - 1] >= PANEL_EDGE_MIN_FILL * length;
+        if (!full(rows, ys, xs[1] - xs[0]) || !full(cols, xs, ys[1] - ys[0]))
+            continue;
+        const L = 0.299 * B[0] + 0.587 * B[1] + 0.114 * B[2];
+        for (const pos of ys)
+            edges.push({ dir: 'h', pos, thickness: 0, from: xs[0], to: xs[1], luminance: L, dark: false, edge: true });
+        for (const pos of xs)
+            edges.push({ dir: 'v', pos, thickness: 0, from: ys[0], to: ys[1], luminance: L, dark: false, edge: true });
+    }
+    return edges;
+}
+
 // longest run of ink along one row or column, gaps up to LINE_GAP bridged; returns [start, end) or null
 function longestRun(ink, n, at) {
     let best = null;
@@ -272,8 +336,10 @@ export function findLines(image, ink) {
 
 /**
  * Tick marks along a dark axis line: short gray strokes perpendicular to it with a dark core, on either side,
- * grouped into ticks. A tick that coincides with a perpendicular line is marked `onLine`: it may be an axis corner
- * (dropped later unless it has a label) or a zero line crossing the axis (Laser: it is the 0 tick).
+ * grouped into ticks. Along a panel's edge, which has no thickness to measure a tick's width by, a tick is no
+ * wider than it is long, and may begin a few pixels out (EDGE_TICK_GAP_FRACTION). A tick that coincides with a
+ * perpendicular line is marked `onLine`: it may be an axis corner (dropped later unless it has a label) or a zero
+ * line crossing the axis (Laser: it is the 0 tick).
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {Uint8Array} ink
@@ -289,6 +355,7 @@ export function findTicks(image, ink, axis, lines) {
     const at = (a, c) => (h ? c * width + a : a * width + c); // a along the axis, c across it
     const maxLen = TICK_MAX_LENGTH_FRACTION * acrossMax;
     const maxWidth = Math.max(1, TICK_MAX_WIDTH_THICKNESSES * axis.thickness);
+    const maxGap = axis.edge ? Math.max(TICK_MIN_LENGTH, Math.round(EDGE_TICK_GAP_FRACTION * acrossMax)) : 0;
     const near = (axis.pos - axis.thickness / 2);
     const far = (axis.pos + axis.thickness / 2);
     const perpendicular = lines.filter(l => l.dir !== axis.dir && l.dark);
@@ -296,16 +363,25 @@ export function findTicks(image, ink, axis, lines) {
     for (const side of ['before', 'after']) {
         const start = side === 'before' ? Math.floor(near) - 1 : Math.ceil(far);
         const step = side === 'before' ? -1 : 1;
-        // length of the dark stroke leaving the axis at each position along it
+        // length of the dark stroke leaving the axis at each position along it, and where it begins
         const len = new Float64Array(alongMax);
-        for (let a = Math.max(0, Math.floor(axis.from) - 2); a < Math.min(alongMax, Math.ceil(axis.to) + 2); a++) {
+        const begin = new Int32Array(alongMax);
+        // (… looked for a little beyond the axis's ends: 2 px, and at a panel's edge as far again as its ticks may
+        // stand off it and are wide. The tick at its corner is then seen whole, and from the other edge whole too,
+        // wider than long: with 2 px it was that edge's last tick, 2 px across)
+        const beyond = 2 + 2 * maxGap;
+        for (let a = Math.max(0, Math.floor(axis.from) - beyond); a < Math.min(alongMax, Math.ceil(axis.to) + beyond); a++) {
             let c = start;
+            for (let gap = 0; gap < maxGap && c >= 0 && c < acrossMax && !ink[at(a, c)]; gap++)
+                c += step;
+            begin[a] = c;
             let n = 0;
             while (c >= 0 && c < acrossMax && ink[at(a, c)] > 0 && n <= maxLen) {
                 n++;
                 c += step;
             }
-            len[a] = n >= TICK_MIN_LENGTH && n <= maxLen ? n : 0;
+            // (… from the axis: with the pixels between, at a panel's edge)
+            len[a] = n >= TICK_MIN_LENGTH && n <= maxLen ? n + Math.abs(begin[a] - start) : 0;
         }
         let a = 0;
         while (a < alongMax) {
@@ -316,13 +392,14 @@ export function findTicks(image, ink, axis, lines) {
             let b = a;
             while (b < alongMax && len[b])
                 b++;
-            if (b - a <= maxWidth) {
+            if (b - a <= (axis.edge ? Math.max(...len.slice(a, b)) : maxWidth)) {
                 let w = 0;
                 let wpos = 0;
                 let core = 255;
                 for (let k = a; k < b; k++) {
-                    // weight by darkness of the stroke's first pixel, to center antialiased edges
-                    const L = luminance(data, 4 * at(k, start));
+                    // weight by darkness of the stroke's first pixel, to center antialiased edges (at a panel's
+                    // edge its second: the first is the edge's own, blended with the page's and the stroke's)
+                    const L = luminance(data, 4 * at(k, axis.edge ? begin[k] + step : start));
                     core = Math.min(core, L);
                     w += (255 - L) * len[k];
                     wpos += (255 - L) * len[k] * (k + 0.5);
@@ -466,7 +543,9 @@ export function findLabels(image, backgrounds, axis, ticks) {
     const tickSide = ticks.filter(t => t.side === 'after').length >= ticks.filter(t => t.side === 'before').length ? 'after' : 'before';
     const tickLen = Math.max(...ticks.map(t => t.length));
     const own = labelsOnSide(image, backgrounds, axis, ticks, tickSide, tickLen);
-    const other = labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0, OTHER_SIDE_MAX_WIDTH);
+    // (a panel's edge has its labels where its ticks are, out on the page: inside the panel are the gridlines, whose
+    // rims, between the panel's color and their own, made a "label" beside every tick)
+    const other = axis.edge ? new Map() : labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0, OTHER_SIDE_MAX_WIDTH);
     const far = other.size >= OTHER_SIDE_MIN_LABELS && other.size > own.size;
     for (const [t, { box, path }] of far ? other : own) {
         t.label = box;
@@ -649,7 +728,8 @@ function gridLabels(image, backgrounds, ticks, gridlines, dir) {
 
 /**
  * Detect the axes: the x axis is the dark horizontal line with the most ticks (ties: the lowest), the y axis the
- * dark vertical line with the most ticks (ties: the leftmost). Without a dark line with ticks on an axis, light
+ * dark vertical line with the most ticks (ties: the leftmost). Without a dark line with ticks on an axis, the edge
+ * of a filled panel with ticks is the axis (ggplot2's default theme: panelEdges). Without that, light
  * gridlines across the other direction stand in as its ticks (economist: no y axis line, horizontal gridlines),
  * with a dark baseline that continues their spacing (the economist's zero line). Without those either, a line at
  * the other axis's end with a row of labels and no tick marks is the axis, its labels the positions (labelAxis).
@@ -668,18 +748,21 @@ export function detectAxes(image) {
         return (!strokes.length || median(strokes.map(t => t.shortest / t.length)) >= TICK_MIN_STRAIGHTNESS)
             && median(ticks.map(t => t.labelPath)) <= LABEL_PATH_MAX_INK;
     };
-    const pick = dir => {
-        const candidates = lines.filter(l => l.dir === dir && l.dark).map(line => ({ line, ticks: findTicks(image, ink, line, lines) }));
+    const edges = panelEdges(image, backgrounds);
+    // the line with the most ticks, of those given, that has labeled ticks as an axis has them
+    const among = (dir, given) => {
+        const candidates = given.filter(l => l.dir === dir).map(line => ({ line, ticks: findTicks(image, ink, line, lines) }));
         candidates.sort((a, b) => (b.ticks.length - a.ticks.length) || (dir === 'h' ? b.line.pos - a.line.pos : a.line.pos - b.line.pos));
-        let best = null;
         for (const c of candidates) {
             findLabels(image, backgrounds, c.line, c.ticks);
             const labeled = c.ticks.filter(t => t.label);
-            if (labeled.length >= AXIS_MIN_LABELED_TICKS && axisLike(labeled)) {
-                best = { ...c, ticks: c.ticks.filter(t => !t.onLine || t.label) };
-                break;
-            }
+            if (labeled.length >= AXIS_MIN_LABELED_TICKS && axisLike(labeled))
+                return { ...c, ticks: c.ticks.filter(t => !t.onLine || t.label) };
         }
+        return null;
+    };
+    const pick = dir => {
+        let best = among(dir, lines.filter(l => l.dark)) ?? among(dir, edges);
         if (!best) {
             // gridlines perpendicular to this axis give its tick positions
             const other = dir === 'h' ? 'v' : 'h';

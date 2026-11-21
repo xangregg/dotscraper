@@ -2,6 +2,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { readImage } from '../tools/png.mjs';
 import { scanFamilies, excludedBoxes, familyClips, maskOptions, fitInput, dotFills, extractAll } from '../src/core/extract.js';
 import { synthGraph, SYNTH_PRESETS } from '../src/core/synth.js';
 import { detectAxes, plotBounds, clipEdges } from '../src/core/axes.js';
@@ -107,4 +109,50 @@ test('extractAll is the app\'s steps taken in turn: scan, the clip edges, mask e
 test('extractAll says why when no family can be fitted', () => {
     const blank = toRgba(solidImage(120, 90, [255, 255, 255]));
     assert.throws(() => extractAll(blank), err => err instanceof Error && err.message.length > 0);
+});
+
+// A graph with blue dots in its plot and three orange ones under the x axis's labels, as a legend's markers or a
+// note's bullets are: a family by its color and its round dots, with no dot among the data.
+function withOutsideFamily() {
+    return synthGraph({
+        width: 520, height: 440, background: [255, 255, 255], blur: 0.5,
+        families: [
+            { color: [40, 90, 200], alpha: 1, radius: 7, points: [[120, 60], [180, 210], [240, 120], [300, 260], [360, 90], [420, 180], [150, 150], [330, 190], [460, 250], [210, 80]].map(([x, y]) => ({ x, y })) },
+            { color: [230, 130, 20], alpha: 1, radius: 7, points: [[200, 400], [260, 400], [320, 400]].map(([x, y]) => ({ x, y })) },
+        ],
+        axes: {
+            x: { pos: 300.5, from: 79, to: 500, ticks: [120, 220, 320, 420] },
+            y: { pos: 80.5, from: 20, to: 301.5, ticks: [270, 200, 130, 60] },
+        },
+    }).image;
+}
+
+test('scanFamilies with the plot\'s bounds: a family with no ink inside the plot is left out', () => {
+    const image = withOutsideFamily();
+    const bounds = plotBounds(detectAxes(image));
+    assert.deepEqual([bounds.left.toFixed(1), bounds.bottom.toFixed(1)], ['80.5', '300.5']);
+    // (the colors as measured are a unit off those drawn)
+    const colors = scan => scan.prepared.estimates.map(e => (e.style.color[0] > e.style.color[2] ? 'orange' : 'blue')).sort();
+    // without bounds both colors are families
+    assert.deepEqual(colors(scanFamilies(image)), ['blue', 'orange']);
+    assert.deepEqual(colors(scanFamilies(image, { bounds })), ['blue']);
+    // bounds that leave no family inside are doubted, not the families
+    assert.equal(scanFamilies(image, { bounds: { left: null, right: null, top: null, bottom: 10 } }).prepared.estimates.length, 2);
+    // extractAll finds the axes itself: the blue dots, and nothing under the axis
+    const results = extractAll(image);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].fit.dots.length, 10);
+});
+
+const BENCH_R = new URL('../bench-r/', import.meta.url).pathname;
+
+test('regression: bench-r gg-gray-hi, the tick labels and tick marks are no translucent family beside the dots', { skip: !existsSync(BENCH_R + 'gg-gray-hi.png') && 'bench-r absent' }, () => {
+    // ggplot2's gray theme at 300 dpi: text at 60 and ticks at 38 on the gray line from the panel's 230 fit two
+    // levels of a translucent family, α 0.87, with no whole dot and no radius, and extractAll stopped on it. All of
+    // its ink of half a dot or more is beyond the axes; inside the plot its count image gave 0.1 or less to the
+    // gridlines' rims.
+    const results = extractAll(readImage(BENCH_R + 'gg-gray-hi.png'));
+    assert.equal(results.length, 1);
+    assert.deepEqual(results[0].est.style.color.map(Math.round), [202, 16, 31]);
+    assert.equal(results[0].fit.dots.length, 40);
 });

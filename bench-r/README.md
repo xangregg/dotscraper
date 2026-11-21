@@ -1,7 +1,7 @@
-# bench-r: R's tick labels in scientific notation
+# bench-r: R's tick labels in scientific notation, and ggplot2's gray theme
 
-Scatterplots drawn by R for this project, to benchmark and test the reading of tick labels written the two ways
-figures write large and small numbers: with the power of ten after an "e" (`1e+05`, R's own form in base graphics and
+Scatterplots drawn by R for this project, to benchmark and test the finding of axes without axis lines (ggplot2's
+default theme) and the reading of tick labels written the two ways figures write large and small numbers: with the power of ten after an "e" (`1e+05`, R's own form in base graphics and
 ggplot2; JMP's `1e+5`; Excel's `1.E+05`) and as a number times a power of ten (`2 × 10³`, by plotmath or typed).
 Run with `npm run bench:labels -- --set bench-r`.
 
@@ -21,6 +21,5 @@ of the points in data units with the tick values in header lines. `Rscript make.
 | `times-log` | a log axis labeled 1 and 3 times each power of ten |
 | `times-x` | decimals before the sign (`1.5 × 10⁵`), and the letter x typed for it |
 | `gg-times`, `gg-times-bw` | ggplot2 with parsed labels |
-
-ggplot2's default theme (gray panel, white grid lines, no axis line) is left out: dotscraper doesn't find the axes of
-such a plot yet, so there are no labels to read.
+| `gg-gray`, `gg-gray-small`, `gg-gray-hi` | ggplot2's default theme at 110, 72 and 300 dpi: a gray panel with white grid lines and no axis lines, the tick marks at its edges |
+| `gg-gray-log-e`, `gg-gray-times` | the default theme with labels in each notation |

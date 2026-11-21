@@ -16,7 +16,7 @@ import { buildMask, CLASS_BACKGROUND, CLASS_FAMILY } from '../core/layers.js';
 import { renderDots, solidImage, gaussianKernel, blurRect } from '../core/render.js';
 import { refitNear, flagClose, MAX_ROUNDS } from '../core/fit.js';
 import { createOutlineModel } from '../core/outline.js';
-import { detectAxes } from '../core/axes.js';
+import { detectAxes, plotBounds } from '../core/axes.js';
 import { readTickLabels } from '../core/labels.js';
 import { excludedBoxes, familyClips, maskOptions, fitInput, dotFills } from '../core/extract.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis, tickStatus } from './axes-panel.js';
@@ -583,7 +583,7 @@ async function analyze({ auto = false } = {}) {
     // JPEG when that finds more families (extract.js scanFamilies says why). Only on loading: the box is the user's
     // after.
     const tryNoisy = auto && !state.jpeg && state.noise.likely;
-    const scan = await runScan('scan', { image: state.image, jpeg: state.jpeg, tryNoisy }, `Scanning ${state.name} for dot colors and sizes…`);
+    const scan = await runScan('scan', { image: state.image, jpeg: state.jpeg, tryNoisy, bounds: plotBounds(state.axes) }, `Scanning ${state.name} for dot colors and sizes…`);
     if (!scan)
         return false;
     const { prepared } = scan;
