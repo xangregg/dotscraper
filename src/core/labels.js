@@ -71,6 +71,14 @@ const SCALE_MIN_AGREE = 3; // labels that must agree for a scale to be believed 
 // and of the labels read as numbers, those that don't fit it are at most this share of those that do: a category
 // axis with numbers for names (doses 0, 5, 20, 50, 100, 200) has three on a log scale and three off it
 const SCALE_MAX_DISAGREE = 1 / 3;
+// Two labels always agree, so a scale through two needs another check, and a log axis has one: its minor ticks, at 2
+// to 9 times each power of ten, fall on those values only under the right scale (logByMinorTicks). The unread ticks
+// that fall on them must show at least this many of the eight multiples: read backwards (10 to 1 for 1 to 10) a scale
+// still puts the ticks of 2 and 5 on 5 and 2, and one of twice the decades puts 2 and 3 on 4 and 9
+const MINOR_MIN_MULTIPLES = 3;
+// … with the tolerance at most this many decades: 9 and 10 are 0.046 apart, and the wrong scales above miss a
+// multiple by 0.046 or more
+const MINOR_MAX_TOL = 0.02;
 
 /** @typedef {import('./image.js').RgbaImage} RgbaImage */
 
@@ -139,6 +147,8 @@ const SCALE_MAX_DISAGREE = 1 / 3;
  *   rounded
  * @property {boolean[]} agree   per tick, whether its read value fits the scale
  * @property {number} count      how many do
+ * @property {number} minor      how many unread ticks confirm the scale, where two labels gave it (a log scale: see
+ *   logByMinorTicks); 0 where three or more labels agree, which need no other check
  */
 
 /**
@@ -637,14 +647,75 @@ function roundest(v, near) {
     return v;
 }
 
+// per tick, whether the value read for it is within tol px of where a scale puts it: value = a + b · pos, or its
+// log10 on a log scale
+function agreeing(ticks, type, a, b, tol) {
+    const f = type === 'log' ? Math.log10 : v => v;
+    return ticks.map(t => t.value !== null && (type === 'linear' || t.value > 0) && Math.abs(f(t.value) - (a + b * t.pos)) <= tol * Math.abs(b));
+}
+
+/**
+ * A log scale that two read values give and the axis's other ticks confirm. Minor ticks of a log axis stand at 2 to
+ * 9 times each power of ten, bunched toward the next power, and only the right scale puts them there: one with the
+ * wrong number of decades between the two labels, or run backwards, or with the labels' leading digit misread,
+ * leaves most of them between multiples. What it can't tell is both labels off by one same power of ten.
+ *
+ * Believed when the unread ticks that fall on a multiple show at least MINOR_MIN_MULTIPLES of 2 to 9, those that
+ * fall on none are at most SCALE_MAX_DISAGREE of those that do (a false tick), and so are the read values off the
+ * scale. O(ticks³).
+ *
+ * @param {{pos: number, value: number|null}[]} ticks
+ * @param {number} tol  px, how near a tick a value must be put
+ * @returns {{fitted: {pos: number, value: number}[], minor: number}|null}  the ticks to fit the scale to, those
+ *   read and those on a multiple with it as their value, and how many the latter are
+ */
+function logByMinorTicks(ticks, tol) {
+    const read = ticks.filter(t => t.value !== null);
+    const usable = read.filter(t => t.value > 0);
+    let best = null;
+    for (let p = 0; p < usable.length; p++) {
+        for (let q = p + 1; q < usable.length; q++) {
+            const [s, t] = [usable[p], usable[q]];
+            if (s.pos === t.pos || s.value === t.value)
+                continue;
+            const b = (Math.log10(t.value) - Math.log10(s.value)) / (t.pos - s.pos);
+            const a = Math.log10(s.value) - b * s.pos;
+            const near = tol * Math.abs(b); // decades
+            const agree = agreeing(ticks, 'log', a, b, tol);
+            const count = agree.filter(Boolean).length;
+            if (near > MINOR_MAX_TOL || read.length - count > SCALE_MAX_DISAGREE * count)
+                continue;
+            const on = [];
+            const multiples = new Set();
+            let off = 0;
+            for (const u of ticks.filter(v => v.value === null)) {
+                const at = a + b * u.pos;
+                const power = Math.floor(at + near);
+                const k = Math.round(10 ** (at - power));
+                if (Math.abs(at - power - Math.log10(k)) > near) {
+                    off++;
+                    continue;
+                }
+                on.push({ pos: u.pos, value: k * 10 ** power });
+                if (k > 1)
+                    multiples.add(k);
+            }
+            if (multiples.size >= MINOR_MIN_MULTIPLES && off <= SCALE_MAX_DISAGREE * on.length && (!best || on.length > best.minor))
+                best = { fitted: [...ticks.filter((u, i) => agree[i]), ...on], minor: on.length };
+        }
+    }
+    return best;
+}
+
 /**
  * The values of an axis's ticks from those read, checked by the scale: among linear and log scales through two read
- * values, the one that the most read values agree with, fitted again to all that do. Positions are px along the
- * axis; a tick's value on a linear scale is a + b · pos, on a log scale 10^(a + b · pos). O(ticks³).
+ * values, the one that the most read values agree with, fitted again to all that do. Two read values alone are
+ * believed on a log scale that the axis's minor ticks confirm (logByMinorTicks). Positions are px along the axis; a
+ * tick's value on a linear scale is a + b · pos, on a log scale 10^(a + b · pos). O(ticks³).
  *
  * @param {{pos: number, value: number|null}[]} ticks  each tick's position and the value read for it, or null
  * @returns {TickValues|null}  null when fewer than SCALE_MIN_AGREE read values fit one scale, or too many don't
- *   (SCALE_MAX_DISAGREE)
+ *   (SCALE_MAX_DISAGREE), and no log scale through two is confirmed by the other ticks
  */
 export function consistentValues(ticks) {
     if (ticks.length < SCALE_MIN_AGREE)
@@ -654,39 +725,43 @@ export function consistentValues(ticks) {
     for (const type of ['linear', 'log']) {
         const f = type === 'log' ? Math.log10 : v => v;
         const usable = ticks.filter(t => t.value !== null && (type === 'linear' || t.value > 0));
-        const agreeing = (a, b) => ticks.map(u => usable.includes(u) && Math.abs(f(u.value) - (a + b * u.pos)) <= tol * Math.abs(b));
         for (let p = 0; p < usable.length; p++) {
             for (let q = p + 1; q < usable.length; q++) {
                 const [s, t] = [usable[p], usable[q]];
                 if (s.pos === t.pos || s.value === t.value)
                     continue;
                 const b = (f(t.value) - f(s.value)) / (t.pos - s.pos);
-                const agree = agreeing(f(s.value) - b * s.pos, b);
+                const agree = agreeing(ticks, type, f(s.value) - b * s.pos, b, tol);
                 const count = agree.filter(Boolean).length;
                 // (a tie goes to linear, tried first)
                 if (!best || count > best.count)
-                    best = { type, f, agree, count, agreeing };
+                    best = { type, count, fitted: ticks.filter((u, i) => agree[i]), minor: 0 };
             }
         }
     }
     const read = ticks.filter(t => t.value !== null).length;
-    if (!best || best.count < SCALE_MIN_AGREE || read - best.count > SCALE_MAX_DISAGREE * best.count)
-        return null;
+    if (!best || best.count < SCALE_MIN_AGREE || read - best.count > SCALE_MAX_DISAGREE * best.count) {
+        const confirmed = logByMinorTicks(ticks, tol);
+        if (!confirmed)
+            return null;
+        best = { type: 'log', ...confirmed };
+    }
+    const { type, fitted, minor } = best;
+    const f = type === 'log' ? Math.log10 : v => v;
     // least squares through those that agree: two ticks' half pixels are a poor scale far from them
-    const fitted = ticks.filter((t, i) => best.agree[i]);
     const mp = fitted.reduce((sum, t) => sum + t.pos, 0) / fitted.length;
-    const mv = fitted.reduce((sum, t) => sum + best.f(t.value), 0) / fitted.length;
-    const b = fitted.reduce((sum, t) => sum + (t.pos - mp) * (best.f(t.value) - mv), 0) / fitted.reduce((sum, t) => sum + (t.pos - mp) ** 2, 0);
+    const mv = fitted.reduce((sum, t) => sum + f(t.value), 0) / fitted.length;
+    const b = fitted.reduce((sum, t) => sum + (t.pos - mp) * (f(t.value) - mv), 0) / fitted.reduce((sum, t) => sum + (t.pos - mp) ** 2, 0);
     const a = mv - b * mp;
-    const agree = best.agreeing(a, b);
-    const g = best.type === 'log' ? v => 10 ** v : v => v;
+    const agree = agreeing(ticks, type, a, b, tol);
+    const g = type === 'log' ? v => 10 ** v : v => v;
     return {
-        type: best.type, agree, count: agree.filter(Boolean).length,
+        type, agree, count: agree.filter(Boolean).length, minor,
         values: ticks.map((t, i) => {
             if (agree[i])
                 return t.value;
             const v = a + b * t.pos;
-            return roundest(g(v), r => (best.type === 'linear' || r > 0) && Math.abs(best.f(r) - v) <= tol * Math.abs(b));
+            return roundest(g(v), r => (type === 'linear' || r > 0) && Math.abs(f(r) - v) <= tol * Math.abs(b));
         }),
     };
 }

@@ -339,7 +339,11 @@ export function renderAxis(el, name, axis, entry, reading, image, onChange) {
         if (fromReading) {
             const labels = axis.ticks.filter(t => t.label).length;
             const rest = fromReading - read;
-            parts.push(`Read from the labels: ${read} of ${labels} fit a ${entry.type} scale${rest ? `; the scale gives the other ${rest === 1 ? 'tick' : `${rest} ticks`}` : ''}. Type over any that is wrong.`);
+            parts.push(`Read from the labels: ${read} of ${labels} fit a ${entry.type} scale${rest ? `; the scale gives the other ${rest === 1 ? 'tick' : `${rest} ticks`}` : ''}.`);
+            // two labels fit any scale: say what checked this one, and what that check can't see
+            if (reading.scale.minor)
+                parts.push(`Two labels alone prove no scale: this one is checked by ${reading.scale.minor} ticks without labels, which it puts on 2 to 9 times a power of ten. Both labels off by the same power of ten would pass too.`);
+            parts.push('Type over any that is wrong.');
             if (statuses.some(st => st?.kind === 'differs'))
                 summary.classList.add('warn');
         }

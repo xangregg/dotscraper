@@ -3116,3 +3116,57 @@ Not done, and known:
 - An exponent of two digits that touch is not cut apart and stays unread.
 - Only Nature's layout of exponents was measured. The limits leave room for exponents set lower (matplotlib's), but
   no local figure tests that.
+
+**Two labels on a log axis, checked by its minor ticks** (2026-11-21)
+
+Two read values always agree with the scale through them, so until now an axis with two labels got nothing. A log
+axis offers another check: its minor ticks stand at 2 to 9 times each power of ten, bunched toward the next power,
+and only the right scale puts them on those values (labels.js `logByMinorTicks`, called by `consistentValues` when
+three labels don't settle it).
+
+The rule: a log scale through two read values is believed when
+- the unread ticks it puts on a multiple of a power of ten show at least 3 of the multiples 2 to 9
+  (`MINOR_MIN_MULTIPLES`),
+- the unread ticks it puts on none are at most a third of those (a false tick, as `SCALE_MAX_DISAGREE` allows one
+  label in four off a scale), and no more than that share of the read values is off it (so two labels means both),
+- and its tolerance, 1 px or 2% of the least tick gap, is at most 0.02 of a decade (`MINOR_MAX_TOL`): 9 and 10 are
+  0.046 apart.
+
+The scale is then fitted to the labels and those ticks together, and every tick gets its value as before.
+
+What a wrong reading does to the minor ticks, which is why three multiples are asked for:
+
+| the two labels read as | where the ticks of 2 … 9 land | on a multiple |
+|---|---|---|
+| right | 2, 3, …, 9 | all 8 |
+| backwards (0.1, 0.01 for 0.01, 0.1) | 5, 3.33, 2.5, 2, 1.67, 1.43, 1.25, 1.11 | 2 (the ticks of 2 and 5) |
+| two decades for one | 4, 9, 16, 25, … | 2 |
+| three decades for one | 8, 27, 64, … | 1 |
+| leading digit wrong in both (7, 70 for 1, 10) | 14, 21, 28, … | 0 |
+| leading digit 2 in both | 4, 6, 8, 10, 12, … | 4 of 8, and 4 off: refused by the share off |
+
+Not told apart: both labels off by the same power of ten (0.1 and 1 for 0.01 and 0.1), which moves every tick to
+another multiple. That takes two misreadings that agree, as three labels off by one factor would on a linear axis;
+the panel says so beside the values. Also refused, by design: minor ticks at 2 and 5 only (backwards they land on 5
+and 2), an axis with decade ticks alone, and a decade shorter than 50 px. A linear axis with two labels stays
+unchecked: evenly spaced ticks fit every linear scale.
+
+Results: primates2's x axis, the one local axis of this kind, now reads 0.009, 0.01, 0.02, …, 0.1, 0.2, 0.3 on a
+log scale from its labels "10^-2" and "10^-1", with all 11 unlabeled ticks on a multiple (its decade is 426.6 px,
+the 13 ticks within 0.03 px of the fitted scale); the two labels were compared with the image by eye. The other 228
+labeled axes of the 118 local images read the same texts and scales, among them the two-label axes that must stay
+unchecked (bench3's categories, escape1's 1 and 4, the economist's 2016 and 25). The label benchmark is identical
+(1,114 of 1,218 labels, 162 of 181 axes, 0 wrong; primates2 has no tick truth). Reading all 118 images takes 0.61 s.
+
+In the app primates2 opens as "x log, read · y log, read" and its 15 dots get data values with nothing typed. The x
+axis's summary says what checked it: "Two labels alone prove no scale: this one is checked by 11 ticks without
+labels, which it puts on 2 to 9 times a power of ten. Both labels off by the same power of ten would pass too." The
+About text and the axes note name the two-label case. `TickValues` has a new `minor`, the number of confirming
+ticks (0 when three labels agree).
+
+Tests (2 new in test/labels.test.js, and primates2's x axis in the bench-nature test): the scale and its values
+from two labels and eleven minor ticks, a false tick among them, `minor` 0 with three labels; no scale from labels
+read backwards, three decades for one, a wrong leading digit (7 and 2), a third label off the scale, minor ticks
+at 2 and 5 only, a 40 px decade, as many ticks off the multiples as on, and a linear axis of whole numbers labeled
+at its ends. Each condition removed or loosened in turn fails a test (one or two multiples enough, any tolerance,
+ticks off ignored, read values off ignored, a power of ten counted as a multiple).

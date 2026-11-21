@@ -1471,7 +1471,7 @@ function renderAxesPanel() {
             + 'with resampled or antialiased edges the real position error is several times larger (a few tenths of a px), '
             + 'and tick placement adds the scale residual shown above.');
     else
-        note.push('Type tick values to get data coordinates: an axis\'s are read from its labels only when at least three of them fit one scale.');
+        note.push('Type tick values to get data coordinates: an axis\'s are read from its labels only when at least three of them fit one scale, or two on a log axis whose minor ticks confirm them.');
     $('axes-note').textContent = note.join(' ');
     const summary = ['x', 'y'].map(k => {
         if (!state.axes?.[k])

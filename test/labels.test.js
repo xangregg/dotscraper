@@ -324,6 +324,50 @@ test('consistentValues: no scale from two labels, from one value repeated, or fr
     assert.equal(consistentValues([64, 32, 16, 8, 4, 2, 1, 0].map(v => ({ pos: 400 - 50 * Math.log2(1 + v), value: v }))), null);
 });
 
+// A log axis as primates2's x axis has it: 426.6 px a decade, a tick at each multiple of a power of ten given, and
+// a value read at some of them. `read` maps a tick's true value to what its label reads as.
+function logTicks(multiples, read, decade = 426.6) {
+    return multiples.map(v => ({ pos: 228.8 + decade * Math.log10(v / 0.01), value: read[v] ?? null }));
+}
+const MINOR = [0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3];
+
+test('consistentValues: two labels on a log axis are believed when its minor ticks fall on multiples of powers of ten', () => {
+    const scale = consistentValues(logTicks(MINOR, { 0.01: 0.01, 0.1: 0.1 }));
+    assert.equal(scale.type, 'log');
+    assert.deepEqual(scale.values, MINOR);
+    assert.deepEqual(scale.agree, MINOR.map(v => v === 0.01 || v === 0.1));
+    assert.equal(scale.count, 2);
+    assert.equal(scale.minor, 11);
+    // a false tick among them is the scale's to value (4.5 of a decade is no multiple), as one label off a scale is
+    const withFalse = consistentValues([...logTicks(MINOR, { 0.01: 0.01, 0.1: 0.1 }), { pos: 228.8 + 426.6 * Math.log10(4.5), value: null }].sort((a, b) => a.pos - b.pos));
+    assert.equal(withFalse.minor, 11);
+    assert.equal(withFalse.values[5], 0.045);
+    // three labels need no minor ticks
+    assert.equal(consistentValues([1, 10, 100].map((v, i) => ({ pos: 50 + 100 * i, value: v }))).minor, 0);
+});
+
+test('consistentValues: two labels misread, or too little to check them by, give no scale', () => {
+    const none = (read, multiples = MINOR, decade) => assert.equal(consistentValues(logTicks(multiples, read, decade)), null, JSON.stringify(read));
+    // backwards, three decades for one, the leading digit wrong in both
+    none({ 0.01: 0.1, 0.1: 0.01 });
+    none({ 0.01: 0.01, 0.1: 10 });
+    none({ 0.01: 0.07, 0.1: 0.7 });
+    none({ 0.01: 0.02, 0.1: 0.2 });
+    // a third label that reads off the scale of the other two: one in three, as without minor ticks
+    none({ 0.01: 0.01, 0.1: 0.1, 0.05: 0.3 });
+    // minor ticks at 2 and 5 alone: read backwards they fall on 5 and 2, so they check nothing, right labels or not
+    const sparse = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1];
+    none({ 0.01: 0.01, 0.1: 0.1 }, sparse);
+    none({ 0.01: 0.1, 0.1: 0.01 }, sparse);
+    // a decade of 40 px: a pixel is 0.025 of it, and 9 and 10 are 0.046 apart
+    none({ 0.01: 0.01, 0.1: 0.1 }, MINOR, 40);
+    // as many ticks off the multiples as on them
+    const half = logTicks([...MINOR, 0.015, 0.025, 0.035, 0.045, 0.055, 0.065], { 0.01: 0.01, 0.1: 0.1 }).sort((a, b) => a.pos - b.pos);
+    assert.equal(consistentValues(half), null);
+    // a linear axis from 1 to 10 with a tick at each whole number, labeled at its ends
+    assert.equal(consistentValues([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(v => ({ pos: 100 + 45 * v, value: v === 1 || v === 10 ? v : null }))), null);
+});
+
 test('readAxisLabels: a linear x axis and a y axis in thousands, read and confirmed', () => {
     const { image } = labeled({ xLabels: ['-10', '0', '10', '20', '30'], yLabels: ['0', '500', '1,000', '1,500', '2,000'] });
     const x = axisValues(image, 'x');
@@ -414,8 +458,9 @@ test('bench-nature: phase1\'s and primates\' powers of ten, with minor ticks and
     assert.deepEqual(p2.texts.filter(Boolean), ['10^2', '10^1', '10^0', '10^-1']);
     assert.equal(p2.scale.type, 'log');
     assert.deepEqual([p2.scale.values[0], p2.scale.values[1], p2.scale.values[19], p2.scale.values[28], p2.scale.values[34]], [200, 100, 1, 0.1, 0.04]);
-    // two labels, the minus sign touching its 2: read, and with no scale to check them
+    // two labels, the minus sign touching its 2: read, and checked by the eleven minor ticks
     const x = read('primates2', 'x');
     assert.deepEqual(x.texts.filter(Boolean), ['10^-2', '10^-1']);
-    assert.equal(x.scale, null);
+    assert.deepEqual(x.scale.values, [0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3]);
+    assert.equal(x.scale.minor, 11);
 });
