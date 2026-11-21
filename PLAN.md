@@ -3047,3 +3047,72 @@ starting entries (read, empty, categories), and bench-plos step1 from the image 
 
 Left: the exported table and the readout don't say whether an axis's values were read or typed; the panel does.
 Unchecked readings (two-label axes, hair3's doses) are not shown anywhere yet.
+
+**Exponent labels read** (2026-11-21)
+
+A number with a raised exponent is now read as its power: "10" with a raised 3 is 1000, shown as the text "10^3".
+Three local figures label log axes that way (phase1 x, primates1 x, primates2 x and y); before, each label read as
+"10" and the axis got nothing.
+
+Measured first (phase1's digits are 53 px tall, primates' 28): an exponent's digits are 0.65–0.68 of the digits'
+height H, start 0.36–0.39 H above the digits' top and end 0.25–0.32 H below it, 0.14–0.18 H after the "0". A negative
+exponent's minus sign is 3 px thick at the digits' top itself, and in primates2's x labels it touches the "2" after
+it.
+
+- **Finding the exponent** (labels.js `labelGlyphs`, the new `raised` glyphs of a found label). After the number's
+  last glyph, the columns with ink in a band from 0.6 H above the digits' top to 0.6 H below it and none lower in the
+  line are cut into glyphs from the band's own rows (the line's rows show a raised "1" without its flag, and can miss
+  a minus sign altogether). The run ends at a word's gap, at a glyph of the line, or at one that reaches above the
+  band (a title's descender: the search now looks one row beyond the band to tell). It is an exponent only if one of
+  its glyphs is at least 0.45 H tall; otherwise the label reads exactly as before (a degree sign, a mark at the top).
+  A minus sign touching its digit is cut off as the run's first columns where they are flat and at mid-height (a
+  "1"'s flag is flat too, higher up).
+- **Reading it** (`glyphsRead`). The exponent is read as a line of its own, with its own digit height, by the same
+  kinds and templates. The value is an integer to an integer power, or the label is unread. Powers of ten are taken
+  from their decimal text: `10 ** -5` is 0.000009999999999999999 in JavaScript.
+- **The label's box and tick** (axes.js `mergeWords`). primates1 showed a second problem upstream: "10" was boxed
+  without its raised 2, the box's center was nearer the minor tick of 90 (7.7 px before the tick of 100) than its
+  own, and the three labels, 174 and 159 px apart, fit no scale. An exponent now joins its number's word: a shorter
+  box right after a taller one (gap at most 0.3 of its height), at most 0.8 as tall, starting between 0.6 above and
+  0.25 below its top and ending below its top and at most 0.6 down. The first form of the rule, a band alone, merged
+  three of autocor1's x labels into one word and changed three other axes (Laser x, cantons y, pathogen y). With the
+  limits on gap, height and start only pathogen's y axis still changed: its "32", right of a part of the rotated
+  title and wholly above it, joined the title and its tick lost its label. Requiring the exponent to end below the
+  number's top keeps them apart.
+
+Results:
+
+| axis | before | now |
+|---|---|---|
+| phase1 x | 10, 10, 10, 10: no scale | 10, 100, 1000, 10000, log, 4 of 4 |
+| primates1 x | 10, 10, 10 at the wrong ticks: no scale | 100, 1000, 10000, log, 3 of 3; the 20 minor ticks 70 to 20000 from the scale, all round |
+| primates2 y | 10, 10, 10, "10?": no scale | 100, 10, 1, 0.1, log, 4 of 4; the 31 minor ticks 200 to 0.04 from the scale |
+| primates2 x | unread | "10^-2" and "10^-1" at their own ticks: two labels, so no scale and nothing offered |
+
+Nothing else moved. Of the 229 labeled axes of the 118 local images, the other 225 read the same texts and scales
+(grader1's unread second x label is now "?^?" where it was "?"). The label benchmark is identical: 1,114 of 1,218
+labels, 162 of 181 axes solved, 0 wrong (none of the four exponent axes has tick truth; their values were compared
+with the images by eye). detectAxes gives the same lines, ticks and label boxes on all 118 images except the label
+boxes of those four axes, and the three figures' fits are unchanged (bench rows equal to RESULTS.md's, which was not
+regenerated). Reading the labels of all 118 images takes 0.68 s, from 0.64.
+
+In the app (the built-in browser, images dropped on the view): primates1 opens as "x log, read · y linear, read",
+with 100, 1000 and 10000 marked read and the minor ticks marked scale, and its 27 dots get data values with nothing
+typed (a dot at x 328.7 px is 89.2, just under the tick of 90); primates2 as "x: 13 ticks, no values · y log,
+read"; phase1 with x log. No console errors.
+
+Tests (6 new in test/labels.test.js, 2 in test/axes.test.js): powers at 14 to 28 px (negative, two digits, base 2,
+a minus before the number, a box without the exponent); a touching minus cut off, and a "1" with a flag left whole;
+a small raised mark, an exponent that is no number and a stroke from above are no exponents; log axes labeled with
+powers; minor ticks beside labeled ones, in drawn text and in blocks; a label above a taller glyph; the three
+Nature figures. Each rule removed in turn fails a test: the join in axes.js, its end-below-the-top condition, the
+cut of a touching minus, its mid-height condition, the least height, the look above the band, the reach limit, and
+the decimal text of powers of ten.
+
+Not done, and known:
+- primates2's x axis has two labels and 11 minor ticks at log positions between them: the minor ticks could check a
+  two-label reading on a log axis. This is the nearest next step for unchecked readings.
+- A mantissa with a power ("2 × 10³") and R's "1e+05" stay unread (the "×" and the "e" are no number's glyphs).
+- An exponent of two digits that touch is not cut apart and stays unread.
+- Only Nature's layout of exponents was measured. The limits leave room for exponents set lower (matplotlib's), but
+  no local figure tests that.

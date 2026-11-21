@@ -8,13 +8,29 @@ import { synthGraph } from '../src/core/synth.js';
 import { readImage } from '../tools/png.mjs';
 
 const WHITE = [[255, 255, 255]];
+const EXPONENT_SIZE = 0.66; // × the digits' height: an exponent's digits
+const EXPONENT_RISE = 0.38; // × the digits' height: how far above the digits' top an exponent starts
 const ARIAL = DIGIT_TEMPLATES.find(f => f.name === 'Arial');
 
 // Text for the tests, drawn from the templates themselves (Node has no fonts): each digit is its template scaled to
 // `height` px, a point is a square on the baseline, a comma a square with a tail below it, a minus a bar, and "$"
-// a tall glyph that is no digit (a saltire). `x` is the text's left edge, or its right edge with `right`; `y` the
-// digits' top. Returns the ink's box [x0, y0, x1, y1).
+// a tall glyph that is no digit (a saltire). What follows "^" is an exponent: smaller and raised, as Nature's figures
+// set it (EXPONENT_SIZE, EXPONENT_RISE). `x` is the text's left edge, or its right edge with `right`; `y` the
+// digits' top, which an exponent rises above. Returns the ink's box [x0, y0, x1, y1).
 function drawText(image, text, x, y, height, { right = false, font = ARIAL } = {}) {
+    if (text.includes('^')) {
+        const [number, power] = text.split('^');
+        const small = Math.round(EXPONENT_SIZE * height);
+        const rise = Math.round(EXPONENT_RISE * height);
+        const gap = Math.max(1, Math.round(0.14 * height));
+        const widthOf = (s, h) => {
+            const b = drawText(blank(400, h), s, 0, 0, h, { font });
+            return b[2] - b[0];
+        };
+        const a = drawText(image, number, right ? x - widthOf(power, small) - gap : x, y, height, { right, font });
+        const b = drawText(image, power, a[2] + gap, y - rise, small, { font });
+        return [a[0], y - rise, b[2], a[3]];
+    }
     const s = height / TEMPLATE_HEIGHT;
     const unit = Math.max(2, Math.round(0.14 * height)); // px, a point's side
     const gap = Math.max(1, Math.round(0.14 * height));
@@ -79,7 +95,7 @@ function labeled({ xLabels, yLabels, height = 14, before = image => image }) {
     };
     const { image } = synthGraph(spec);
     xLabels.forEach((text, i) => {
-        const probe = drawText(blank(200, 60), text, 0, 0, height);
+        const probe = drawText(blank(200, 60), text, 0, 20, height);
         drawText(image, text, spec.axes.x.ticks[i] - (probe[2] - probe[0]) / 2, 348, height);
     });
     yLabels.forEach((text, i) => drawText(image, text, 64, Math.round(spec.axes.y.ticks[i] - height / 2), height, { right: true }));
@@ -156,6 +172,112 @@ test('readLabel: a letter makes the label unread, and a dash after the number is
     assert.equal(read.value, null);
     const dashed = blank(300, 60);
     assert.equal(readLabel(dashed, WHITE, drawText(dashed, '40-', 20, 20, 14)).value, 40);
+});
+
+test('readLabel: a number with an exponent is its power, at 14 to 28 px', () => {
+    for (const height of [14, 20, 28]) {
+        for (const [text, value] of [['10^3', 1000], ['10^-2', 0.01], ['10^-5', 0.00001], ['10^0', 1], ['10^12', 1e12], ['2^10', 1024], ['-10^1', -10]]) {
+            const image = blank(300, 90);
+            const read = readLabel(image, WHITE, drawText(image, text, 40, 40, height));
+            assert.equal(read.text, text, `${text} at ${height} px`);
+            assert.equal(read.value, value, `${text} at ${height} px`);
+        }
+    }
+    // the box of the "10" alone, as axes.js gave it before it took an exponent into a label's word
+    const image = blank(300, 90);
+    const box = drawText(image, '10^4', 40, 40, 20);
+    const read = readLabel(image, WHITE, [box[0], 40, box[0] + 24, 60]);
+    assert.equal(read.value, 10000);
+    assert.deepEqual(read.box, box);
+});
+
+test('regression: a raised minus sign touching its digit is cut from it', () => {
+    // primates2's "10" with a raised "-2": no empty column between the minus and the 2, and the two were one glyph
+    // that read as no digit
+    const image = blank(300, 90);
+    const box = drawText(image, '10^-2', 40, 40, 28);
+    const found = labelGlyphs(image, WHITE, box);
+    assert.equal(found.raised.length, 2);
+    const [minus, two] = found.raised;
+    for (let x = minus.x1; x < two.x0; x++) {
+        for (let y = minus.y0; y < minus.y1; y++)
+            image.data.fill(0, 4 * (y * image.width + x), 4 * (y * image.width + x) + 3);
+    }
+    const read = readLabel(image, WHITE, box);
+    assert.equal(read.text, '10^-2');
+    assert.equal(read.value, 0.01);
+    // a raised 1 starts flat too, with its flag, above mid-height (phase1's and primates2's): it stays one glyph
+    const one = blank(300, 90);
+    const ten = drawText(one, '10', 40, 40, 28);
+    const ink = (x0, y0, x1, y1) => {
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++)
+                one.data.fill(0, 4 * (y * one.width + x), 4 * (y * one.width + x) + 3);
+        }
+    };
+    ink(ten[2] + 4, 32, ten[2] + 11, 35);
+    ink(ten[2] + 11, 29, ten[2] + 14, 48);
+    assert.deepEqual(labelGlyphs(one, WHITE, ten).raised, [{ x0: ten[2] + 4, y0: 29, x1: ten[2] + 14, y1: 48 }]);
+});
+
+test('readLabel: a small raised mark is no exponent, and an exponent that is no number makes the label unread', () => {
+    // a degree sign's size: under RAISED_MIN_HEIGHT of the digits
+    const image = blank(300, 90);
+    const box = drawText(image, '30', 40, 40, 20);
+    for (let y = 40; y < 47; y++) {
+        for (let x = box[2] + 3; x < box[2] + 10; x++)
+            image.data.fill(0, 4 * (y * image.width + x), 4 * (y * image.width + x) + 3);
+    }
+    const read = readLabel(image, WHITE, box);
+    assert.equal(read.text, '30?');
+    assert.equal(read.value, null);
+    const lettered = blank(300, 90);
+    const exponent = readLabel(lettered, WHITE, drawText(lettered, '10^$', 40, 40, 20));
+    assert.equal(exponent.text, '10^?');
+    assert.equal(exponent.value, null);
+    // a stroke that comes down from far above the digits (a title's descender) is not raised: it starts elsewhere
+    const hung = blank(300, 90);
+    const under = drawText(hung, '90', 40, 40, 20);
+    for (let y = 10; y < 47; y++) {
+        for (let x = under[2] + 3; x < under[2] + 6; x++)
+            hung.data.fill(0, 4 * (y * hung.width + x), 4 * (y * hung.width + x) + 3);
+    }
+    assert.equal(readLabel(hung, WHITE, under).text, '90');
+});
+
+test('readAxisLabels: log axes labeled with powers of ten', () => {
+    const { image } = labeled({ xLabels: ['10^0', '10^1', '10^2', '10^3'], yLabels: ['10^-2', '10^-1', '10^0', '10^1', '10^2'], height: 16 });
+    const x = axisValues(image, 'x');
+    assert.deepEqual(x.texts, ['10^0', '10^1', '10^2', '10^3']);
+    assert.equal(x.scale.type, 'log');
+    assert.deepEqual(x.scale.values, [1, 10, 100, 1000]);
+    const y = axisValues(image, 'y');
+    assert.equal(y.scale.type, 'log');
+    assert.deepEqual(y.scale.values, [100, 10, 1, 0.1, 0.01]);
+    assert.equal(y.scale.count, 5);
+});
+
+test('regression: a label with an exponent is its own tick\'s, and the scale gives the minor ticks round values', () => {
+    // primates1's x axis: "10" was boxed without its raised 2, the box's center was nearer the minor tick of 90 than
+    // its own, and three labels 174 and 159 px apart fit no scale
+    const decade = 160; // px
+    const at = v => 120 + decade * Math.log10(v / 100);
+    const values = [80, 90, 100, 200, 500, 900, 1000, 2000, 5000, 9000, 10000];
+    const spec = {
+        width: 520, height: 400, background: [255, 255, 255], blur: 0.5, families: [],
+        axes: { x: { pos: 330.5, from: 79, to: 500, ticks: values.map(at) }, y: { pos: 80.5, from: 20, to: 331.5, ticks: [310, 220, 130, 40] }, label: [0, 0] },
+    };
+    const { image } = synthGraph(spec);
+    for (const [text, v] of [['10^2', 100], ['10^3', 1000], ['10^4', 10000]]) {
+        const probe = drawText(blank(200, 60), text, 0, 20, 20);
+        drawText(image, text, at(v) - (probe[2] - probe[0]) / 2, 352, 20);
+    }
+    ['0', '1', '2', '3'].forEach((text, i) => drawText(image, text, 64, spec.axes.y.ticks[i] - 7, 14, { right: true }));
+    const axes = detectAxes(image);
+    assert.deepEqual(axes.x.ticks.map(t => Boolean(t.label)), values.map(v => [100, 1000, 10000].includes(v)));
+    const { scale } = readAxisLabels(image, axes.backgrounds, axes.x, 'x');
+    assert.equal(scale.type, 'log');
+    assert.deepEqual(scale.values, values);
 });
 
 test('labelGlyphs: touching digits are cut apart', () => {
@@ -277,4 +399,23 @@ test('bench1: JMP\'s labels, the title\'s "p" through "90" and the rotated title
         assert.deepEqual(y.scale.values, [90, 80, 70, 60, 50, 40, 30], file);
         assert.deepEqual(y.texts.slice(1), ['80', '70', '60', '50', '40', '30'], file);
     }
+});
+
+const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
+const nature = name => existsSync(NATURE) && readdirSync(NATURE).find(f => f.startsWith(`${name}-`) && f.endsWith('.png'));
+
+test('bench-nature: phase1\'s and primates\' powers of ten, with minor ticks and a negative exponent', { skip: !nature('primates1') && 'bench-nature absent' }, () => {
+    const read = (name, which) => axisValues(readImage(NATURE + nature(name)), which);
+    assert.deepEqual(read('phase1', 'x').scale.values, [10, 100, 1000, 10000]);
+    const p1 = read('primates1', 'x');
+    assert.deepEqual(p1.texts.filter(Boolean), ['10^2', '10^3', '10^4']);
+    assert.deepEqual(p1.scale.values, [70, 80, 90, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000]);
+    const p2 = read('primates2', 'y');
+    assert.deepEqual(p2.texts.filter(Boolean), ['10^2', '10^1', '10^0', '10^-1']);
+    assert.equal(p2.scale.type, 'log');
+    assert.deepEqual([p2.scale.values[0], p2.scale.values[1], p2.scale.values[19], p2.scale.values[28], p2.scale.values[34]], [200, 100, 1, 0.1, 0.04]);
+    // two labels, the minus sign touching its 2: read, and with no scale to check them
+    const x = read('primates2', 'x');
+    assert.deepEqual(x.texts.filter(Boolean), ['10^-2', '10^-1']);
+    assert.equal(x.scale, null);
 });

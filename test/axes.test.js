@@ -230,6 +230,41 @@ function cornerImage(baselineAtEnd) {
     return { width, height, data };
 }
 
+test('regression: an exponent is of its label\'s box, which is its own tick\'s and not the minor tick\'s before it', () => {
+    // before (primates1's log x axis): "10" was boxed without its raised 2, and that box's center was nearer the
+    // minor tick 8 px before the labeled one. Blocks stand in for the number and, raised after it, its exponent,
+    // the two together centered on the tick.
+    const spec = plot({ families: [], blur: 0 });
+    spec.axes = { ...spec.axes, x: { ...spec.axes.x, ticks: [112, 120, 232, 240, 352, 360] }, label: [0, 0] };
+    const { image } = synthGraph(spec);
+    const rect = (x0, y0, x1, y1) => {
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++)
+                image.data.fill(0, 4 * (y * image.width + x), 4 * (y * image.width + x) + 3);
+        }
+    };
+    for (const t of [120, 240, 360]) {
+        rect(t - 18, 308, t + 6, 324);
+        rect(t + 9, 302, t + 18, 313);
+    }
+    for (const t of spec.axes.y.ticks)
+        rect(30, t - 5, 44, t + 5);
+    const ax = detectAxes(image);
+    assert.deepEqual(ax.x.ticks.map(t => t.label), [null, [102, 302, 138, 324], null, [222, 302, 258, 324], null, [342, 302, 378, 324]]);
+});
+
+test('regression: a label above and beside a taller glyph is not its exponent', () => {
+    // pathogen: the y label "32" lies right of a part of the rotated axis title and wholly above it; taken for its
+    // exponent it joined the title, and its tick lost its label
+    const image = cornerImage(true);
+    for (let y = 98; y < 140; y++) {
+        for (let x = 10; x < 24; x++)
+            image.data.fill(0, 4 * (y * image.width + x), 4 * (y * image.width + x) + 3);
+    }
+    const ax = detectAxes(image);
+    assert.deepEqual(ax.y.ticks.map(t => t.label), [40, 90, 140, 190, 240].map(t => [30, t - 4, 44, t + 6]));
+});
+
 test('a baseline from the end of the y axis is its bottom tick when it continues the spacing', () => {
     const ax = detectAxes(cornerImage(true));
     assert.equal(ax.y.ticks.length, 5, JSON.stringify(ax.y.ticks.map(t => t.pos)));

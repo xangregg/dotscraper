@@ -52,6 +52,16 @@ const WORD_GAP_HEIGHTS = 0.6; // glyphs closer than this × their height (along 
 // pathogen's tick labels with its axis title, and cantons' "200" with its rotated title
 const WORD_MIN_OVERLAP = 0.5; // × the shorter glyph's height
 const WORD_MAX_HEIGHT_RATIO = 2.5; // glyphs of one word differ in height by less than this (a tall rule doesn't join)
+// An exponent is of its number's word, raised and small as it is (a minus sign's height is a tenth of the digits'):
+// a shorter box right after a taller one, starting and ending in its upper part. Without it primates1's "10" was
+// boxed without its raised 2, and the box's center was nearer the minor tick before its own. All × the taller's
+// height:
+const EXPONENT_MAX_GAP = 0.3; // after the number (measured 0.07–0.18; the next label's minus sign is farther)
+const EXPONENT_MAX_HEIGHT = 0.8;
+const EXPONENT_TOP = [-0.6, 0.25]; // where it starts, from the number's top, down (a minus sign on the line: 0.5)
+// where it ends, at most; and below the number's top (pathogen: a y label beside a part of the rotated title and
+// wholly above it joined the title)
+const EXPONENT_MAX_BOTTOM = 0.6;
 const LABEL_ON_TICK_SPACINGS = 0.3; // a word belongs to a tick only if centered within this × spacing of it …
 const LABEL_BEYOND_TOL = 2; // px: … and not wholly beyond the axis line's ends by more than this
 // Labels on the side away from the ticks must label at least this many (beeswarm-boxplot: the "***" above a gray
@@ -401,8 +411,8 @@ function inkComponents(image, backgrounds, rect, grayOnly = false) {
     return comps;
 }
 
-// glyph boxes merged into words: boxes that overlap by most of their height and are closer than WORD_GAP_HEIGHTS ×
-// their height along the reading direction
+// glyph boxes merged into words: boxes that overlap by most of their height, or of which one is the other's
+// exponent, and are closer than WORD_GAP_HEIGHTS × their height along the reading direction
 function mergeWords(boxes) {
     const words = boxes.map(b => [...b]);
     let merged = true;
@@ -416,7 +426,12 @@ function mergeWords(boxes) {
                 const shorter = Math.min(a[3] - a[1], b[3] - b[1]);
                 const overlapY = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
                 const gapX = Math.max(a[0], b[0]) - Math.min(a[2], b[2]);
-                if (overlapY >= WORD_MIN_OVERLAP * shorter && gapX <= WORD_GAP_HEIGHTS * height && height <= WORD_MAX_HEIGHT_RATIO * shorter) {
+                const [tall, small] = a[3] - a[1] >= b[3] - b[1] ? [a, b] : [b, a];
+                const exponent = small[0] > tall[0] && small[2] > tall[2] && gapX <= EXPONENT_MAX_GAP * height
+                    && shorter <= EXPONENT_MAX_HEIGHT * height && small[3] > tall[1] && small[3] <= tall[1] + EXPONENT_MAX_BOTTOM * height
+                    && small[1] >= tall[1] + EXPONENT_TOP[0] * height && small[1] <= tall[1] + EXPONENT_TOP[1] * height;
+                const sameLine = overlapY >= WORD_MIN_OVERLAP * shorter && height <= WORD_MAX_HEIGHT_RATIO * shorter;
+                if ((sameLine || exponent) && gapX <= WORD_GAP_HEIGHTS * height) {
                     words[i] = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
                     words.splice(j, 1);
                     merged = true;
