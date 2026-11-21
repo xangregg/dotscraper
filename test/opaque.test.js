@@ -568,6 +568,72 @@ test('regression: hair2, decimal points alone are no family; its clustered pink 
     assert.ok(r.precision >= 0.9 && r.recall >= 0.95, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
 });
 
+test('outlined grays in a row over a curve of one\'s own gray, and black dots on them: no dot for a stub of the curve or for an outline', () => {
+    // phase1's top row, added to the scene above. Before: the dark gray curve showing for a few px between two dots
+    // of another gray read as dot, hidden on its other sides, so the fit put a dark gray dot under those two for each
+    // stub, and a second one where the curve leaves a dot; and a gray dot's black outline beside a black dot read as
+    // black dot, which a second black disc a pixel off explained (phase1: 16 black dots fitted as 24).
+    const black = [20, 21, 20];
+    const R = 19.4;
+    const rf = 17;
+    const grays = { 228: [228, 228, 228], 187: [187, 188, 188], 136: [136, 136, 136], 82: [82, 82, 81] };
+    const dots = [];
+    const row = (key, y, xs) => xs.forEach(x => dots.push({ x, y, family: key }));
+    const shapes = [{ line: [0, 60, 880, 75], w: 13, color: grays[228] }, { line: [0, 300, 880, 285], w: 13, color: grays[136] },
+        { line: [20, 420, 880, 420], w: 2, color: black }];
+    row(228, 64, [80, 200, 320, 440, 560]);
+    row(187, 180, [80, 200, 320, 440, 560]);
+    row(136, 296, [80, 200, 320, 440, 560]);
+    row(82, 180, [680, 800]);
+    row(82, 296, [680, 800]);
+    row(82, 64, [680]);
+    row('black', 420, [80, 200, 320, 440, 560, 680]);
+    // the row, placed as the left of phase1's: a dark gray curve under mid grays 43 px apart, a few px of it showing
+    // between them; dark gray dots over two of those; black dots over the mid grays' outlines. In drawing order.
+    shapes.push({ line: [20, 560, 880, 560], w: 12, color: grays[82] });
+    row(136, 560, [65, 108, 151, 195, 239, 280]);
+    row(82, 560, [128, 257]);
+    row('black', 560, [210, 292]);
+    for (const d of dots) {
+        shapes.push({ x: d.x, y: d.y, r: R, color: black });
+        if (d.family !== 'black')
+            shapes.push({ x: d.x, y: d.y, r: rf, color: grays[d.family] });
+    }
+    for (let k = 0; k < 30; k++)
+        shapes.push({ x: 30 + 28 * k, y: 500, r: 4.9, color: black });
+    shapes.push({ line: [880, 120, 880, 320], w: 26, color: black });
+    const image = paintScene(900, 610, shapes);
+    const results = extractAll(image);
+    for (const [key, c] of [...Object.entries(grays), ['black', black]]) {
+        const res = results.find(r => Math.hypot(...r.est.style.color.map((v, ch) => v - c[ch])) < 10);
+        assert.ok(res, `family ${key} among ${results.map(r => r.est.style.color.map(Math.round)).join('; ')}`);
+        const want = dots.filter(d => String(d.family) === key);
+        const m = matchDots(want, res.fit.dots, 2);
+        assert.equal(m.recall, 1, `${key}: missed ${JSON.stringify(m.missed.map(i => want[i]))}`);
+        assert.equal(res.fit.dots.length, want.length, `${key}: extra ${JSON.stringify(m.extra.map(j => res.fit.dots[j]).map(d => [Math.round(d.x), Math.round(d.y), d.flags.join('+')]))}`);
+    }
+    // the grays' outlines beside a black dot (clear of every black disc by a pixel, within 4 px of one) are the
+    // grays', but for the wedge where an outline runs into the black disc, as thick there as a dot's edge. Measured: 8
+    // of 30 read as black dot; before, when the nearer of the two fills decided, 18.
+    const blackD = results.find(r => Math.max(...r.est.style.color) < 40).est.D;
+    const outlined = dots.filter(d => d.family !== 'black');
+    const blacks = dots.filter(d => d.family === 'black');
+    let beside = 0;
+    let asBlack = 0;
+    for (let y = 520; y < 600; y++) {
+        for (let x = 0; x < 400; x++) {
+            const onOutline = outlined.some(d => Math.abs(Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y) - (R + rf) / 2) <= (R - rf) / 2 - 0.7);
+            const toBlack = Math.min(...blacks.map(d => Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y)));
+            if (!onOutline || toBlack < R + 1 || toBlack > R + 4)
+                continue;
+            beside++;
+            asBlack += blackD[y * image.width + x] > 0.5 ? 1 : 0;
+        }
+    }
+    assert.ok(beside >= 10, `${beside} outline pixels beside the black dots`);
+    assert.ok(asBlack <= 10, `${asBlack} of ${beside} outline pixels beside black dots read as black dot`);
+});
+
 const PHASE1 = 'phase1-10.1038-s41586-026-11163-6.png';
 
 test('regression: phase1, all five families: four grays in black outlines and black dots', { skip: !existsSync(NATURE + PHASE1) && 'bench-nature phase1 absent' }, () => {
@@ -592,12 +658,20 @@ test('regression: phase1, all five families: four grays in black outlines and bl
     near(black[0].style.radius, 19.4, 0.8, 'radius of black');
     // Against the hand truth. Before: 128 found for 97, P 0.625, 27 of the extras on the colorbar, beyond where the
     // x axis line ends: each family has one dot cut in half there, short of what a family must show to be clipped
-    // (one passed). The cut is now read on the families together (layers.js plotClips). Measured: 101, P 0.812, R 0.845.
+    // (one passed). The cut is now read on the families together (layers.js plotClips): 101, P 0.812.
+    // Then the top row, where the five families' dots lie over one another on their curves: stubs of a gray's own
+    // curve between other dots (a hidden dot fitted for each), and the grays' outlines beside black dots (16 black
+    // dots fitted as 24). Without them no fit is refitted larger for its close pairs: the radii ended at 20.2 and
+    // 20.4 px for two families, and are now 19.2 to 19.8 (19.0 on the pixels). Measured: 85, P 0.965, R 0.845.
     const truth = readTruthJson(`${NATURE}truth/${PHASE1.replace('.png', '.json')}`);
     const r = groupRow('phase1', truth.dots, results, 0);
-    assert.ok(r.recall >= 0.8 && r.precision >= 0.75, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
+    assert.ok(r.recall >= 0.8 && r.precision >= 0.9, `precision ${r.precision}, recall ${r.recall}, found ${r.found}`);
     const found = results.flatMap(q => q.fit.dots);
-    assert.ok(found.length <= 108, `${found.length} found`);
+    assert.ok(found.length <= 92, `${found.length} found`);
+    for (const q of results)
+        near(q.fit.radius, 19.4, 0.6, `fitted radius of ${q.est.style.color.map(Math.round)}`);
+    const blackDots = results.find(q => Math.max(...q.est.style.color) < 40).fit.dots;
+    assert.ok(blackDots.length <= 18, `${blackDots.length} black dots for 16`);
     // (the x axis line ends at 1289; the colorbar begins at 1313)
     assert.deepEqual(found.filter(d => d.x > 1300).map(d => [Math.round(d.x), Math.round(d.y)]), [], 'no dot on the colorbar');
 });

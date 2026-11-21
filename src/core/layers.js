@@ -6,7 +6,7 @@
 // Morphology uses the exact Euclidean distance transform, so dilation and opening by a disc cost O(pixels)
 // whatever the radius.
 
-import { colorDistance } from './image.js';
+import { colorDistance, sub, dot } from './image.js';
 
 export const CLASS_BACKGROUND = 0;
 export const CLASS_FAMILY = 1;
@@ -52,6 +52,14 @@ const MASK_DILATE_BLURS = 2; // px per px of edge blur
 // in the "100" below the x axis). Pixels farther out than this are masked; a dot centered on the axis line (data at
 // the scale's end) keeps every pixel.
 const OUTSIDE_MARGIN_RADII = 1; // × dot radius beyond the axis line
+// An outlined dot's fill never meets the page: its outline lies between. A patch of the fill's color that does, at
+// BARE_MIN_PIXELS of its pixels and BARE_MIN_SHARE of its border, is a line or curve in that color, not part of a
+// dot (bareFill). "Meets": the page within BARE_REACH px, one antialiased pixel between; so only for outlines at least
+// BARE_MIN_OUTLINE px wide, which keep a fill farther from the page than that.
+const BARE_REACH = 2; // px
+const BARE_MIN_PIXELS = 6;
+const BARE_MIN_SHARE = 0.1;
+const BARE_MIN_OUTLINE = 2; // px
 // Some plots clip their dots at the plot area (autocor1: at the y axis and where the x axis line ends, a straight cut
 // through dots). Beyond such a cut nothing can be seen, so it is masked with no margin, and a cut dot is fitted whole,
 // half of it unseen; read as white, the cut was its edge, and the fit moved the dots in and doubled them. A cut is
@@ -385,6 +393,62 @@ export function components8(mask, width, height) {
     return comps;
 }
 
+/**
+ * Marks as thin the patches of an outlined family's fill color that meet the page bare, with no outline between (see
+ * BARE_REACH): pieces of a line or curve drawn in the fill's color. The long ones are thin marks anyway; this takes
+ * the stubs left between dots and where the curve leaves a dot, which read as dot and are hidden on all other sides
+ * by other families' dots, so that the fit placed a dot under those to explain each (phase1: the dark gray curve
+ * along its top row, 8 px of it showing between two dots of another gray). A patch is a connected piece of fill
+ * pixels: a dot's own fill is one, closed off by its outline.
+ *
+ * Where the plot clips the dots, a cut dot's fill meets the page along the cut; the page beyond a cut doesn't count.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {Uint8Array} classes
+ * @param {ArrayLike<number>} D  the family's coverage
+ * @param {number[]} fill  0–255
+ * @param {number[]} outline  0–255
+ * @param {object[]} cuts  clip edges with `cut`
+ * @param {Uint8Array} thin  marked in place
+ */
+function bareFill(image, classes, D, fill, outline, cuts, thin) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const beyondCut = (x, y) => cuts.some(e => {
+        const c = e.dir === 'v' ? x : y;
+        return e.out > 0 ? c >= e.cut : c <= e.cut;
+    });
+    // the family's pixels nearer the fill's color than the outline's, along the line between the two
+    const fo = sub(fill, outline);
+    const half = dot(fo, fo) / 2;
+    const isFill = new Uint8Array(n);
+    const page = new Uint8Array(n);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const p = y * width + x;
+            if (classes[p] === CLASS_BACKGROUND)
+                page[p] = beyondCut(x, y) ? 0 : 1;
+            else if (classes[p] === CLASS_FAMILY && D[p] > 0.5)
+                isFill[p] = dot([data[4 * p] - outline[0], data[4 * p + 1] - outline[1], data[4 * p + 2] - outline[2]], fo) >= half ? 1 : 0;
+        }
+    }
+    const nearPage = dilate(page, width, height, BARE_REACH);
+    for (const comp of components8(isFill, width, height)) {
+        let bare = 0;
+        let border = 0;
+        for (const p of comp.pixels) {
+            const x = p % width;
+            if ((x > 0 && !isFill[p - 1]) || (x < width - 1 && !isFill[p + 1]) || (p >= width && !isFill[p - width]) || (p + width < n && !isFill[p + width]))
+                border++;
+            bare += nearPage[p];
+        }
+        if (bare < BARE_MIN_PIXELS || bare < BARE_MIN_SHARE * border)
+            continue;
+        for (const p of comp.pixels)
+            thin[p] = 1;
+    }
+}
+
 // Outlined dots (families.js outlineEstimate) bring their own mask: what can't be read in P, plus what lies beyond
 // the axes. Pixels are classed as family where a ring may be (D > 0), other where masked.
 // Where a family's coverage is cut at a clip edge (see CLIP_FULL): the cut's position (px, the first pixel row or
@@ -577,6 +641,9 @@ export function buildMask(image, estimate, opts = {}) {
     }
     const thin = new Uint8Array(n);
     const r = opts.dilate ?? MASK_DILATE_BASE + MASK_DILATE_BLURS * (style.blur ?? 0);
+    // where the plot clips this family's dots: given (plotClips), or read from its own coverage
+    const cuts = (opts.clips ?? []).map(edge => ({ ...edge, cut: edge.cut ?? (style.radius ? clipAt(D, width, height, edge, style.radius) : null) }))
+        .filter(edge => edge.cut !== null);
     if (style.radius) {
         const deep = new Uint8Array(n);
         const limit = style.measuredLevels + DEEP_EXTRA_LEVELS;
@@ -620,6 +687,9 @@ export function buildMask(image, estimate, opts = {}) {
                 thin[p] = 1;
         }
         barPieces(short, deep, thin, width, height, style.radius);
+        const fam = estimate.familyMeasure;
+        if (opaque && fam?.outline && fam.fillRadius && fam.radius - fam.fillRadius >= BARE_MIN_OUTLINE)
+            bareFill(image, classes, D, fam.seed, fam.outline, cuts, thin);
         if (!opaque) {
             // pixels masked anyway are unknown, not empty: the pale halos of dog-ages' curve and dashes broke the
             // dots beside them
@@ -648,15 +718,9 @@ export function buildMask(image, estimate, opts = {}) {
     fillBoxes(seedMask, width, height, opts.exclude);
     const mask = dilate(seedMask, width, height, r);
     let outside = opts.bounds && style.radius ? maskOutside(mask, width, height, opts.bounds, OUTSIDE_MARGIN_RADII * style.radius) : 0;
-    const clipped = [];
-    for (const edge of opts.clips ?? []) {
-        const cut = edge.cut ?? (style.radius ? clipAt(D, width, height, edge, style.radius) : null);
-        if (cut === null)
-            continue;
-        clipped.push({ ...edge, cut });
-        outside += maskBeyond(mask, width, height, edge, cut);
-    }
-    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside, clipped };
+    for (const edge of cuts)
+        outside += maskBeyond(mask, width, height, edge, edge.cut);
+    const stats = { background: 0, family: 0, other: 0, thin: 0, masked: 0, maskedFamily: 0, outside, clipped: cuts };
     for (let p = 0; p < n; p++) {
         if (classes[p] === CLASS_BACKGROUND)
             stats.background++;

@@ -2790,3 +2790,51 @@ Tests: plotClips on planes made by hand (two families with one cut dot each, 1.5
 family with no dot at the edge gets the cut too; the same cut dot in two families' coverage is no cut; a family
 without a radius; a large dot lying across the edge) in test/layers.test.js; phase1's regression now asks for P
 0.75, no more than 108 dots and none beyond x 1300; test/extract.test.js takes the app's steps with familyClips.
+
+**phase1's top row: curve stubs and outlines that read as dots** (2026-11-20)
+
+After the clip edges, phase1 had 19 extras counted by family: black's 8 (16 dots fitted as 24), and 5 dots of gray
+82, 4 of gray 187 and 2 of gray 136 where no dot of that gray is. Two causes, seen in each family's coverage
+image, and neither is the overlap of the five families as such.
+
+- **A gray's own curve, showing between dots.** Each gray has a curve in its fill's color, 12 px wide, under its
+  dots. Along the top row the dark gray curve shows for 5 to 8 px between two mid gray dots. Away from dots the
+  curve is a thin mark and masked, but a stub this short isn't: it is opened together with the other families'
+  dots around it, which may hide the rest of a dot, and so it read as the visible part of a dot hidden under them.
+  The fit put a dark gray dot under the two neighbors for each stub (flagged hidden, 30 to 40% visible), and a
+  second dot where a curve leaves a dot. What tells a stub from a dot's visible part: an outlined dot's fill never
+  meets the page, its outline lies between. **bareFill** (layers.js): for an opaque family with an outline at least
+  2 px wide, a connected patch of fill pixels that meets the page bare (the page within 2 px, at 6 of its pixels
+  and a tenth of its border at least) is masked as a thin mark. A dot's own fill is a patch of its own, closed off
+  by its outline. The page beyond a clip cut doesn't count: a cut dot's fill meets it along the cut.
+- **A gray dot's outline beside a black dot.** Black is a family and the grays' outline color. In black's coverage
+  a thin black pixel within an outline's reach of a gray fill was the gray's only when it was nearer that fill than
+  black's own dots, the rule for a stroke between two fills; an outline running beside a black dot was black dot,
+  1 to 3 px beyond its disc along an arc, and a second black disc a pixel or two off explained it. (The fit at the
+  bumped radius, 19.9 px, had 16 clean dots; its own radius refit brought the discs back to 19.4, and the births
+  after it added 8.) For a family in the outlines' color every such pixel is now the gray's (opaque.js
+  outlineRings, `whole`), whether the family was found by its own dots or by solidsInOutlineColor.
+
+Tried and left: fitting the grays by their rings (families.js ringEstimate), the path made for outlined dots that
+overlap. It declines in phase1 because the ring image reads the 2.6 px outline as the black family's fill wherever
+it is "thick" at 1.5 px, eight places around each ring, so no whole ring is left to measure. Read whole (black
+counted as dots only where thicker than the outline), the light gray was fitted by its rings at r 18.9, the true
+radius, but lost its half dot at the y axis, and the mid gray got worse (5 extras for 2): no gain overall (P 0.833
+against 0.863 for the black fix alone).
+
+Results. phase1: 101 found for 97, P 0.812, R 0.845, RMSE 1.15 px, becomes 85, P 0.965, R 0.845, RMSE 0.89; 3
+extras (two black pairs, one of gray 82) for 19. No fit is refitted larger for its close pairs any more: the radii
+end at 19.2 to 19.8 px (19.0 on the pixels; 20.2 and 20.4 for two families before), 15 dots are flagged for 34, and
+the image takes 21 s alone for 74 (8 s of fitting in the app for 65). The 15 missed are as before: 9 dots of gray
+136 that the truth places under others in the top row, where nothing of them shows, the three half dots where the
+x axis line ends, and 3 more. Every other image of the 118: the same dots and estimates, by digest. 228 tests pass
+(1 standing skip). In the app phase1 fits to the same 85 dots (20 + 15 + 18 + 17 + 15), bench1 group-graystroke to
+100 and dog-ages to 95, with no console errors. RESULTS.md is regenerated (10 jobs, 156 s): only phase1's row
+changes.
+
+Test: a scene painted as the left of phase1's top row (test/opaque.test.js: the dark gray curve under mid grays
+43 px apart, dark gray dots over two of them, black dots over the mid grays' outlines), every family's dots found
+with none extra. Without bareFill the dark gray gets two hidden dots under its neighbors, as in phase1; without
+outlineRings 18 of 30 outline pixels beside the black dots read as black dot, and 8 with it (the wedge where an
+outline runs into the disc). phase1's own regression now asks for P 0.9, at most 18 black dots, and every fitted
+radius within 0.6 px of 19.4.

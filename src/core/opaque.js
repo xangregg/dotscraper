@@ -491,7 +491,8 @@ function surroundings(image, near, outline) {
 }
 
 // 1 where a pixel is another family's ring: within `reach` of that family's fill and nearer it (by STROKE_TIE) than to
-// this family's fill (`own`, its thick parts); null without rings. O(families · pixels).
+// this family's fill (`own`, its thick parts), or, for a ring marked `whole`, wherever it is within reach
+// (outlineRings); null without rings. O(families · pixels).
 function ringOwners(image, own, rings) {
     if (!rings?.length)
         return null;
@@ -507,13 +508,13 @@ function ringOwners(image, own, rings) {
     };
     const dOwn = dist(nearestTransform(own, width, height));
     const out = new Uint8Array(n);
-    for (const { fill, reach } of rings) {
+    for (const { fill, reach, whole } of rings) {
         const theirs = thickMembers(image, [fill]);
         for (let p = 0; p < n; p++)
             theirs[p] = own[p] ? 0 : theirs[p];
         const d = dist(nearestTransform(theirs, width, height));
         for (let p = 0; p < n; p++) {
-            if (!own[p] && !theirs[p] && d[p] <= reach && d[p] < dOwn[p] - STROKE_TIE)
+            if (!own[p] && !theirs[p] && d[p] <= reach && (whole || d[p] < dOwn[p] - STROKE_TIE))
                 out[p] = 1;
         }
     }
@@ -1785,7 +1786,7 @@ function solidsInOutlineColor(search) {
         const owners = out.filter(g => g.outline && !g.pageFill && g.fillRadius && sameCluster(g.outline, f.seed));
         if (!owners.length)
             continue;
-        const rings = out.filter(g => g.outline && g.fillRadius).map(g => ({ fill: g.seed, reach: g.radius - g.fillRadius + RING_SLACK }));
+        const rings = outlineRings(out);
         const radius = median(owners.map(g => g.radius));
         const solid = measureOpaque(scan, f.seed, out.map(g => g.seed), null, { radius, rings });
         if (solid.strongDots >= DOT_MIN_STRONG && solid.coverage >= DOT_MIN_COVERAGE_ANY) {
@@ -1793,6 +1794,15 @@ function solidsInOutlineColor(search) {
             rejected.splice(i, 1);
         }
     }
+}
+
+// The outlined families' rings, for the coverage of a family filled with their outlines' color: each fill, and how
+// far its outline reaches from it. Whole: every thin pixel of that color within reach of the fill is its outline, also
+// one nearer this family's dots. Decided by which is nearer, as a stroke between two fills is, the outline of a gray
+// dot running beside a black dot read as black dot, and a second black disc a pixel or two off explained it (phase1:
+// 16 black dots fitted as 24, once the radius refit had brought the discs back to size).
+function outlineRings(families) {
+    return families.filter(g => g.outline && g.fillRadius).map(g => ({ fill: g.seed, reach: g.radius - g.fillRadius + RING_SLACK, whole: true }));
 }
 
 // Plain fills at a found family's radius (the sibling with strong arcs may come later in the clusters); each needs
@@ -1817,7 +1827,10 @@ function measuredForFit(search, families) {
     // (the reach is from the fill's color mask, as strokeColor reads the ring)
     const stroked = families.some(f => f.stroke);
     return families.map(f => {
-        const rings = f.solidRings ?? (stroked ? families.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
+        // a family found by its own dots, in the color of other families' outlines, as one found by solidsInOutlineColor
+        const inOutlineColor = !f.outline && families.some(g => g.outline && g.fillRadius && sameCluster(g.outline, f.seed));
+        const rings = f.solidRings ?? (inOutlineColor ? outlineRings(families)
+            : stroked ? families.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
         const g = measureOpaque(scan, f.seed, [...colors.filter(c => c !== f.seed), ...search.levelColors, ...otherInk(search, f.seed), ...search.blendInk], f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
         return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
     });
