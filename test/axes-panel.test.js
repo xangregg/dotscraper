@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import { detectAxes } from '../src/core/axes.js';
 import { readTickLabels } from '../src/core/labels.js';
-import { readEntry, tickStatus, loadEntries, axisScale, toAxisData } from '../src/ui/axes-panel.js';
+import { readEntry, tickStatus, loadEntries, axisScale, toAxisData, defaultEntry, axisInEffect, readingInEffect, addTick, removeTick } from '../src/ui/axes-panel.js';
 import { readImage } from '../tools/png.mjs';
 
 // (Node has no localStorage: loadEntries finds nothing remembered, as in a private window)
@@ -41,11 +41,56 @@ test('loadEntries: an axis starts as read; one without a confirmed scale starts 
     const ticks = n => Array.from({ length: n }, (_, i) => ({ pos: 100 + 50 * i, length: 6, side: 'before', label: null, source: 'tick' }));
     const axes = { x: { ticks: ticks(2).map(t => ({ ...t, source: 'label' })) }, y: { ticks: ticks(6) } };
     const entries = loadEntries('no-such-image', axes, { x: { read: [], scale: null }, y: reading });
-    assert.deepEqual(entries.x, { type: 'category', texts: ['', ''] });
+    assert.deepEqual(entries.x, { type: 'category', texts: ['1', '2'] });
     assert.deepEqual(entries.y, readEntry(reading));
     assert.deepEqual(loadEntries('no-such-image', { x: null, y: axes.y }, { x: null, y: { read: [], scale: null } }), {
         x: { type: 'linear', texts: [] }, y: { type: 'linear', texts: ['', '', '', '', '', ''] },
     });
+});
+
+test('categories are numbered along the axis: names as they are, values once the type is linear', () => {
+    const axis = { ticks: [200, 500, 800].map(pos => ({ pos, label: [0, 0, 1, 1], source: 'label' })) };
+    const entry = defaultEntry(axis);
+    assert.deepEqual(entry, { type: 'category', texts: ['1', '2', '3'] });
+    assert.equal(toAxisData(axisScale(axis, entry), 540), '2');
+    near(toAxisData(axisScale(axis, { ...entry, type: 'linear' }), 530), 2.1, 1e-9, 'between the categories');
+});
+
+test('ticks added and removed by hand: the entry\'s ticks are the axis\'s, the readings follow their ticks', () => {
+    const ticks = [100, 150, 200, 250, 352.5, 400].map(pos => ({ pos, length: 6, side: 'before', label: null, source: 'tick' }));
+    const axis = { line: { pos: 40 }, ticks, spacing: 60, regular: false };
+    const entry = readEntry(reading);
+    assert.equal(axisInEffect(axis, entry), axis);
+    assert.equal(readingInEffect(axis, reading, entry), reading);
+    // the fifth tick, whose label the scale contradicts, goes; one is placed between the first two
+    const edited = addTick(axis, removeTick(axis, entry, 4), 125.5);
+    assert.deepEqual(edited, { type: 'linear', texts: ['12', '', '10', '8', '6', '0'], ticks: [100, 125.5, 150, 200, 250, 400] });
+    const inEffect = axisInEffect(axis, edited);
+    assert.deepEqual(inEffect.ticks.map(t => t.source), ['tick', 'user', 'tick', 'tick', 'tick', 'tick']);
+    assert.equal(inEffect.ticks[2], ticks[1]);
+    assert.equal(inEffect.line, axis.line);
+    assert.equal(inEffect.regular, false);
+    const r = readingInEffect(axis, reading, edited);
+    assert.deepEqual(r.scale.values, [12, null, 10, 8, 6, 0]);
+    assert.deepEqual(edited.texts.map((_, i) => tickStatus(edited, r, i)?.kind ?? null), ['read', null, 'scale', 'read', 'read', 'scale']);
+    // the scale is the kept values', and gives the placed tick its place on it
+    const s = axisScale(inEffect, edited);
+    near(toAxisData(s, 125.5), 10.98, 1e-9, 'the placed tick');
+    assert.equal(s.guesses[1], 11);
+});
+
+test('an axis that wasn\'t found: ticks placed by hand make one', () => {
+    const none = defaultEntry(null);
+    assert.equal(axisInEffect(null, none), null);
+    let entry = addTick(null, none, 400);
+    entry = addTick(null, entry, 100);
+    assert.deepEqual(entry, { type: 'linear', texts: ['', ''], ticks: [100, 400] });
+    const axis = axisInEffect(null, entry);
+    assert.deepEqual(axis, { line: null, ticks: [{ pos: 100, label: null, source: 'user' }, { pos: 400, label: null, source: 'user' }], spacing: 300, regular: true });
+    assert.equal(readingInEffect(null, null, entry), null);
+    near(toAxisData(axisScale(axis, { ...entry, texts: ['0', '30'] }), 250), 15, 1e-9, 'halfway');
+    // every tick removed again: no axis
+    assert.equal(axisInEffect(null, removeTick(null, removeTick(null, entry, 0), 0)), null);
 });
 
 const PLOS = new URL('../bench-plos/', import.meta.url).pathname;

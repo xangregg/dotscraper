@@ -46,7 +46,7 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         matching, mask options, fit input, dots' fill colors, and extractAll, all of it at once: the steps the app takes
                         and the bench and tests run), stats.js (medians, quantile), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
-                        axes-panel.js (tick values, read from the labels or typed, scales, data coordinates), input.js
+                        axes-panel.js (tick values, read from the labels or typed, ticks added or removed by hand, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
 src/scan-worker.js      module Web Worker running the scan for dot families (extract.js scanFamilies), posting progress
 testgraphs/             test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data

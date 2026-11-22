@@ -753,6 +753,7 @@ input.needed::placeholder {
 
 .axis h3 {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     margin: 0 0 4px;
@@ -816,4 +817,14 @@ input.needed::placeholder {
 
 .axis .warn {
     color: var(--warning);
+}
+
+.axis td button.remove {
+    padding: 0 5px;
+    line-height: 1.2;
+    font-size: 12px;
+}
+
+.axis p button {
+    font-size: 12px;
 }

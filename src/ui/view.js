@@ -33,12 +33,14 @@ export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b'
 const CLOSE_RING_GAP = 4; // CSS px
 const CLOSE_RING_GAP_LINES = 2.5; // × the stroke width
 const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axis
+const AXIS_DASH = 5; // CSS px, the dashes and gaps of a tick placed by hand, drawn across the image
 
 /**
  * @param {object} opts
  * @param {HTMLElement} opts.stage   container whose size the canvas fills; receives the pointer events
  * @param {HTMLCanvasElement} opts.canvas
- * @param {function(number|null, number|null): void} opts.onHover  image pixel under the pointer, or nulls
+ * @param {function(number|null, number|null, {x: number, y: number}=): void} opts.onHover  image pixel under the
+ *   pointer and the point itself (px), or nulls
  * @param {function(number, number, {alt: boolean, point: {x: number, y: number}}): void} opts.onClick  image pixel
  *   clicked (a press and release without a drag), whether Option/Alt was held, and the exact point (image px)
  * @param {function(number): void} opts.onZoom  the new scale
@@ -59,7 +61,8 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     let fitted = false;
     let marks = null; // { dots: [{ x, y, flags, family }], radius, selected, family, showClose }
     let closeGroups = []; // indices into marks.dots of each group of 'close' dots, one shared ring each
-    let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos] }]
+    let axisMarks = null; // [{ dir: 'h'|'v', pos, from, to, ticks: [pos], across: [pos] }]
+    let guide = null; // { dir: 'h'|'v', pos }: a line across the image, where a click would put a tick
 
     function draw() {
         const dpr = window.devicePixelRatio || 1;
@@ -80,6 +83,23 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
             drawAxisMarks();
         if (marks)
             drawMarks();
+        if (guide)
+            drawGuide();
+    }
+
+    function drawGuide() {
+        ctx.lineWidth = MARK_LINE / scale;
+        ctx.strokeStyle = MARK_COLORS.axis;
+        ctx.beginPath();
+        if (guide.dir === 'v') {
+            ctx.moveTo(guide.pos, 0);
+            ctx.lineTo(guide.pos, height);
+        }
+        else {
+            ctx.moveTo(0, guide.pos);
+            ctx.lineTo(width, guide.pos);
+        }
+        ctx.stroke();
     }
 
     // detected axis lines and tick positions, in image coordinates
@@ -112,6 +132,23 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
             }
         }
         ctx.stroke();
+        // ticks placed by hand, dashed across the image
+        ctx.setLineDash([AXIS_DASH / scale, AXIS_DASH / scale]);
+        ctx.beginPath();
+        for (const a of axisMarks) {
+            for (const t of a.across ?? []) {
+                if (a.dir === 'h') {
+                    ctx.moveTo(t, 0);
+                    ctx.lineTo(t, height);
+                }
+                else {
+                    ctx.moveTo(0, t);
+                    ctx.lineTo(width, t);
+                }
+            }
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
     }
 
     // dot outlines and centers in image coordinates, line widths constant in CSS px
@@ -261,7 +298,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         const x = Math.floor(p.x);
         const y = Math.floor(p.y);
         if (x >= 0 && y >= 0 && x < width && y < height)
-            onHover(x, y);
+            onHover(x, y, p);
         else
             onHover(null, null);
     });
@@ -312,9 +349,19 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
                 fit();
         },
         fit,
-        /** Axes to draw: [{ dir, pos (null: no line), at (where to mark ticks then), from, to, ticks }], or null. */
+        /**
+         * Axes to draw: [{ dir, pos (null: no line), at (where to mark ticks then), from, to, ticks, across (ticks
+         * drawn as dashed lines across the image) }], or null.
+         */
         setAxisMarks(a) {
             axisMarks = a;
+            draw();
+        },
+        /** A line across the whole image: { dir: 'h'|'v', pos (px) }, or null. */
+        setGuide(g) {
+            if (!g && !guide)
+                return;
+            guide = g;
             draw();
         },
         /** Dots to outline over the image, or null. */

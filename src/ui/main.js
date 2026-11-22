@@ -20,7 +20,7 @@ import { detectAxes, plotBounds } from '../core/axes.js';
 import { readTickLabels } from '../core/labels.js';
 import { excludedBoxes, familyClips, maskOptions, fitInput, dotFills } from '../core/extract.js';
 import { pageStroke } from '../core/stroke.js';
-import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis, tickStatus } from './axes-panel.js';
+import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis, tickStatus, axisInEffect, readingInEffect, addTick } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
 import {
@@ -246,7 +246,8 @@ function familyName(k) {
     return f.picked ? `Picked ${f.picked.join(', ')}` : `Family ${k + 1}`;
 }
 
-// a family's kind in a few words: 'translucent, α 0.50, r 6.7'
+// a family's kind in a few words: 'translucent, α 0.50, r 6.7'. The mask and the fit go by the α in effect (opaque
+// from 1), so a family whose α the user has typed across that line is described as it is now fitted.
 function familyKind(k) {
     const est = state.families[k].estimate;
     const st = styleOf(k);
@@ -267,11 +268,14 @@ function familyKind(k) {
     else if (est.scale) {
         kind = `colored by a scale, α ${fmt(st.alpha, 2)}`;
     }
-    else if (est.familyMeasure?.kind === 'opaque') {
+    else if (est.familyMeasure?.kind === 'opaque' && (st.alpha >= 1 || st.layered)) {
         kind = est.familyMeasure.stroke || est.familyMeasure.outline ? 'opaque, outlined' : 'opaque';
     }
+    else if (st.alpha >= 1) {
+        kind = 'opaque (α typed)';
+    }
     else {
-        kind = `translucent, α ${fmt(st.alpha, 2)}`;
+        kind = `translucent, α ${fmt(st.alpha, 2)}${est.familyMeasure?.kind === 'opaque' ? ' (typed)' : ''}`;
     }
     return `${kind}, r ${st.radius ? st.radius.toFixed(1) : '?'}`;
 }
@@ -298,12 +302,14 @@ function paintSwatch(el, k) {
     }
 }
 
+/** An axis ('x' or 'y') with the ticks in effect: the detected ones, or the user's (axes-panel.js axisInEffect). */
+function axisOf(k) {
+    return state.axes ? axisInEffect(state.axes[k], state.axisEntries[k]) : null;
+}
+
 /** The scales in effect: { x, y }, each from axisScale or null. */
 function scales() {
-    return {
-        x: state.axes ? axisScale(state.axes.x, state.axisEntries.x) : null,
-        y: state.axes ? axisScale(state.axes.y, state.axisEntries.y) : null,
-    };
+    return { x: axisScale(axisOf('x'), state.axisEntries.x), y: axisScale(axisOf('y'), state.axisEntries.y) };
 }
 
 /** Data coordinates of an image point, with per-axis resolution (data units per px). */
@@ -329,13 +335,19 @@ function nearestDot(dots, x, y, within = 1, keep = () => true) {
     return best;
 }
 
-function showPixel(x, y) {
+function showPixel(x, y, point) {
     if (x === null || !state.image) {
         $('pixel-line').textContent = '–';
         $('dot-line').textContent = '';
         setHoverDot(-1);
+        view.setGuide(null);
         return;
     }
+    // where a click would put the tick (clickAt)
+    if (state.mode === 'tick-x')
+        view.setGuide({ dir: 'v', pos: +point.x.toFixed(1) });
+    else if (state.mode === 'tick-y')
+        view.setGuide({ dir: 'h', pos: +point.y.toFixed(1) });
     const [r, g, b, a] = pixelAt(state.image, x, y);
     const p = y * state.image.width + x;
     const parts = [`${x}, ${y} px`, `RGBA ${r}, ${g}, ${b}, ${a}`];
@@ -780,8 +792,12 @@ function renderStylePanel() {
     const fam = est.familyMeasure;
     if (fam?.kind === 'opaque' && style?.layered)
         $('style-fit').textContent = 'opaque, fitted by its outlines in drawing order';
+    else if (fam?.kind === 'opaque' && style?.alpha < 1)
+        $('style-fit').textContent = `measured as opaque; fitted as translucent with the α typed, ${fmt(style.alpha, 2)}`;
     else if (fam?.kind === 'opaque')
         $('style-fit').textContent = 'opaque: overlaps aren’t seen, α = 1';
+    else if (style?.alpha >= 1 && 'alpha' in state.families[state.current].overrides)
+        $('style-fit').textContent = 'measured as translucent; fitted as opaque with the α typed, 1';
     else if (fam?.fit?.underdetermined)
         $('style-fit').textContent = 'one level: α not measured, 1 assumed';
     else
@@ -930,6 +946,12 @@ function clickAt(x, y, { alt = false, point = null } = {}) {
         addPickedFamily(pixelAt(state.work, x, y).slice(0, 3));
         return;
     }
+    if (state.mode === 'tick-x' || state.mode === 'tick-y') {
+        // where clicked, not the pixel's center: a tick or gridline an odd number of px wide is centered between two
+        const k = state.mode === 'tick-x' ? 'x' : 'y';
+        setAxisEntry(k, addTick(state.axes[k], state.axisEntries[k], +(point ?? { x: x + 0.5, y: y + 0.5 })[k].toFixed(1)));
+        return;
+    }
     if (state.mode === 'pick-outline') {
         const k = state.current;
         state.families[k].outlineEdit = { color: pixelAt(state.work, x, y).slice(0, 3), width: outlineOf(k)?.width ?? OUTLINE_DEFAULT.width };
@@ -1054,8 +1076,9 @@ async function outlineChanged(k) {
     styleChanged();
 }
 
-/** What a click in the view does: null (pan only), 'pick', 'pick-outline', 'add', 'remove' or 'move'. */
+/** What a click in the view does: null (pan only), 'pick', 'pick-outline', 'add', 'remove', 'move', 'tick-x' or 'tick-y'. */
 function setMode(mode) {
+    const ticking = (state.mode?.startsWith('tick') ?? false) !== (mode?.startsWith('tick') ?? false);
     state.mode = mode;
     state.moving = null;
     state.nudged = false;
@@ -1066,10 +1089,14 @@ function setMode(mode) {
     $('edit-move').setAttribute('aria-pressed', String(mode === 'move'));
     const stage = $('stage');
     stage.classList.toggle('picking', mode === 'pick' || mode === 'pick-outline');
-    stage.classList.toggle('adding', mode === 'add');
+    stage.classList.toggle('adding', mode === 'add' || mode === 'tick-x' || mode === 'tick-y');
     stage.classList.toggle('removing', mode === 'remove' || mode === 'move');
     setHoverDot(-1);
+    view.setGuide(null);
     updateModeHint();
+    // the Add tick buttons show which axis a click adds to
+    if (ticking && state.image)
+        renderAxesPanel();
 }
 
 function updateModeHint() {
@@ -1082,6 +1109,8 @@ function updateModeHint() {
         : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it (${OPTION_KEY}-click: nothing refitted) · drag to pan · Esc to finish`
         : state.mode === 'move' && !state.moving ? `Moving in ${name}: click a dot to choose it · drag to pan · Esc to finish`
         : state.mode === 'move' ? `Arrow keys move the dot ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · click another dot · Esc to finish`
+        : state.mode === 'tick-x' ? 'Adding x ticks: click where a tick is (the line shows its x; zoom in to place it well) · drag to pan · Esc to finish'
+        : state.mode === 'tick-y' ? 'Adding y ticks: click where a tick is (the line shows its y; zoom in to place it well) · drag to pan · Esc to finish'
         : '';
     hint.textContent = text;
     hint.hidden = !text;
@@ -1479,13 +1508,17 @@ function baseName() {
     return state.name.replace(/\.[a-z]+$/i, '');
 }
 
+function setAxisEntry(k, entry) {
+    state.axisEntries[k] = entry;
+    saveEntries(state.hash, state.axisEntries, state.axisReadings);
+    renderAxesPanel();
+}
+
 function renderAxesPanel() {
     for (const k of ['x', 'y']) {
-        renderAxis($(`axis-${k}`), k, state.axes?.[k] ?? null, state.axisEntries[k], state.axisReadings[k], state.image, entry => {
-            state.axisEntries[k] = entry;
-            saveEntries(state.hash, state.axisEntries, state.axisReadings);
-            renderAxesPanel();
-        });
+        const mode = `tick-${k}`;
+        renderAxis($(`axis-${k}`), k, state.axes?.[k] ?? null, state.axisEntries[k], state.axisReadings[k], state.image, entry => setAxisEntry(k, entry),
+            { on: state.mode === mode, toggle: () => setMode(state.mode === mode ? null : mode) });
     }
     const s = scales();
     const note = [];
@@ -1497,30 +1530,35 @@ function renderAxesPanel() {
         note.push('Type tick values to get data coordinates: an axis\'s are read from its labels only when at least three of them fit one scale, or two on a log axis whose minor ticks confirm them.');
     $('axes-note').textContent = note.join(' ');
     const summary = ['x', 'y'].map(k => {
-        if (!state.axes?.[k])
+        const axis = axisOf(k);
+        if (!axis)
             return `${k} not found`;
         const sk = s[k]?.kind;
-        const read = state.axes[k].ticks.every((_, i) => tickStatus(state.axisEntries[k], state.axisReadings[k], i));
-        return sk === 'numeric' ? `${k} ${state.axisEntries[k].type}${read ? ', read' : ''}` : sk === 'category' ? `${k} categories` : `${k}: ${state.axes[k].ticks.length} ticks, no values`;
+        const reading = readingInEffect(state.axes[k], state.axisReadings[k], state.axisEntries[k]);
+        const read = axis.ticks.every((_, i) => tickStatus(state.axisEntries[k], reading, i));
+        return sk === 'numeric' ? `${k} ${state.axisEntries[k].type}${read ? ', read' : ''}` : sk === 'category' ? `${k} categories` : `${k}: ${axis.ticks.length} ticks, no values`;
     });
     $('axes-summary').textContent = state.image ? summary.join(' · ') : '';
     refreshAxisMarks();
 }
 
 function refreshAxisMarks() {
-    const a = state.axes;
+    const a = state.axes && { x: axisOf('x'), y: axisOf('y') };
     if (!a || !state.showAxes) {
         view.setAxisMarks(null);
         return;
     }
     const marks = [];
+    // (a tick placed by hand has only its position: a line across the image shows what it lines up with)
+    const found = axis => axis.ticks.filter(t => t.source !== 'user').map(t => t.pos);
+    const placed = axis => axis.ticks.filter(t => t.source === 'user').map(t => t.pos);
     if (a.x)
         // gridline ticks have no axis line: mark them at the bottom end of the y axis, or the image's bottom edge
-        marks.push({ dir: 'h', pos: a.x.line?.pos ?? null, at: a.x.line ? null : (a.y?.line?.to ?? state.image.height - 1), from: a.x.line?.from, to: a.x.line?.to, ticks: a.x.ticks.map(t => t.pos) });
+        marks.push({ dir: 'h', pos: a.x.line?.pos ?? null, at: a.x.line ? null : (a.y?.line?.to ?? state.image.height - 1), from: a.x.line?.from, to: a.x.line?.to, ticks: found(a.x), across: placed(a.x) });
     if (a.y) {
         // gridline ticks have no axis line: mark them at the left end of the x axis, or the image's left edge
         const at = a.y.line ? null : (a.x?.line?.from ?? 0);
-        marks.push({ dir: 'v', pos: a.y.line?.pos ?? null, at, from: a.y.line?.from, to: a.y.line?.to, ticks: a.y.ticks.map(t => t.pos) });
+        marks.push({ dir: 'v', pos: a.y.line?.pos ?? null, at, from: a.y.line?.from, to: a.y.line?.to, ticks: found(a.y), across: placed(a.y) });
     }
     view.setAxisMarks(marks);
 }
