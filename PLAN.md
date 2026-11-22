@@ -3597,3 +3597,26 @@ Not done, and known:
   is in SVG coordinates.
 - The reference line's label, 7, is not a tick: correct for the scale, and the app does not show it.
 - An axis with a single labeled gridline has no end line (`AXIS_MIN_LABELED_TICKS`, 2), and so no plot bound.
+
+**song-cents: the CSV truth in data units** (2026-11-22)
+
+testgraphs/song-cents.csv (local) held the chart's SVG coordinates, so the dot benchmark gave an error row for it
+and only the by-hand JSON scored the image. It is now a truth file like the others: x and cents in data units, the
+fill as the group, linear scales, and the table's year and the SVG coordinates kept as extra columns.
+
+- The user's export of the page's table (testgraphs/song-cents-source.csv, 325 rows of year and cents) pairs with
+  the 325 SVG circles one to one: svgy = 386.002 − 12.067 × cents to the 0.1 the SVG is written in (residual at most
+  0.05 svg units), so y is the table's cents.
+- x is not the year. The page dodges the dots of one year sideways into lanes 0.189 years apart (2.60 svg units,
+  6.1 px; the dots' radius is 11.8 px): svgx = −26881.231 + 13.754 × (year + lane × 0.189), lanes −2 to 2, residual
+  at most 0.05 svg units. It is a fixed dodge, not random jitter: in all 66 years the lanes, left to right, are the
+  year's rows in the table's order (62 years have 5 rows, 3 have 4, 1 has 3). The truth's x is where each dot is
+  drawn, year + lane × 0.189, so it is scored by position ("exact"), not by cell.
+
+Results. Dot benchmark, the data row, placed through the detected ticks: 297 found of 325, precision 0.973, recall
+0.889, the same dots as the by-hand row, RMSE 0.49 px against its 0.04. The difference is the x axis: its ticks are
+the middles of the year labels, which lie 0.08 to 0.76 px left of the years' positions by the SVG map (the y
+gridlines are within 0.12 px). That is 0.02 years at most, and it is what an axis of labels alone can give.
+Label benchmark: both axes of song-cents solved, 7 of 7 labels each (testgraphs 33 of 33 labels, 4 of 5 axes; the y
+axis was not paired before, when the header listed the reference line's 7). RESULTS.md has the new row, its time
+from a run of this image alone.
