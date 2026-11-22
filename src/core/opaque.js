@@ -6,7 +6,7 @@
 import { houghCenters, houghGradient } from './fit.js';
 import { distanceTransform, dilate, nearestTransform, opening } from './layers.js';
 import { nearColor, nearAnyColor, colorMask, colorDistance } from './image.js';
-import { CLUSTER_TOL, isThin } from './scan.js';
+import { CLUSTER_TOL, isThin, solidRegion } from './scan.js';
 import {
     ISOLATED_MIN_AREA, ISOLATED_MAX_ASPECT, ISOLATED_MAX_MOMENT_RATIO, components, isolatedDots, boundaryBlur,
     discShare,
@@ -91,6 +91,10 @@ const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
 // on one line (phase1's grays, white to black) every color is any other seen through a third. The bands measured
 // 48 units off (bench3 ANOVA 206, 213, 231 and bench1 group-smoother-ci 205, 213, 232 against pink and red).
 const LAYER_MIN_OFF = 20; // 0–255 units
+// … and a layer is an area a dot can lie under, solid at this half width: a color of strokes is none (song-cents: its
+// navy dots, 15, 39, 66, are the labels' gray 88 plus 0.45 of the mid blue's offset from the page, to 0.3 units,
+// and were no family for being "the mid blue seen through the gray")
+const LAYER_MIN_HALF_WIDTH = 4; // px
 // The pixels next to an opaque family's dots that are another ink (measureOpaque's edgeInk): its index in the others'
 // colors plus 1, or this for an ink not among them
 const EDGE_INK_UNLISTED = 255;
@@ -108,6 +112,12 @@ const BLEND_OUTLINE_MAX_INTERIOR = 0.3; // a cluster between a fill and its outl
 // wide (interior 0.18), read as 81% covered by the black dots, took 64 false dots along them; violin-beeswarm's
 // violin fill (182, 187, 224, interior 0.62) under the blue dots, 734 → 712 found for 702.
 const BLEND_INK_MIN_INTERIOR = 0.05; // share of the cluster's pixels
+// … or a family in a tint of the other's color, when it is the insides of dots: with this share of interior pixels
+// the cluster is read as any other is, and is a family if it reads as dots (song-cents: light blue 144, 180, 226,
+// 0.69 of the way from the page to the mid blue's 93, 146, 205, interior 0.53, 30 dots; a violin's fill doesn't).
+// Not a cluster within a found family's own color or its outline's: a rim between a fill and its outline takes in
+// fill pixels by its tolerance, and reads as the dots it rims (a synthetic rim at 149, 6, 220, interior 0.73).
+const BLEND_DOT_MIN_INTERIOR = 0.3;
 const DOT_FILL_RADII = 0.75; // × r: the disc that must be filled around a Hough center …
 const DOT_MIN_FILL = 0.85; // … to this fraction
 // distance-transform peaks underestimate the radius where dots touch or overlap; the upper quartile of the peaks,
@@ -1656,6 +1666,12 @@ function tryCluster(search, c) {
     // cheap test first: a dot family's pixels are mostly interior; text's are mostly edges
     const { count, share } = interiorShare(scan.image, c);
     if (isBlend(search, c, share)) {
+        const own = out.some(f => sameCluster(c, f.seed) || (f.outline && sameCluster(c, f.outline)));
+        const tint = !own && share >= BLEND_DOT_MIN_INTERIOR ? outlineReadings(search, c) : null;
+        if (tint?.found) {
+            out.push(Object.assign(tint.fam, { interior: share }));
+            return;
+        }
         // (not near the page or a family's color: those pixels are the page's, or the family's own shading)
         if (count && share >= BLEND_INK_MIN_INTERIOR && ![...scan.backgrounds, ...out.map(f => f.seed)].some(P => sameCluster(P, c)))
             search.blendInk.push(c);
@@ -1735,7 +1751,7 @@ function throughLayer(search, c) {
         if (alongLine(P.map((x, ch) => x - page[ch]), w).off < LAYER_MIN_OFF)
             return false;
         const { m, off } = alongLine(c.map((x, ch) => x - P[ch]), w);
-        return m > MIX_SHARE[0] && m < MIX_SHARE[1] && off <= CLUSTER_ON_LINE_TOL;
+        return m > MIX_SHARE[0] && m < MIX_SHARE[1] && off <= CLUSTER_ON_LINE_TOL && solidRegion(search.scan, P, LAYER_MIN_HALF_WIDTH);
     }));
 }
 

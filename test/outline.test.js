@@ -411,8 +411,45 @@ test('findHollowRings: red rings with nothing inside, over gridlines and beside 
     const d = WHITE.map((v, ch) => v - HOLLOW_RED[ch]);
     const cos = d.reduce((s, v, ch) => s + v * f.hollow.dir[ch], 0) / Math.hypot(...d);
     assert.ok(cos > 0.99, `direction ${f.hollow.dir}`);
-    // a known family's color is skipped
-    assert.equal(findHollowRings(image, WHITE, [d.map(v => v / Math.hypot(...d))]).length, 0);
+    // rings in a found family's color are that family's own ink (its outlines), not rings of their own: the color
+    // as the rings show it on the page
+    const shown = WHITE.map((v, ch) => Math.round(v + RING_ALPHA * (HOLLOW_RED[ch] - v)));
+    assert.equal(findHollowRings(image, WHITE, [shown]).length, 0);
+    // … which a family of another color doesn't make them, however near its pixels they lie: pale blue hairlines
+    // every 6 px, within reach of every ring pixel, darken the page another way
+    const PALE = [215, 225, 255];
+    const lined = { ...image, data: new Uint8ClampedArray(image.data) };
+    for (let p = 0; p < W * H; p++) {
+        if (p % W % 6 === 0 && lined.data[4 * p] === 255 && lined.data[4 * p + 1] === 255 && lined.data[4 * p + 2] === 255)
+            lined.data.set(PALE, 4 * p);
+    }
+    assert.equal(findHollowRings(lined, WHITE).length, 1);
+    assert.equal(findHollowRings(lined, WHITE, [PALE]).length, 1);
+});
+
+test('regression: gray rings are found beside a family whose color darkens the page the same way', () => {
+    // song-cents: navy dots, 15, 39, 66, darken the page 9° from the gray of its hollow rings, and every direction
+    // within 18° of a found family's was left out, so finding the navy lost the rings. The navy's own thin ink is
+    // its dots' rims; the rings are nowhere near them.
+    const NAVY = [15, 39, 66];
+    const image = outlinedImage(scene(), { fillAlpha: 0 });
+    for (let i = 0; i < 8; i++) {
+        const [cx, cy] = [30 + i * 40, 222];
+        for (let y = cy - 10; y <= cy + 10; y++) {
+            for (let x = cx - 10; x <= cx + 10; x++) {
+                const m = pixelCoverage(cx, cy, RADIUS, x, y);
+                for (let ch = 0; ch < 3; ch++)
+                    image.data[4 * (y * W + x) + ch] = Math.round(image.data[4 * (y * W + x) + ch] * (1 - m) + NAVY[ch] * m);
+            }
+        }
+    }
+    const found = findHollowRings(image, WHITE, [NAVY]);
+    assert.equal(found.length, 1);
+    assert.ok(Math.abs(found[0].ring.radius - RADIUS) <= 0.5, `radius ${found[0].ring.radius}`);
+    const gray = WHITE.map((v, ch) => v - RING_COLOR[ch]);
+    const navy = WHITE.map((v, ch) => v - NAVY[ch]);
+    const angle = Math.acos(gray.reduce((s, v, ch) => s + v * navy[ch], 0) / Math.hypot(...gray) / Math.hypot(...navy)) * 180 / Math.PI;
+    assert.ok(angle < 18, `the two directions are ${angle.toFixed(1)}° apart`);
 });
 
 test('findHollowRings: outlined dots with fills are not hollow', () => {

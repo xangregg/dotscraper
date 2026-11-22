@@ -3434,3 +3434,97 @@ written in testgraphs (song-cents.csv, of 2026-11-21, with pixel positions and a
 stops a whole run; that file is left as it is, and has no row. testgraphs' ten images were fitted one at a time
 for the same reason, so their times in this table are each image's own, shorter than the header's "10 at a time"
 says. `npm run results` writes the same table in one run once that file reads.
+
+**song-cents, looked into** (2026-11-22)
+
+A local test image (testgraphs/song-cents.png, 2360 × 1010, a screenshot of an SVG chart): 325 opaque dots of
+radius 11.8 px in six fills with white strokes (mid blue 92, dark blue 65, orange 74, light blue 30, navy 18, and 46
+hollow rings in gray), under a solid and a dotted black line; light horizontal gridlines with gray labels at their
+left ends and no tick marks, year labels under the bottom gridline, and a dashed orange reference line at 7 with
+its own label. Its CSV holds the dots' SVG coordinates and fills.
+
+What was found, in the order asked:
+
+1. **"Find dots failed: undefined".** Not the image: the fit of all six families runs (44 s in headless Chrome,
+   359 dots). The message is what the app said when the fit's worker script could not be fetched. A worker that
+   fails to load gives a bare event with no message; the scan worker is kept between requests, so a page whose
+   server has stopped still scans and measures picked colors, and the fit's worker, started anew for every Find
+   dots, then fails. Reproduced by pointing the fit's worker at a missing file. Whether that is what happened is
+   not known (the local server on port 8003 was restarted that day, and source files were being changed under
+   it). Now the app says what a silent worker failure means (main.js `workerFailure`),
+   for the scan too.
+2. **Truth.** The CSV's SVG coordinates map to image px by one scale and a shift: px = 2.35596 × svg − 2.98 in x,
+   2.35599 × svg − 4.01 in y, found by voting over scales (every truth and found dot of one fill votes for a shift)
+   and refined by least squares on 270 matched dots, rms 0.05 px. testgraphs/truth/song-cents.json has the 325 dots
+   in px by fill, so the image is scored as hand truth is. The CSV itself is no data-unit truth; the benchmark
+   reports it as an error row.
+3. **Families missed by the scan: two of six.**
+   - Light blue (144, 180, 226) lies 0.69 of the way from the white page to the mid blue (93, 146, 205), where a
+     rim of the mid blue lies too, and was dismissed as that blend (opaque.js `isBlend`). **Fixed**: a blend
+     cluster with 0.3 or more of its pixels interior (`BLEND_DOT_MIN_INTERIOR`; this one 0.53, rims 0.00) is read
+     as any cluster is and is a family if it reads as dots; a band in a tint, which has insides too, does not.
+     Not a cluster within a found family's own color or its outline's: the first version made a second family of
+     the rim between a fill and its outline, whose cluster takes in fill pixels (interior 0.73), which the test of
+     outlined dots caught.
+   - Navy (15, 39, 66) is, to 0.3 units, the labels' gray (88) plus 0.45 of the mid blue's offset from the page,
+     and `throughLayer` takes it for the mid blue seen through a gray layer. A layer should be an area (solid at a
+     few px), not text; with that the navy is a family. **Not applied here, done in the next entry**: once the navy is a family, the hollow
+     rings are lost, because the ring search leaves out every direction of darkening within 18° of a found
+     family's, and the navy's is 5° from the rings' gray. The two changes belong together: the ring search should
+     leave out ink that is a family's own (its fill's rim, its outline, its stroke) rather than a whole direction.
+4. **Axes: none usable.** x is not found; y has 5 of its 7 gridlines, with scraps for labels. Three things this
+   layout needs: gridlines found under the dots that break them (20 and 10 have no run of 30% of the width);
+   labels beyond a gridline's end and centered on it (the gridline rule wants them above or below the line, as the
+   economist chart has them); and an axis from labels alone under the bottom gridline, which the rule for label
+   axes takes only at a dark axis line. The dashed orange line at 7 is colored, so it is no gridline, and its label
+   stands 0.4 of a spacing from the 5 line, outside the third that a gridline's label may be off it. Not done.
+
+Scores against the new truth (dots matched within half a radius): with the fix, 277 found of 325, precision 0.978,
+recall 0.834, RMSE 0.05 px (before it, without the light blue's dots: about 250 found). The 6 extras are zeros of
+the y labels read as hollow rings, which the plot's bounds would mask if the axes were found. Of the 54 missed, 18
+are the navy; the other 36 each have another dot's center within a diameter, opaque dots overlapped by others.
+With the navy picked by hand its fit gives 83 dots for 18: 65 along the black lines, whose color is within its
+reach.
+
+The dot benchmark with the fix: the 170 rows of the other images are identical apart from times; RESULTS.md is
+regenerated from that one full run (171 rows and the CSV's error row), so the times are again all of 10 at a time.
+
+Tests (1 new in test/opaque.test.js): drawn dots in a tint of another family's color are a second family, and a
+band in that tint under the dots is not; without the rule, or with it taking any cluster with insides, the test
+fails, and without the exception for a family's own colors the test of outlined dots does.
+
+**song-cents: the navy family, and a ring search that leaves out a family's ink, not its direction** (2026-11-22)
+
+The two changes the last entry left together:
+
+- **A layer is an area** (opaque.js `throughLayer`, `LAYER_MIN_HALF_WIDTH` 4 px by scan.js `solidRegion`). "A found
+  family's dots seen through a translucent layer of color P" now asks that P be solid at 4 px, as a band is. The
+  labels' gray, 88, strokes a few px wide, is no layer, so the navy dots (that gray plus 0.45 of the mid blue's
+  offset, to 0.3 units) are a family.
+- **The ring search leaves out a family's own ink** (outline.js `findHollowRings`, which now takes the found
+  families' colors, not their directions). It skipped every direction of darkening within 18° of a found family's:
+  hair1's black outlines and step1's blue rims are those families' own, not rings. The navy's direction is 9° from
+  the gray of the hollow rings, so finding the navy lost all 46. Now a direction within 18° of a family's is that
+  family's only when at least half its thin ink (`HOLLOW_OWN_SHARE`) lies within 3 px (`HOLLOW_OWN_REACH`) of
+  pixels of the family's color: the rim of its fill, its outline, its stroke. The rings are nowhere near the navy
+  dots, and are found.
+
+Results. song-cents: all six families from the scan, 303 found of 325, precision 0.954, recall 0.889 (277, 0.978,
+0.834 before). The navy family gives 26 dots for 18: all 18, and 8 on the black lines,
+every one flagged hidden (picked by hand as a lone color it gave 83; found by the scan it is measured against the
+other families' inks). The extras are those 8 and the 6 label zeros read as rings; the 36 missed are overlapped
+dots, as before. The dot benchmark: the other 170 rows identical apart from times; the summed row times went from
+1,416 s to 1,486 s in one run each: song-cents, which now fits one more family, is 18 s of the 70, and the
+dilation per family color is new work on every image. RESULTS.md is regenerated from that run.
+
+Tests: mid blue and navy dots among strokes of the gray are two families (test/opaque.test.js); gray rings are
+found beside navy dots 9° off their direction, rings in a family's own color are not rings, and pale hairlines
+within reach of every ring pixel, darkening the page another way, don't hide them (test/outline.test.js). Each
+condition removed fails one (5 mutations: the layer's area, the share at 0 and at 2, the reach, the direction).
+
+Not done, and known:
+- The 8 navy dots on the black lines: the solid and dotted lines are near enough the navy's color where they cross
+  other dots. They are flagged, not removed.
+- The axes of this layout (last entry, item 4), and with them the label zeros read as rings.
+- Rings of one family drawn mostly within 3 px of another family's dots of nearly the same direction of darkening
+  would be left out as that family's ink. No image has that.

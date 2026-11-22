@@ -16,7 +16,7 @@
 import { pixelCoverage, gaussianKernel, blurRect, createDotModel, createDotStore, unionRect, solidImage } from './render.js';
 import { ringCenters } from './fit.js';
 import { colorDistance } from './image.js';
-import { components8 } from './layers.js';
+import { components8, dilate } from './layers.js';
 import { upperMedian } from './stats.js';
 
 const RING_EDGE_MARGIN = 1; // px around a dot's rectangle for antialiasing
@@ -860,6 +860,14 @@ const HOLLOW_DIR_BIN = 6; // degrees
 const HOLLOW_MIN_PIXELS = 300; // thin ink pixels in one direction (step1's rings: about 3000)
 const HOLLOW_MAX_DIRS = 4;
 const HOLLOW_SAME_DIR = Math.cos(3 * HOLLOW_DIR_BIN * Math.PI / 180); // directions closer than this are one
+// A direction that a found family's color has is that family's when its thin ink is the family's own: the rim of its
+// fill, its outline, its stroke (hair1's black outlines, step1's blue rims), which lie within HOLLOW_OWN_REACH px of
+// pixels of that color (within HOLLOW_OWN_TOL of it). With less than HOLLOW_OWN_SHARE of the ink there, the
+// direction holds other marks and is tried (song-cents: gray rings, 119, 119, 106, 9° from the direction of its
+// navy dots, 15, 39, 66, and nowhere near them; leaving the direction out for the navy lost the 46 rings).
+const HOLLOW_OWN_REACH = 3; // px
+const HOLLOW_OWN_TOL = 40; // 0–255 units, a color cluster's (scan.js CLUSTER_TOL)
+const HOLLOW_OWN_SHARE = 0.5;
 const HOLLOW_OFF_ABS = 10; // 0–255 units off the ring's direction, or …
 const HOLLOW_OFF_REL = 0.3; // … this × the darkening along it, and the pixel is other ink
 // A hollow ring's inside is what is outside it (a filled outlined dot's isn't): the median over the isolated rings
@@ -915,7 +923,8 @@ export function findOutlines(image, B) {
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  the page, 0–255
- * @param {number[][]} known  unit directions from the page of colors already some family's (fills, outlines)
+ * @param {number[][]} known  0–255, colors already some family's (fills, outlines, strokes): a direction of
+ *   darkening one of them has is left out when the thin ink in it is that family's own (HOLLOW_OWN_SHARE)
  * @returns {(RingReading & {plane: null, hollow: {dir: number[], color: number[]}})[]}  one per ring color; hollow:
  *   the unit direction of its darkening from the page, and the color its rings show, 0–255
  */
@@ -925,6 +934,14 @@ export function findHollowRings(image, B, known = []) {
     const F = localFill(image);
     const v = new Float32Array(3 * n);
     const bins = new Map();
+    // per known color that darkens the page: its direction, and the pixels within reach of pixels of that color
+    const families = known.map(k => ({ k, d: B.map((x, ch) => x - k[ch]) })).filter(({ d }) => Math.hypot(...d) > HOLLOW_OWN_TOL).map(({ k, d }) => {
+        const mask = new Uint8Array(n);
+        for (let p = 0; p < n; p++)
+            mask[p] = Math.hypot(data[4 * p] - k[0], data[4 * p + 1] - k[1], data[4 * p + 2] - k[2]) <= HOLLOW_OWN_TOL ? 1 : 0;
+        const l = Math.hypot(...d);
+        return { dir: d.map(x => x / l), near: dilate(mask, width, height, HOLLOW_OWN_REACH) };
+    });
     for (let p = 0; p < n; p++) {
         const a = F[0][p] - data[4 * p];
         const b = F[1][p] - data[4 * p + 1];
@@ -936,8 +953,11 @@ export function findHollowRings(image, B, known = []) {
         if (m < HOLLOW_MIN_INK)
             continue;
         const key = Math.floor(Math.acos(c / m) * 180 / Math.PI / HOLLOW_DIR_BIN) * 1000 + Math.floor((Math.atan2(b, a) * 180 / Math.PI + 360) % 360 / HOLLOW_DIR_BIN);
-        const bin = bins.get(key) ?? { count: 0, sum: [0, 0, 0] };
+        const bin = bins.get(key) ?? { count: 0, sum: [0, 0, 0], own: families.map(() => 0) };
         bin.count++;
+        families.forEach((f, i) => {
+            bin.own[i] += f.near[p];
+        });
         bin.sum[0] += a / m;
         bin.sum[1] += b / m;
         bin.sum[2] += c / m;
@@ -950,11 +970,12 @@ export function findHollowRings(image, B, known = []) {
             break;
         const l = Math.hypot(...bin.sum);
         const u = bin.sum.map(x => x / l);
-        if (![...dirs, ...known].some(w => cos(u, w) > HOLLOW_SAME_DIR))
+        const taken = families.some((f, i) => cos(u, f.dir) > HOLLOW_SAME_DIR && bin.own[i] >= HOLLOW_OWN_SHARE * bin.count);
+        if (!taken && !dirs.some(w => cos(u, w) > HOLLOW_SAME_DIR))
             dirs.push(u);
     }
     const out = [];
-    for (const u of dirs.filter(d => !known.some(w => cos(d, w) > HOLLOW_SAME_DIR))) {
+    for (const u of dirs) {
         const P = new Float32Array(n);
         const unknown = new Uint8Array(n);
         for (let p = 0; p < n; p++) {

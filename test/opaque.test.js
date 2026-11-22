@@ -1039,3 +1039,51 @@ test('regression: landing1, translucent dots over violins of their own hue, ever
     const row = laneRow(LANDING1, px.dots, centers, results, 0);
     assert.ok(row.precision >= 0.85 && row.recall >= 0.95, `precision ${row.precision}, recall ${row.recall}, found ${row.found}`);
 });
+
+test('regression: dots in a tint of another family\'s color are a family, not that family\'s blend with the page', () => {
+    // song-cents: light blue dots, 144, 180, 226, lie 0.69 of the way from the white page to the mid blue's 93, 146,
+    // 205, where an antialiased rim of the mid blue lies too, and the cluster was dismissed as that blend. A rim is
+    // all edge; this cluster is the insides of dots (interior 0.53).
+    const tint = [143, 180, 227];
+    const base = () => {
+        const rng = createRng(5);
+        return {
+            width: 520, height: 400, background: [255, 255, 255], blur: 0.5,
+            families: [{ color: [93, 146, 205], alpha: 1, radius: 9, points: scatterPoints(rng, { n: 40, box: [40, 40, 480, 360] }) }],
+            rng,
+        };
+    };
+    const colors = image => estimateFamilies(image).estimates.map(e => e.style.color.map(Math.round));
+    const near = (c, d) => Math.hypot(c[0] - d[0], c[1] - d[1], c[2] - d[2]) <= 3;
+    const two = base();
+    two.families.push({ color: tint, alpha: 1, radius: 9, points: scatterPoints(two.rng, { n: 25, box: [40, 40, 480, 360] }) });
+    const found = colors(synthGraph(two).image);
+    assert.equal(found.length, 2, JSON.stringify(found));
+    assert.ok(found.some(c => near(c, tint)) && found.some(c => near(c, [93, 146, 205])), JSON.stringify(found));
+    // a band in that tint under the dots has insides too, and is no dots: it stays other ink
+    const banded = base();
+    banded.gridlines = [{ points: [[20, 200], [500, 200]], width: 70, color: tint }];
+    const one = colors(synthGraph(banded).image);
+    assert.ok(!one.some(c => near(c, tint)), JSON.stringify(one));
+    assert.ok(one.some(c => near(c, [93, 146, 205])), JSON.stringify(one));
+});
+
+test('regression: a family whose color is another\'s seen through the text\'s gray is a family: text is no layer', () => {
+    // song-cents: navy dots at 15, 39, 66 are the labels' gray, 88, plus 0.45 of the mid blue's offset from the
+    // page, to 0.3 units, as mid blue dots under a translucent gray band would be. The gray is strokes a few px
+    // wide, nothing a dot lies under.
+    const rng = createRng(9);
+    const spec = {
+        width: 520, height: 400, background: [255, 255, 255], blur: 0.5,
+        families: [
+            { color: [93, 146, 205], alpha: 1, radius: 9, points: scatterPoints(rng, { n: 35, box: [40, 40, 480, 360] }) },
+            { color: [15, 39, 66], alpha: 1, radius: 9, points: scatterPoints(rng, { n: 15, box: [40, 40, 480, 360] }) },
+        ],
+        // strokes in the gray, as text and thin lines have it
+        lines: [60, 120, 180, 240, 300, 350].map(y => ({ points: [[30, y], [490, y + 20]], width: 4, color: [88, 88, 88] })),
+    };
+    const colors = estimateFamilies(synthGraph(spec).image).estimates.map(e => e.style.color.map(Math.round));
+    const near = (c, d) => Math.hypot(c[0] - d[0], c[1] - d[1], c[2] - d[2]) <= 4;
+    assert.ok(colors.some(c => near(c, [15, 39, 66])), JSON.stringify(colors));
+    assert.ok(colors.some(c => near(c, [93, 146, 205])), JSON.stringify(colors));
+});

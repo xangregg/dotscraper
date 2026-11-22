@@ -4,7 +4,7 @@
 // one family on a virtual image of their counts (colormap.js). Dots whose fills vary under a dark outline are fitted
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
-import { colorDistance, sub, unit } from './image.js';
+import { colorDistance, sub } from './image.js';
 import { scanOf, backgroundColor, flatMask, solidRegion } from './scan.js';
 import { measureFamily, alongLine } from './levels.js';
 import { familyRings, siblingRadius, SPECK_RADIUS_RATIO } from './opaque.js';
@@ -220,11 +220,10 @@ function ringEstimate(image, est, others, backgrounds) {
 }
 
 // Hollow-ring families (outline.findHollowRings), fitted by their rings in drawing order as outlined dots are, with
-// nothing inside. `colors`: the found families' colors, whose darkening directions are theirs.
+// nothing inside. `colors`: the found families' colors (fills, outlines, strokes), whose own thin ink is no ring.
 function hollowEstimates(image, background, colors) {
     const B = background.color;
-    const known = colors.map(c => sub(B, c)).filter(d => Math.hypot(...d) > 0).map(d => unit(d));
-    return findHollowRings(image, B, known).map(found => {
+    return findHollowRings(image, B, colors).map(found => {
         const est = outlinedEstimate(image, background, found);
         const { ring, hollow } = found;
         est.style.color = hollow.color;

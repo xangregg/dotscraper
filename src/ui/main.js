@@ -414,6 +414,14 @@ function showProgress(title, stage, fraction) {
     el.hidden = false;
 }
 
+// What a worker's error event says, or, when it says nothing, what that means. A worker whose script can't be
+// fetched fails with a bare event, no message: the fit's worker is started anew for every Find dots, so a page
+// loaded from a server that has stopped since (a local one, restarted) scans and measures colors with the scan
+// worker it has, and then failed with "Find dots failed: undefined".
+function workerFailure(e) {
+    return e.message || 'its worker did not start or stopped without a message. If this page is served from your own computer, check that the server is still running, then reload the page';
+}
+
 // The scan worker (src/scan-worker.js) runs one request at a time; a new request terminates the one running, whose
 // promise then resolves null (a newer image or rescan overtook it). Terminating is the only way to stop a worker
 // mid-computation, and a fresh one starts in milliseconds.
@@ -456,7 +464,7 @@ function runScan(op, args, title) {
         };
         worker.onerror = e => {
             done();
-            reject(new Error(e.message || 'the scan failed'));
+            reject(new Error(workerFailure(e)));
         };
         worker.postMessage({ op, ...args });
     });
@@ -1204,7 +1212,7 @@ function runFit() {
     };
     state.worker.onerror = e => {
         clearInterval(state.tick);
-        setStatus(`Find dots failed: ${e.message}`, 'error');
+        setStatus(`Find dots failed: ${workerFailure(e)}`, 'error');
         state.worker = null;
         renderFitControls();
     };
