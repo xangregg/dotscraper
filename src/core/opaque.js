@@ -34,6 +34,8 @@ import { alongLine, colorLine } from './levels.js';
  * @property {number} dots  dot-shaped centers found at that radius
  * @property {number} strongDots  those seen over DOT_STRONG_ARC of their edge
  * @property {number} coverage  0–1, the share of the family's pixels inside those dots
+ * @property {number} dotsUnder  more centers at that radius: dots partly under other ink (DOT_MIN_SEEN)
+ * @property {number} coverageUnder  0–1, the share of the family's pixels inside the dots, those included
  * @property {number} pixels  pixels of the fill's color (and the outline's within reach)
  * @property {Uint8Array} edgeInk  per pixel, other ink read as the dots' background: 1 + its index in inkColors
  * @property {number[][]} inkColors  0–255
@@ -120,6 +122,10 @@ const BLEND_INK_MIN_INTERIOR = 0.05; // share of the cluster's pixels
 const BLEND_DOT_MIN_INTERIOR = 0.3;
 const DOT_FILL_RADII = 0.75; // × r: the disc that must be filled around a Hough center …
 const DOT_MIN_FILL = 0.85; // … to this fraction
+// A dot partly under other ink (another family's dot over it): the part of that disc the other ink doesn't hold is
+// filled to DOT_MIN_FILL, and DOT_MIN_SEEN of the whole disc is the family's fill. Such centers count only for a
+// color at a found family's radius (siblingFills).
+const DOT_MIN_SEEN = 0.5;
 // distance-transform peaks underestimate the radius where dots touch or overlap; the upper quartile of the peaks,
 // plus the half pixel the transform loses between pixel centers, matched synthetic swarms within a few tenths
 const DT_RADIUS_QUANTILE = 0.75;
@@ -773,6 +779,8 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
     let dots = 0;
     let strongDots = 0;
     let coverage = 0;
+    let dotsUnder = 0;
+    let coverageUnder = 0;
     let found = [];
     if (radiusPlausible(radius, isolated.length)) {
         const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
@@ -787,10 +795,13 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
         // (phase1: gray 136's curves, 13 px wide beside fills of 17, held most of its pixels; coverage 0.29 → 0.63)
         const ofFamily = stroke ? fillW : byFill ? (outline ? opening(own, width, height, THICK_FILL_RADII * byFill.fillRadius) : own) : D;
         coverage = shareInDiscs(ofFamily, at.centers, radius, width, height);
+        dotsUnder = at.under.length;
+        coverageUnder = dotsUnder ? shareInDiscs(ofFamily, [...at.centers, ...at.under], radius, width, height) : coverage;
     }
     const pixels = mask.reduce((t, v) => t + v, 0);
     return {
         kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
+        dotsUnder, coverageUnder,
         edgeInk, inkColors: ground.others, centers: found,
         ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
         ...(paged ? { pageFill: true, fitColor, fillCenters: paged.centers } : {}),
@@ -1119,7 +1130,9 @@ function opaqueRadius(ground, cover, tol, given) {
  * The centers that pass the dot test at the family's radius, and that radius, which a scan of larger radii may
  * raise when it came from the distance transform. O(pixels · radii tried) (houghCenters).
  *
- * @returns {{centers: {x: number, y: number, arc: number}[], radius: number}}  px
+ * @returns {{centers: {x: number, y: number, arc: number}[], radius: number,
+ *            under: {x: number, y: number, arc: number}[]}}  px; under: the centers of dots partly under other ink,
+ *   which aren't among `centers`
  */
 function dotCenters(scan, ground, cover, shape, fillRadius) {
     const { outline, stroke, own, B } = ground;
@@ -1136,9 +1149,11 @@ function dotCenters(scan, ground, cover, shape, fillRadius) {
     // so D was full there, and every glyph was a dot); a stroked family's inner disc must be its fill
     const rfOf = r => DOT_FILL_RADII * (byFill?.fillRadius ?? (stroke ? fillRadius ?? r * DOT_FILL_RADII : r));
     const inside = stroke ? fillW : own;
-    const filled = (c, rf) => {
+    // the pixels of the disc of radius rf at a center: all of them, the fill's, and those of other ink (unread)
+    const disc = (c, rf) => {
         let count = 0;
         let on = 0;
+        let other = 0;
         for (let y = Math.max(0, Math.floor(c.y - rf)); y < Math.min(height, Math.ceil(c.y + rf)); y++) {
             for (let x = Math.max(0, Math.floor(c.x - rf)); x < Math.min(width, Math.ceil(c.x + rf)); x++) {
                 if ((x + 0.5 - c.x) ** 2 + (y + 0.5 - c.y) ** 2 > rf * rf)
@@ -1146,9 +1161,20 @@ function dotCenters(scan, ground, cover, shape, fillRadius) {
                 count++;
                 if (inside[y * width + x] > 0.5)
                     on++;
+                else if (Number.isNaN(D[y * width + x]))
+                    other++;
             }
         }
+        return { count, on, other };
+    };
+    const filled = (c, rf) => {
+        const { count, on } = disc(c, rf);
         return count > 0 && on >= DOT_MIN_FILL * count;
+    };
+    // … and one partly under other ink, which the test above leaves out
+    const partlyFilled = (c, rf) => {
+        const { count, on, other } = disc(c, rf);
+        return other > 0 && on < DOT_MIN_FILL * count && on >= DOT_MIN_FILL * (count - other) && on >= DOT_MIN_SEEN * count;
     };
     // (the gradient is the radius's alone, and by fill the centers are too)
     let grad = null;
@@ -1161,7 +1187,12 @@ function dotCenters(scan, ground, cover, shape, fillRadius) {
         grad ??= houghGradient(D, weight, width, height);
         return houghCenters(D, weight, width, height, r, grad);
     };
-    const centersAt = r => houghAt(r).filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
+    // (the last radius's centers are kept for the dots partly under other ink at the radius chosen)
+    let last = null;
+    const centersAt = r => {
+        last = { r, all: houghAt(r) };
+        return last.all.filter(c => c.arc >= DOT_MIN_ARC && filled(c, rfOf(r)));
+    };
     const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
     let centers = centersAt(radius);
     // The distance transform underestimates the radius where dots touch; packed past the dot test, larger radii
@@ -1182,12 +1213,14 @@ function dotCenters(scan, ground, cover, shape, fillRadius) {
         // a line in the dots' color sets the transform's radius to its half width (kite1: cyan 3.5 px, the dots
         // 12.3): then the scan runs again around each of the pieces' radii (componentRadii), keeping the one with
         // the most strong centers (kite1: 4 at 11.5, 3 at 12, none below 11 or above 12.5)
+        // (around each, the radii the first scan did not reach: a piece's scan was left out whenever it began
+        // within the first one's, and whole dots at 10 px among the crescents of dots cut by a stroke, which set the
+        // transform's radius to 4.97, were never tried: the first scan ended at 7.95, theirs began at 7.88)
         if (most < DOT_MIN_STRONG) {
+            const reached = RADIUS_SCAN_MAX * radius;
             for (const r1 of componentRadii(D, width, height)) {
-                if ((1 - COMPONENT_SCAN) * r1 <= RADIUS_SCAN_MAX * radius)
-                    continue;
                 const around = [];
-                for (let r = (1 - COMPONENT_SCAN) * r1; r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
+                for (let r = Math.max((1 - COMPONENT_SCAN) * r1, reached + RADIUS_SCAN_STEP); r <= (1 + COMPONENT_SCAN) * r1; r += RADIUS_SCAN_STEP) {
                     const cs = centersAt(r);
                     around.push({ r, cs, n: strong(cs) });
                 }
@@ -1201,7 +1234,8 @@ function dotCenters(scan, ground, cover, shape, fillRadius) {
             radius = pick.r;
         }
     }
-    return { centers, radius };
+    const all = last.r === radius ? last.all : houghAt(radius);
+    return { centers, radius, under: all.filter(c => c.arc >= DOT_MIN_ARC && partlyFilled(c, rfOf(radius))) };
 }
 
 // the share of a plane's pixels (> 0.5) that lie inside the discs of the given radius at the centers
@@ -1868,12 +1902,14 @@ function outlineRings(families) {
 }
 
 // Plain fills at a found family's radius (the sibling with strong arcs may come later in the clusters); each needs
-// its own centers, filled and seen over half their edge.
+// its own centers, filled and seen over half their edge. Here the dots partly under other ink count too: a family
+// drawn first can have nearly every dot under another's (14 orange dots, 12 of them a third under blue ones: 2
+// centers, coverage 0.21, and no family).
 function siblingFills(search) {
     const { out } = search;
     const sibling = f => f.radius && out.some(g => !g.pageFill && Math.abs(f.radius - g.radius) <= SIBLING_RADIUS_TOL * g.radius) && !throughLayer(search, f.seed);
     for (const f of search.rejected) {
-        if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE)
+        if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots + f.dotsUnder >= DOT_MIN_STRONG && f.coverageUnder >= DOT_MIN_COVERAGE)
             out.push(f);
     }
 }

@@ -3687,10 +3687,59 @@ on a line between dots; a part of song-cents against its truth (66 of 72, 57 wit
 condition, each fail a test.
 
 Not done, and known:
-- The scan did not find a family in two synthetic scenes made for these tests: orange dots with none on top, in
+- The scan did not find a family in two synthetic scenes made for these tests: orange dots with none alone, in
   stroked piles (found when the same piles had no strokes), and orange dots nearly all cut by blue ones, without
-  strokes. song-cents has whole dots of every fill. Not looked into.
+  strokes. song-cents has whole dots of every fill. Looked into in the next entry.
 - Translucent dots with a white edge (score1's teal, α 0.72: 38 gaps, 0.95 of one width when read as if opaque;
   wages2025's rims) are not read, and their fits are unchanged.
 - The stroke is not drawn by the model: the Model and Residual views show the dots without it, the arcs masked.
 - Fewer than 40 gaps (one or two overlapping pairs in an image) are no stroke, and those cut dots stay missed.
+
+**The scan and a family with no dot alone: two causes** (2026-11-22)
+
+The two synthetic scenes of the last entry, in which the scan found the blue family and not the orange. They fail
+for different reasons, and neither is about strokes as such.
+
+1. **Stroked piles, every dot alone blue.** The orange has whole dots (those on top of their piles) and none
+   isolated: each has blue ink within the margin an isolated dot must have clear. Its radius then comes from the
+   depths of its pieces, and most pieces are crescents under the strokes of the dots over them: 4.97 px for 10. The
+   scan of larger radii by Hough runs to 1.6 times that, 7.95, and finds no center. The scan around the radii of the
+   pieces themselves (componentRadii: 10.5, the whole dots) was left out, because a piece's scan was skipped
+   whenever it began within the first one's range, and 0.75 × 10.5 = 7.88. Fixed in `dotCenters`: around each
+   piece's radius, the radii the first scan did not reach are tried. Orange: r 10.96 from the scan, 10.67 by the
+   fit, 29 of its 30 dots found.
+2. **A family drawn first, nearly every dot partly under another's** (no strokes: 14 orange dots, 12 of them a third
+   under a blue one 10.8 px away, 2 alone). The radius is right (10.0, from the two alone). The dot test asks that
+   the disc of 0.75 r at a center be the family's own fill to 0.85 (a round glyph is hollow), and a third of each
+   such disc is blue: 2 centers, coverage 0.21, no family. Now `measureOpaque` also counts the centers of dots
+   partly under other ink (`dotsUnder`, `coverageUnder`): half the edge seen as before, what the other ink doesn't
+   hold of the disc filled to 0.85, and half the whole disc the family's own (`DOT_MIN_SEEN`). They count in one
+   place, `siblingFills`: a color that failed the dot test, at a found family's radius. Orange: 12 such centers,
+   coverage 1.00 with them, a family; 14 of 14 found, and the 27 blue.
+
+Tried first for (2): letting such centers pass the dot test everywhere. It moved bench1/ellipse (100 dots found
+either way; 2 flagged → 15): the dots' color over the page and over the ellipse are two opaque candidates of 56
+centers each in the first scan, the one listed first decides which background is the region under the dots, and
+with 16 more centers for the dots that straddle the ellipse's edge the order turned over (the region the ellipse,
+1 level measured for 2, 15 dots flagged deep). Hence only at a found family's radius, where nothing found before
+changes. That tie on ellipse is fragile in itself; not touched.
+
+Also seen: the scenes as test/stroke.test.js draws them (4 × 4 samples a pixel) have edge pixels at exactly half
+coverage, and the measure's ink is coverage over 0.5: measuring the orange at 223, 105, 59 and at the cluster's
+mean, 0.4 units off, gave radii 11.26 and 4.97. An artifact of that drawing, not of real renderings; the new tests
+draw with render.js.
+
+Results: the three scenes find both families and their dots (stroked piles 29 of 30 orange and 27 of 30 blue; the
+same piles without strokes 30 and 27; cut orange 14 of 14 and 27 of 27). The dot benchmark: all 172 rows identical
+apart from times, so RESULTS.md stands. In the app song-cents gives 323 dots as before.
+
+Tests (test/opaque.test.js, 2 new): the cut family (its counts with and without the dots under other ink, both
+families' dots, and no family from dots with under half their disc showing, nor more centers from dots with a
+bite of the page out of them, with or without a line of other ink through the rest); the stroked piles (the
+family, its radius within 1.2 px before the fit and 0.8 after, at least 28 of 30 dots). 7 mutations, one per condition,
+each fail one.
+
+Not done, and known:
+- The radius of a family with no isolated dot comes out high by up to a pixel from the scan (10.96 for 10), and
+  the fit's refit leaves 0.3 to 0.7.
+- A family with fewer than three dots at least half in view, or one at no found family's radius, is still none.

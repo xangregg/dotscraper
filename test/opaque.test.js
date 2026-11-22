@@ -1087,3 +1087,112 @@ test('regression: a family whose color is another\'s seen through the text\'s gr
     assert.ok(colors.some(c => near(c, [15, 39, 66])), JSON.stringify(colors));
     assert.ok(colors.some(c => near(c, [93, 146, 205])), JSON.stringify(colors));
 });
+
+const BLUE = [58, 111, 165];
+const ORANGE = [223, 105, 59];
+
+// Opaque dots of 10 px drawn in order on a white page, each over a disc of the page's color `stroke` px larger when
+// they have a stroke.
+function drawnInOrder(width, height, dots, stroke = 0) {
+    let image = solidImage(width, height, [255, 255, 255]);
+    for (const d of dots) {
+        if (stroke) {
+            const ring = createDotModel(image, { color: [255, 255, 255], alpha: 1, radius: 10 + stroke });
+            ring.addAll([d]);
+            image = ring.image;
+        }
+        const fill = createDotModel(image, { color: d.color, alpha: 1, radius: 10 });
+        fill.addAll([d]);
+        image = fill.image;
+    }
+    return toRgba(image);
+}
+
+const familyOf = (list, color) => list.find(f => Math.hypot(...(f.seed ?? f.est.style.color).map((v, ch) => v - color[ch])) < 20);
+
+test('regression: a family drawn first, nearly every dot partly under another family\'s, is a family at that one\'s radius', () => {
+    // 14 orange dots, 12 of them a third under a blue one 10.8 px away, and blue dots alone
+    const scene = (dx, dy) => {
+        const dots = [];
+        for (let i = 0; i < 12; i++) {
+            const x = 70 + 110 * (i % 4);
+            const y = 60 + 90 * Math.floor(i / 4);
+            dots.push({ x, y, color: ORANGE }, { x: x + dx, y: y + dy, color: BLUE });
+        }
+        for (let i = 0; i < 5; i++)
+            dots.push({ x: 40 + 90 * i, y: 330, color: [BLUE, ORANGE][i % 2] });
+        return dots;
+    };
+    const dots = scene(10, 4);
+    const image = drawnInOrder(520, 370, dots);
+    // by the dot test the orange has the two dots alone, a fifth of its pixels in them: a center's disc must be the
+    // family's own fill, and a third of each other one is blue. They are dots partly under other ink.
+    const orange = measureOpaque(scanOf(image), ORANGE);
+    assert.equal(orange.dots, 2);
+    assert.ok(orange.coverage < 0.3, `coverage ${orange.coverage}`);
+    assert.equal(orange.dotsUnder, 12);
+    assert.ok(orange.coverageUnder > 0.9, `coverage with them ${orange.coverageUnder}`);
+    // … which count for a color at a found family's radius
+    const found = familyOf(estimateStyle(image).candidates, ORANGE);
+    assert.ok(found, 'the orange is a family');
+    near(found.radius, 10, 0.3, 'radius');
+    const results = extractAll(image);
+    for (const [color, what] of [[ORANGE, 'orange'], [BLUE, 'blue']]) {
+        const truth = dots.filter(d => d.color === color);
+        const r = familyOf(results, color);
+        assert.equal(matchDots(truth, r.fit.dots, 5).pairs.length, truth.length, `${what}: ${r.fit.dots.length} found for ${truth.length}`);
+        assert.equal(r.fit.dots.length, truth.length, what);
+    }
+    // too little of a dot is none: 8 px from the blue dot over it, most of its edge shows and under half its disc
+    const slivers = drawnInOrder(520, 370, scene(8, 0));
+    assert.equal(measureOpaque(scanOf(slivers), ORANGE).dotsUnder, 0);
+    assert.equal(familyOf(estimateStyle(slivers).candidates, ORANGE), undefined);
+    // nor is a dot with a bite of the page out of it one partly under other ink: the page is no ink, and with a
+    // line of other ink through what is left, what the line doesn't hold is still not filled
+    for (const line of [false, true]) {
+        const bitten = [...dots];
+        for (let i = 0; i < 4; i++)
+            bitten.push({ x: 60 + 110 * i, y: 290, color: ORANGE }, { x: 72 + 110 * i, y: 290, color: [255, 255, 255] });
+        const bites = drawnInOrder(520, 370, bitten);
+        for (let i = 0; line && i < 4; i++) {
+            for (let y = 276; y < 304; y++) {
+                for (let x = 55 + 110 * i; x < 57 + 110 * i; x++)
+                    bites.data.set([...BLUE, 255], 4 * (y * 520 + x));
+            }
+        }
+        assert.equal(measureOpaque(scanOf(bites), ORANGE).dotsUnder, 12, `with bitten dots${line ? ' and lines' : ''}`);
+    }
+});
+
+test('regression: stroked dots of a color with none alone: the whole dots among the cut ones give its radius', () => {
+    // piles of one to four dots with white strokes, 11 px from one to the next, the colors by turns: every dot alone
+    // is blue, and most of the orange's pieces are crescents 5 px deep under the strokes of the dots over them. The
+    // radius from the pieces' depths was 4.97, the scan of larger radii ended at 7.95, and the scan around the whole
+    // dots' 10.5 was left out because it began at 7.88, within the first.
+    const rng = createRng(5);
+    const dots = [];
+    let k = 0;
+    for (let gy = 0; gy < 4; gy++) {
+        for (let gx = 0; gx < 6; gx++) {
+            const size = 1 + (gx + 2 * gy) % 4;
+            let x = 50 + 75 * gx + 6 * rng.uniform();
+            let y = 50 + 75 * gy + 6 * rng.uniform();
+            for (let i = 0; i < size; i++) {
+                dots.push({ x, y, color: [BLUE, ORANGE][k++ % 2] });
+                const a = 2 * Math.PI * rng.uniform();
+                x += 11 * Math.cos(a);
+                y += 11 * Math.sin(a);
+            }
+        }
+    }
+    const image = drawnInOrder(520, 370, dots, 2.5);
+    const found = familyOf(estimateStyle(image).candidates, ORANGE);
+    assert.ok(found, 'the orange is a family');
+    assert.equal(found.isolated.length, 0);
+    near(found.radius, 10, 1.2, 'radius, before the fit refits it');
+    const truth = dots.filter(d => d.color === ORANGE);
+    const r = familyOf(extractAll(image), ORANGE);
+    const hit = matchDots(truth, r.fit.dots, 5).pairs.length;
+    assert.ok(hit >= truth.length - 2, `${hit} of ${truth.length} orange dots, ${r.fit.dots.length} found`);
+    near(r.fit.radius, 10, 0.8, 'radius by the fit');
+});
