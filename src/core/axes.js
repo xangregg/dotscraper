@@ -95,7 +95,11 @@ const OTHER_SIDE_MAX_WIDTH = 1.5; // × the tick spacing
 // an end of the other axis's line within AXIS_CORNER_TOL px (beyond the two lines' half thicknesses), with at least
 // CATEGORY_MIN_LABELS words in a row beside it: one word under a line is an axis title.
 const AXIS_CORNER_TOL = 3; // px
+const END_LINE_MIN_OVERLAP = 0.8; // of a line's length: another at the plot's end runs beside it this far
 const CATEGORY_MIN_LABELS = 2;
+// A frame is one color, and its sides' means can fall either side of DARK_LUMINANCE (biomarker's gray frame: 175 at the
+// left, the y axis, and 181 at the bottom): a line this near the other axis's luminance is as dark as it.
+const FRAME_LUMINANCE_TOL = 16; // 0–255
 const BACKGROUND_MIN_FRACTION = 0.05; // any flat color covering this share of the image is a background (panels)
 // A panel is a rectangle filled with a background color that is not the page's (ggplot2's default theme: gray, with
 // white gridlines and no axis lines; the tick marks leave its edges). Its first and last rows and columns are of
@@ -690,8 +694,8 @@ function inkBetween(image, backgrounds, b, h, side, edge) {
 
 /**
  * An axis whose labels alone mark its positions, with no tick marks: a category axis (bench3: "1" and "2" under the
- * two swarms; cells1: the bars' names under their baseline). It is a dark line meeting an end of the other axis's
- * line, the plot's corner, and the words in the row nearest it on the side away from the plot, between the other
+ * two swarms; cells1: the bars' names under their baseline). It is a dark line (or one as dark as the other axis's:
+ * a frame's side) meeting an end of the other axis's line, the plot's corner, and the words in the row nearest it on the side away from the plot, between the other
  * axis and the line's far end; each word's center is a position. Words farther out are the axis's title. Null
  * without such a line or with fewer than CATEGORY_MIN_LABELS words.
  *
@@ -707,7 +711,9 @@ function inkBetween(image, backgrounds, b, h, side, edge) {
  */
 function labelAxis(image, backgrounds, lines, dir, other) {
     const h = dir === 'h';
-    for (const line of lines.filter(l => l.dir === dir && l.dark)) {
+    // (a line standing in for the other axis, where its gridlines end, is as light as they are: no frame's side)
+    const asDark = l => l.dark || (!other.edge && l.luminance <= other.luminance + FRAME_LUMINANCE_TOL);
+    for (const line of lines.filter(l => l.dir === dir && asDark(l))) {
         const corner = Math.abs(other.from - line.pos) <= Math.abs(other.to - line.pos) ? other.from : other.to;
         const tol = AXIS_CORNER_TOL + (line.thickness + other.thickness) / 2;
         if (Math.abs(corner - line.pos) > tol || other.pos < line.from - tol || other.pos > line.to + tol)
@@ -933,11 +939,28 @@ export function detectAxes(image) {
             && median(ticks.map(t => t.labelPath)) <= LABEL_PATH_MAX_INK;
     };
     const edges = panelEdges(image, backgrounds);
-    // the line with the most ticks, of those given, that has labeled ticks as an axis has them
-    const among = (dir, given) => {
+    // A line through the middle of the plot (the other axis has labeled ticks on both sides of it), when another line
+    // of its direction lies at an end of the other axis, is a reference line, and that other one the plot's edge.
+    // Biomarker: the zero line of two beeswarms in a frame; the dots on it are strokes off it as ticks are, 10 of them,
+    // with the dots above them for labels, and the plot above it was taken for the axis's side and masked. Axes that
+    // cross in the middle of a plot with nothing at its edges stay axes.
+    const reference = (line, other) => {
+        const labeled = other?.line ? other.ticks.filter(t => t.label) : [];
+        const reach = line.thickness / 2 + AXIS_CORNER_TOL;
+        if (!labeled.some(t => t.pos < line.pos - reach) || !labeled.some(t => t.pos > line.pos + reach))
+            return false;
+        return lines.some(l => l !== line && l.dir === line.dir
+            && Math.min(Math.abs(l.pos - other.line.from), Math.abs(l.pos - other.line.to)) <= l.thickness / 2 + AXIS_CORNER_TOL
+            && Math.min(l.to, line.to) - Math.max(l.from, line.from) >= END_LINE_MIN_OVERLAP * (line.to - line.from));
+    };
+    // the line with the most ticks, of those given, that has labeled ticks as an axis has them (and isn't a
+    // reference line across the other axis's plot)
+    const among = (dir, given, other) => {
         const candidates = given.filter(l => l.dir === dir).map(line => ({ line, ticks: findTicks(image, ink, line, lines) }));
         candidates.sort((a, b) => (b.ticks.length - a.ticks.length) || (dir === 'h' ? b.line.pos - a.line.pos : a.line.pos - b.line.pos));
         for (const c of candidates) {
+            if (reference(c.line, other))
+                continue;
             findLabels(image, backgrounds, c.line, c.ticks);
             const labeled = c.ticks.filter(t => t.label);
             if (labeled.length >= AXIS_MIN_LABELED_TICKS && axisLike(labeled))
@@ -945,8 +968,8 @@ export function detectAxes(image) {
         }
         return null;
     };
-    const pick = dir => {
-        let best = among(dir, lines.filter(l => l.dark)) ?? among(dir, edges);
+    const pick = (dir, other = null) => {
+        let best = among(dir, lines.filter(l => l.dark), other) ?? among(dir, edges, other);
         if (!best) {
             // gridlines perpendicular to this axis give its tick positions
             const other = dir === 'h' ? 'v' : 'h';
@@ -984,8 +1007,12 @@ export function detectAxes(image) {
         const regular = gaps.length > 0 && gaps.every(g => Math.abs(g - spacing) <= Math.max(1, 0.03 * spacing));
         return { ...axis, spacing, regular };
     };
-    let x = pick('h');
+    // (each against the other: the y axis as first found tells the x axis from a reference line, and that x axis
+    // the y axis)
     let y = pick('v');
+    let x = pick('h', y);
+    if (x?.line)
+        y = pick('v', x);
     // an axis with no tick marks and none standing in: its labels, under the last gridline of a y axis of gridlines
     // that have their labels off their ends (gridEndLine; a slanted light curve is "gridlines" too, a pixel or two
     // apart, with no labels, and the dots under it are no x axis), or at the plot's corner with the other axis

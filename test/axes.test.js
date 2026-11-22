@@ -777,3 +777,44 @@ test('regression: song-cents, seven gridlines under 325 dots, labels off their e
     assert.equal(bounds.left, 143);
     near(bounds.bottom, 905.4, 0.1, 'bottom');
 });
+
+// categoryPlot with black dots and a black zero line across it at one of the y axis's ticks, from the tick's outer
+// end to the plot's right; in each column a dot rests on the line (a chord of it 5 px wide, as a tick is) with
+// another above it, as beeswarms stand on a reference line
+function zeroLinePlot() {
+    const spec = categoryPlot();
+    spec.families[0].color = [0, 0, 0];
+    spec.families[0].points = spec.families[0].points.filter(p => Math.abs(p.y - 170) > 14);
+    const { image } = synthGraph(spec);
+    for (let y = 169; y < 171; y++) {
+        for (let x = 53; x < 405; x++)
+            image.data.set([0, 0, 0, 255], 4 * (y * image.width + x));
+    }
+    for (const x of spec.axes.x.ticks) {
+        disc(image, x, 164.8, 5, [0, 0, 0]);
+        disc(image, x, 149, 5, [0, 0, 0]);
+    }
+    return { spec, image };
+}
+
+test('regression: a zero line across the plot, with dots standing on it, is no axis when the plot has a line at its end (biomarker)', () => {
+    // before: the dots on the line were its ticks and the dots above them the ticks' labels, so the zero line was the
+    // x axis, the plot above it the labels' side, and every dot there was masked (biomarker: recall 0.47)
+    const { spec, image } = zeroLinePlot();
+    const ax = detectAxes(image);
+    near(ax.x.line.pos, 290.5, 0.5, 'the x axis line');
+    assert.deepEqual(ax.x.ticks.map(t => t.source), ['label', 'label']);
+    ax.x.ticks.forEach((t, i) => near(t.pos, spec.axes.x.ticks[i], 1, `position ${i}`));
+    assert.equal(ax.y.ticks.filter(t => t.label).length, 5);
+    assert.deepEqual(plotBounds(ax), { left: ax.y.line.pos, right: null, top: null, bottom: ax.x.line.pos });
+});
+
+test('an x axis across the middle of the y axis, with nothing at the y axis\'s ends, stays the x axis', () => {
+    const spec = plot();
+    spec.axes.x = { ...spec.axes.x, pos: 170.5 };
+    spec.axes.y = { ...spec.axes.y, ticks: [270, 220, 120, 70] };
+    const ax = detectAxes(synthGraph(spec).image);
+    near(ax.x.line.pos, 170.5, 0.2, 'x axis');
+    assert.equal(ax.x.ticks.length, 6);
+    assert.ok(ax.x.ticks.every(t => t.source === 'tick' && t.label));
+});
