@@ -25,6 +25,25 @@ const DARK_LUMINANCE = 180; // 0–255
 const AXIS_MIN_LABELED_TICKS = 2;
 const LINE_MIN_FRACTION = 0.3; // a line's longest run spans at least this fraction of the image
 const LINE_GAP = 3; // px: gaps up to this long don't break a run (antialiasing, dots over gridlines)
+// A gridline lies under the dots, and enough of them leave no run of LINE_MIN_FRACTION (song-cents: seven gridlines,
+// the longest runs of two of them 0.15 and 0.25 of the width under 325 dots). Its light ink is still most of the
+// row's: pieces of BROKEN_MIN_SEGMENT of the image or more that add up to LINE_MIN_FRACTION of it and fill
+// BROKEN_MIN_COVER of the span from the first to the last (those rows: 0.67–0.92 of the width in light ink, and no
+// other row of the image 0.2). Text is strokes a few px across; an axis line is dark, and found by its run.
+const BROKEN_MIN_SEGMENT = 0.02; // of the image dimension along the line
+const BROKEN_MIN_COVER = 0.5;
+// … and a piece is flat: the light ink through BROKEN_MIN_FLAT of its pixels, across the line, starts and ends at
+// one distance from them (to a pixel), no farther than a line is thick. A row through a swarm of light gray dots is
+// pieces too, chords of the dots, whose ink across is as much as the dot is tall there (nicest language: three such
+// "lines" through its gray dots, and a y axis of them); so is a row of a gray band with names on it, as thick as
+// the band (beeswarm-boxplot: three more "lines" in its band). The pieces of one line have the same edges.
+const BROKEN_MIN_FLAT = 0.8;
+// The line runs from its first flat piece to its last, shorter ones too if they are this long and as thick as the
+// long ones, edge for edge: a dot near a line's end leaves a stub beyond it (song-cents: 21 px of the 10 line before
+// its first dot, which read as the line's label). The edge of a label's stroke is flat too, and no thicker than
+// itself (grader1: a column of a "3" below its gridline's end).
+const BROKEN_MIN_END = 8; // px
+const DARK_EDGE_REACH = 2; // px: rows this near a dark line's run are its antialiased edge, not a light line
 const LINE_MAX_THICKNESS_FRACTION = 0.02; // of the smaller image dimension …
 const LINE_MIN_MAX_THICKNESS = 4; // … but at least this many px
 const BAND_EXTENT_TOL = 0.1; // rows of one band have runs agreeing in start and end within this fraction of length
@@ -99,8 +118,9 @@ const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of
  * @property {number} to         px, end along the line
  * @property {number} luminance  0–255, mean over the line
  * @property {boolean} dark
- * @property {boolean} [edge]    a panel's edge standing in for an axis line (panelEdges): no ink of its own,
- *   thickness 0, `pos` the boundary between the panel's last row or column and the page's first
+ * @property {boolean} [edge]    a panel's edge standing in for an axis line (panelEdges), or the line through the ends
+ *   of an axis's gridlines (gridEndLine): no ink of its own, thickness 0, `pos` the boundary between the panel's last
+ *   row or column and the page's first, or where the gridlines end
  */
 
 /**
@@ -266,8 +286,80 @@ function longestRun(ink, n, at) {
     return best;
 }
 
+// The span [start, end) of a light line in pieces along one row or column (BROKEN_MIN_SEGMENT, BROKEN_MIN_COVER), or
+// null. A piece is a run of light ink with gaps up to LINE_GAP of anything, flat across (BROKEN_MIN_FLAT). `beside(j,
+// d)` is the index of the pixel d rows or columns to the side of position j, or -1 beyond the image; `maxThick` the
+// thickest a line may be, px.
+function brokenLine(ink, n, at, beside, maxThick) {
+    // how far the light ink runs to one side of position j, up to one more than a line's thickness
+    const reach = (j, step) => {
+        let d = 0;
+        while (d <= maxThick) {
+            const p = beside(j, step * (d + 1));
+            if (p < 0 || ink[p] !== 1)
+                break;
+            d++;
+        }
+        return d;
+    };
+    const flat = (a, b) => {
+        const sides = [];
+        for (let j = a; j < b; j++) {
+            if (ink[at(j)] === 1)
+                sides.push([reach(j, -1), reach(j, 1)]);
+        }
+        // the commonest pair is the line's two edges
+        const counts = new Map();
+        for (const [u, d] of sides)
+            counts.set(u * 1000 + d, (counts.get(u * 1000 + d) ?? 0) + 1);
+        const mode = [...counts].sort((p, q) => q[1] - p[1])[0][0];
+        const [mu, md] = [Math.floor(mode / 1000), mode % 1000];
+        if (mu + md + 1 > maxThick)
+            return null;
+        return sides.filter(([u, d]) => Math.abs(u - mu) <= 1 && Math.abs(d - md) <= 1).length >= BROKEN_MIN_FLAT * sides.length ? mode : null;
+    };
+    // (cheap first: the light ink there is at all)
+    let light = 0;
+    for (let j = 0; j < n; j++)
+        light += ink[at(j)] === 1 ? 1 : 0;
+    if (light < LINE_MIN_FRACTION * n)
+        return null;
+    const least = BROKEN_MIN_SEGMENT * n;
+    // the flat pieces: where each starts and ends, and its edges
+    const flats = [];
+    let start = -1;
+    let last = -1;
+    for (let j = 0; j <= n; j++) {
+        if (j < n && ink[at(j)] === 1) {
+            if (start < 0)
+                start = j;
+            last = j;
+        }
+        else if (start >= 0 && (j === n || j - last > LINE_GAP)) {
+            const sides = last + 1 - start >= Math.min(least, BROKEN_MIN_END) ? flat(start, last + 1) : null;
+            if (sides !== null)
+                flats.push({ start, end: last + 1, sides });
+            start = -1;
+        }
+    }
+    // the line's edges are those most of the long pieces' length has; the pieces with other edges are other ink
+    const lengths = new Map();
+    for (const f of flats.filter(f => f.end - f.start >= least))
+        lengths.set(f.sides, (lengths.get(f.sides) ?? 0) + f.end - f.start);
+    if (!lengths.size)
+        return null;
+    const edges = [...lengths].sort((p, q) => q[1] - p[1])[0][0];
+    const own = flats.filter(f => f.sides === edges);
+    const long = own.filter(f => f.end - f.start >= least);
+    const total = long.reduce((sum, f) => sum + f.end - f.start, 0);
+    if (total < LINE_MIN_FRACTION * n || total < BROKEN_MIN_COVER * (long[long.length - 1].end - long[0].start))
+        return null;
+    return [own[0].start, own[own.length - 1].end];
+}
+
 /**
- * Long thin straight gray lines, horizontal and vertical.
+ * Long thin straight gray lines, horizontal and vertical. A line is a long run of gray ink in its row or column, or,
+ * for a light one under other marks, pieces that fill most of their span (brokenLine).
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {Uint8Array} ink  from grayInk
@@ -285,6 +377,28 @@ export function findLines(image, ink) {
         for (let i = 0; i < across; i++) {
             const run = longestRun(ink, along, j => idx(i, j));
             runs.push(run && run[1] - run[0] >= LINE_MIN_FRACTION * along ? run : null);
+        }
+        // a light line in pieces, where no dark line's run is within its antialiased edge of the row (a dark line's
+        // edge is light ink too, and its run is the line's)
+        const darkRun = runs.map((run, i) => {
+            if (!run)
+                return false;
+            let dark = 0;
+            for (let j = run[0]; j < run[1]; j++)
+                dark += ink[idx(i, j)] === 2 ? 1 : 0;
+            return dark >= (run[1] - run[0]) / 2;
+        });
+        const pieces = runs.map((run, i) => {
+            for (let k = Math.max(0, i - DARK_EDGE_REACH); k <= Math.min(across - 1, i + DARK_EDGE_REACH); k++) {
+                if (darkRun[k])
+                    return null;
+            }
+            return brokenLine(ink, along, j => idx(i, j), (j, d) => (i + d < 0 || i + d >= across ? -1 : idx(i + d, j)), maxThick);
+        });
+        for (let i = 0; i < across; i++) {
+            const span = pieces[i];
+            if (span && (!runs[i] || span[1] - span[0] > runs[i][1] - runs[i][0]))
+                runs[i] = span;
         }
         // bands of consecutive qualifying rows whose runs agree
         let i = 0;
@@ -628,6 +742,63 @@ function labelAxis(image, backgrounds, lines, dir, other) {
     return null;
 }
 
+/**
+ * An axis of labels alone under the last gridline of the other axis: where the axes are gridlines with their labels
+ * and no lines (song-cents: years in a row under the zero line, no tick marks and no vertical gridlines), the row of
+ * words nearest below that gridline, each centered within its extent, gives the positions, as labelAxis takes them
+ * at an axis line. Null with fewer than CATEGORY_MIN_LABELS words.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[][]} backgrounds
+ * @param {Line} line  the gridline (horizontal)
+ * @returns {{line: Line, ticks: Tick[]}|null}
+ */
+function labelsUnder(image, backgrounds, line) {
+    const reach = LABEL_SEARCH_FRACTION.h * image.height;
+    const edge = line.pos + line.thickness / 2 + 1;
+    const c0 = Math.floor(edge);
+    const c1 = Math.min(image.height, Math.ceil(edge + reach));
+    if (c1 <= c0)
+        return null;
+    const middle = b => (b[0] + b[2]) / 2;
+    const words = mergeWords(inkComponents(image, backgrounds, [0, c0, image.width, c1]).map(c => c.box))
+        .filter(b => middle(b) >= line.from - LABEL_BEYOND_TOL && middle(b) <= line.to + LABEL_BEYOND_TOL);
+    if (words.length < CATEGORY_MIN_LABELS)
+        return null;
+    const minGap = Math.min(...words.map(b => wordGap(b, true, 'after', edge)));
+    const tolGap = Math.max(LABEL_COLUMN_MIN_TOL, 0.5 * median(words.map(b => b[3] - b[1])));
+    const row = words.filter(b => wordGap(b, true, 'after', edge) <= minGap + tolGap);
+    if (row.length < CATEGORY_MIN_LABELS)
+        return null;
+    const ticks = row.map(b => ({
+        pos: middle(b), length: 0, side: 'after', label: b, labelPath: inkBetween(image, backgrounds, b, true, 'after', edge), source: 'label',
+    })).sort((p, q) => p.pos - q.pos);
+    return { line, ticks };
+}
+
+/**
+ * The line through the ends of an axis's gridlines, where every label lies off that end of its gridline: the
+ * gridlines stop there, and so does the plot (ggplot2's theme_minimal, song-cents). It stands in for the axis line,
+ * as a panel's edge does. Null when the labels lie along the lines (economist: above them, at their right ends), or
+ * fewer than AXIS_MIN_LABELED_TICKS have one.
+ *
+ * @param {'h'|'v'} dir  the axis's direction: its gridlines run the other way
+ * @param {Tick[]} ticks  the gridlines' positions, with their labels
+ * @param {Line[]} gridlines
+ * @returns {Line|null}  thickness 0, `edge` true
+ */
+function gridEndLine(dir, ticks, gridlines) {
+    const ends = ticks.filter(t => t.label).map(t => {
+        const line = gridlines.find(l => Math.abs(l.pos - t.pos) < 0.5);
+        const [lo, hi] = dir === 'v' ? [t.label[0], t.label[2]] : [t.label[1], t.label[3]];
+        return { line, start: hi <= line.from + LABEL_BEYOND_TOL, end: lo >= line.to - LABEL_BEYOND_TOL };
+    });
+    if (ends.length < AXIS_MIN_LABELED_TICKS || !(ends.every(e => e.start) || ends.every(e => e.end)))
+        return null;
+    const pos = ends[0].start ? median(ends.map(e => e.line.from)) : median(ends.map(e => e.line.to));
+    return { dir, pos, thickness: 0, from: ticks[0].pos, to: ticks[ticks.length - 1].pos, luminance: median(ends.map(e => e.line.luminance)), dark: false, edge: true };
+}
+
 // tick → { box, path } for the words on one side of the axis, beyond `reachFrom` px of tick (0 for the side without
 // them), and no wider along the axis than `maxWidth` spacings: the label's box and the share of ink between the axis
 // and it
@@ -686,9 +857,11 @@ function labelsOnSide(image, backgrounds, axis, ticks, side, reachFrom, maxWidth
 
 /**
  * Labels of gridlines: a word just above or below the line, near either end of it or beyond (right- or
- * left-aligned axis labels, as on the economist chart). Labels of one axis sit at the same end, so each line takes
- * the nearest word at the end most lines' nearest words are at (economist: a dot rim at the left end of the zero
- * line was nearer than its "0" at the right).
+ * left-aligned axis labels, as on the economist chart), or a word off the line's end and level with it, which the
+ * line would run through (ggplot2's theme_minimal, song-cents: the labels where an axis's would be, and no axis).
+ * Labels of one axis sit at the same end, so each line takes the nearest word at the end most lines' nearest words
+ * are at (economist: a dot rim at the left end of the zero line was nearer than its "0" at the right). A word level
+ * with the line is as near as its middle is to it.
  */
 function gridLabels(image, backgrounds, ticks, gridlines, dir) {
     const h = dir === 'h';
@@ -703,14 +876,23 @@ function gridLabels(image, backgrounds, ticks, gridlines, dir) {
         const rect = h ? [along[0], across[0], along[1], across[1]] : [across[0], along[0], across[1], along[1]];
         // gray ink only: the nearest colored ink to a gridline is usually data (economist: the red trend line)
         const words = [];
-        for (const b of mergeWords(inkComponents(image, backgrounds, rect, true).map(c => c.box))) {
+        // (without the line itself and what is joined to it: a ring on the line made one blob of both, as tall as
+        // the search, which took the label off the line's end for a part of its word)
+        const onLine = b => (h ? b[1] <= t.pos && b[3] > t.pos && b[2] > from && b[0] < to : b[0] <= t.pos && b[2] > t.pos && b[3] > from && b[1] < to);
+        for (const b of mergeWords(inkComponents(image, backgrounds, rect, true).map(c => c.box).filter(b => !onLine(b)))) {
             const lo = h ? b[0] : b[1];
             const hi = h ? b[2] : b[3];
             const end = hi <= from + ext ? 'start' : (lo >= to - ext ? 'end' : null);
             const clear = h ? (b[3] <= t.pos - 1 || b[1] >= t.pos + 1) : (b[2] <= t.pos - 1 || b[0] >= t.pos + 1);
+            const off = hi <= from + LABEL_BEYOND_TOL || lo >= to - LABEL_BEYOND_TOL;
             if (end && clear) {
                 const d = h ? Math.min(Math.abs(b[3] - t.pos), Math.abs(b[1] - t.pos)) : Math.min(Math.abs(b[2] - t.pos), Math.abs(b[0] - t.pos));
                 words.push({ b, end, d });
+            }
+            else if (end && off && (h ? b[1] <= t.pos - LABEL_BEYOND_TOL && b[3] >= t.pos + LABEL_BEYOND_TOL : b[0] <= t.pos - LABEL_BEYOND_TOL && b[2] >= t.pos + LABEL_BEYOND_TOL)) {
+                // (… with some of it on either side: two "gridlines" 2 px apart, columns of light dots in a
+                // synthetic swarm, each took a sliver of the dot beyond its end, and the plot ended there)
+                words.push({ b, end, d: Math.abs((h ? (b[1] + b[3]) / 2 : (b[0] + b[2]) / 2) - t.pos) });
             }
         }
         return words.sort((p, q) => p.d - q.d);
@@ -731,8 +913,10 @@ function gridLabels(image, backgrounds, ticks, gridlines, dir) {
  * dark vertical line with the most ticks (ties: the leftmost). Without a dark line with ticks on an axis, the edge
  * of a filled panel with ticks is the axis (ggplot2's default theme: panelEdges). Without that, light
  * gridlines across the other direction stand in as its ticks (economist: no y axis line, horizontal gridlines),
- * with a dark baseline that continues their spacing (the economist's zero line). Without those either, a line at
- * the other axis's end with a row of labels and no tick marks is the axis, its labels the positions (labelAxis).
+ * with a dark baseline that continues their spacing (the economist's zero line); where their labels lie off their
+ * ends, the ends are the axis line (gridEndLine), and the row of words under the last gridline of such a y axis is
+ * the x axis (labelsUnder: song-cents). Without those either, a line at the other axis's end with a row of labels
+ * and no tick marks is the axis, its labels the positions (labelAxis).
  *
  * @param {import('./image.js').RgbaImage} image
  * @returns {Axes}
@@ -777,7 +961,7 @@ export function detectAxes(image) {
                 }
                 ticks.sort((a, b) => a.pos - b.pos);
                 gridLabels(image, backgrounds, ticks, lines.filter(l => l.dir === other), other);
-                best = { line: null, ticks };
+                best = { line: gridEndLine(dir, ticks, lines.filter(l => l.dir === other)), ticks };
             }
         }
         return best;
@@ -802,8 +986,13 @@ export function detectAxes(image) {
     };
     let x = pick('h');
     let y = pick('v');
-    // an axis with no tick marks and none standing in: its labels, at the plot's corner with the other axis
-    if (!x && y?.line)
+    // an axis with no tick marks and none standing in: its labels, under the last gridline of a y axis of gridlines
+    // that have their labels off their ends (gridEndLine; a slanted light curve is "gridlines" too, a pixel or two
+    // apart, with no labels, and the dots under it are no x axis), or at the plot's corner with the other axis
+    const last = y?.ticks[y.ticks.length - 1];
+    if (!x && last?.source === 'grid' && y.line?.edge)
+        x = labelsUnder(image, backgrounds, lines.find(l => l.dir === 'h' && Math.abs(l.pos - last.pos) < 0.5));
+    else if (!x && y?.line)
         x = labelAxis(image, backgrounds, lines, 'h', y.line);
     else if (!y && x?.line)
         y = labelAxis(image, backgrounds, lines, 'v', x.line);
@@ -825,7 +1014,8 @@ export function plotBounds(axes) {
     const side = axis => {
         if (!axis?.line)
             return 0;
-        const labeled = axis.ticks.filter(t => t.source !== 'grid' && t.label);
+        // (gridlines bound nothing across themselves; where their labels lie off their ends, the ends do: gridEndLine)
+        const labeled = axis.ticks.filter(t => (t.source !== 'grid' || axis.line.edge) && t.label);
         if (labeled.length < AXIS_MIN_LABELED_TICKS)
             return 0;
         const across = axis.line.dir === 'h' ? b => (b[1] + b[3] + 1) / 2 : b => (b[0] + b[2] + 1) / 2;

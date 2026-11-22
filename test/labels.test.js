@@ -828,6 +828,9 @@ test('bench-plos: step1\'s decimals, score2\'s thousands and droplet1\'s percent
     assert.deepEqual(values('step1', 'x'), [40, 50, 60, 70, 80, 90]);
     assert.deepEqual(values('step1', 'y'), [1.4, 1.3, 1.2, 1.1, 1, 0.9, 0.8, 0.7, 0.6]);
     assert.deepEqual(values('score2', 'x'), [0, 2000, 4000, 6000, 8000, 10000]);
+    // grader1's labels stand off the ends of its gridlines (no axis lines, no ticks)
+    assert.deepEqual(values('grader1', 'x'), [0, 15, 30, 45]);
+    assert.deepEqual(values('grader1', 'y'), [45, 30, 15, 0]);
     assert.deepEqual(values('score2', 'y'), [600, 500, 400, 300, 200, 100]);
     // "100%": the axis's own unit
     assert.deepEqual(values('droplet1', 'y'), [100, 75, 50, 25, 0]);

@@ -3528,3 +3528,72 @@ Not done, and known:
 - The axes of this layout (last entry, item 4), and with them the label zeros read as rings.
 - Rings of one family drawn mostly within 3 px of another family's dots of nearly the same direction of darkening
   would be left out as that family's ink. No image has that.
+
+**song-cents and grader1: axes that are gridlines with their labels off their ends** (2026-11-22)
+
+The layout of song-cents and of ggplot2's theme_minimal (bench-plos grader1): no axis lines and no tick marks; light
+gridlines under the dots; each gridline's label off its start, level with it, where an axis's label would be; and on
+song-cents the years in a row under the zero line, with no vertical gridlines. Before, song-cents had no x axis and
+5 of its 7 gridlines with scraps for labels, and grader1's gridlines had their labels only by accident. Five rules
+in axes.js:
+
+- **A light line in pieces** (`brokenLine`). A line was the longest run of ink in its row, 30% of the width; the 20
+  and 10 lines of song-cents have no such run under their dots. A row is now a line too when its pieces of light
+  ink, each at least 2% of the width (`BROKEN_MIN_SEGMENT`), add up to 30% of it and fill half the span from the
+  first to the last (`BROKEN_MIN_COVER`). A piece is flat: through 80% of its pixels (`BROKEN_MIN_FLAT`) the light
+  ink across the line starts and ends at the same rows, to a pixel, and is no thicker than a line. The pieces of one
+  line share those edges; shorter flat pieces with them (8 px, `BROKEN_MIN_END`) extend the line to its ends. Rows
+  within 2 px of a dark line's run (`DARK_EDGE_REACH`) are its antialiased edge and are left alone.
+- **A label off a gridline's end** (`gridLabels`). A gridline's label was a word above or below the line near
+  either end (economist). A word wholly beyond the line's end, with at least 2 px of itself on either side of the
+  line, is one too, as near as its middle is to the line. Ink joined to the line (a ring on it) is left out of the
+  search.
+- **The line through the gridlines' ends** (`gridEndLine`). When at least `AXIS_MIN_LABELED_TICKS` gridlines have
+  labels and every label lies off the same end, the ends stand in for the axis line (thickness 0, `edge`), as a
+  panel's edge does.
+- **Labels under the last gridline** (`labelsUnder`). With such a y axis and no x axis, the row of words nearest
+  below the last gridline, their middles within its extent, gives the x positions (`source: 'label'`), as
+  `labelAxis` takes them at an axis line.
+- **The plot's bounds** (`plotBounds`) count labeled gridlines when the axis has that end line, so ink outside is
+  not a dot family (the label zeros, read as hollow rings before).
+
+What the first version broke, each fixed and pinned by a test: a dark line's light edges became lines of their own
+(the dark-run exclusion); rows through packed light gray dots became gridlines (nicest language: the flat test, in
+place of a fixed clearance that also split thick gridlines); a glyph's edge in a line's row took grader1's label
+(pieces must share the line's edges); a ring on a gridline merged with it into one blob as tall as the search
+(ink on the line is left out); a gridline's stub before a dot was its label (short end pieces); rows of
+beeswarm-boxplot's light band between its dots (the thickness of the ink across); in the synthetic beeswarm
+preset, two junk "gridlines" 2 px apart took slivers of a dot for labels and the plot ended there, recall 1.000 to
+0.986 (a label reaches both sides of its line); and in an opaque test's scene, 11 junk "gridlines" along a slanted
+light curve got an x axis from the dots under the last, which masked every dot (labels are looked for under a
+gridline axis only when it has its end line, that is, labels of its own).
+
+Results.
+- Axes of all 145 local images, compared before and after: they change for song-cents (y: 7 gridlines from 5, all
+  labeled, 30 to 0; x: 7 labels, 1960 to 2020; the plot bounded at left 143 and bottom 905.4), grader1 (both axes:
+  every gridline labeled, 0, 15, 30, 45, bounds left 96 and bottom 1154) and the economist chart's y labels (one
+  box 5 px wider). The dashed orange line at 7 on song-cents is no gridline, as intended.
+  27 images' line lists change (296 lines to 324): gridlines that had a partial run now span their pieces, and a
+  few new light lines, none of which changes an axis.
+- Label benchmark: testgraphs 26 of 26 labels and 3 of 4 axes (19 of 19, 2 of 3: song-cents's x axis is new and
+  solved; its y axis is not paired with the CSV's header, which lists 8 ticks with the reference line's 7);
+  bench-plos 37 of 39 labels and 7 of 8 axes (29 of 37, 5 of 8: grader1's two axes); all sets 1,357 of 1,472 labels,
+  212 of 234 axes, 0 wrong (1,342 of 1,463, 209 of 233).
+- Dot benchmark: song-cents 297 found of 325, precision 0.973, recall 0.889 (303, 0.954, 0.889): the 6 label zeros
+  are gone, and the 8 extras left are the navy dots on the black lines. The other 170 rows are identical apart from
+  times. In the app song-cents shows both axes read and 297 dots, no console errors.
+- Time: `detectAxes` over the 145 images 5.3 s to 6.4 s (about 8 ms more per image: every row and column with 30%
+  light ink is walked for pieces).
+
+Tests (test/axes.test.js, 6 new; grader1's values in test/labels.test.js): a synthetic chart of this layout with
+dots over the gridlines, a ring on one, a stub, a title and a colored reference line; gridlines without labels, or
+with ink beside their ends, or with labels along them, have no end line and no labels under them; rows through
+light gray dots; a striped ellipse, a slanted band, a thick bar and two short rules are no lines, and a dark line
+under dots keeps its run; grader1 and song-cents themselves. 13 mutations, one per condition, each fail a test, and
+the thickness and same-end conditions fail a synthetic one without the local images.
+
+Not done, and known:
+- The y axis of song-cents in the label benchmark (the CSV's header lists the 7), and the CSV's "data" row, which
+  is in SVG coordinates.
+- The reference line's label, 7, is not a tick: correct for the scale, and the app does not show it.
+- An axis with a single labeled gridline has no end line (`AXIS_MIN_LABELED_TICKS`, 2), and so no plot bound.

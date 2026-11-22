@@ -145,6 +145,9 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
     assert.equal(bb.y.ticks.length, 9);
     // its gray significance bracket (luminance 160) has three unlabeled "ticks" but is not an x axis
     assert.equal(bb.x, null);
+    // the gray band under its names is no gridlines in pieces: a row of it is pieces of light ink between the
+    // letters, each as thick as the band (three more "lines" at 2175, 2287 and 2297 without the thickness)
+    assert.deepEqual(bb.lines.filter(l => l.dir === 'h' && l.pos > 2000).map(l => Math.round(l.pos * 10) / 10), [2276.5, 2298.5, 2331.5]);
 });
 
 test('regression: wages2025, navy ticks on gray axis lines, and the x axis\'s corner label isn\'t a y label', { skip: !has('wages2025.png') && 'local test image absent' }, () => {
@@ -556,4 +559,221 @@ test('regression: ticks that stand off a panel\'s edge, gridline rims inside it,
     assert.equal(ax.x.ticks.length, 5);
     near(ax.x.ticks[0].pos, 57, 0.01, 'corner tick');
     assert.deepEqual(ax.x.ticks[0].label, [49, 300, 65, 310]);
+});
+
+const GRID_Y = [40, 110, 180, 250, 320]; // px, the gridlines' rows (each 3 px thick, about these)
+const GRID_X = [80, 520]; // px, where the gridlines start and end
+const YEARS_X = [110, 205, 300, 395, 490]; // px, the middles of the labels under the last gridline
+
+function disc(image, cx, cy, r, color) {
+    for (let y = Math.floor(cy - r); y <= cy + r; y++) {
+        for (let x = Math.floor(cx - r); x <= cx + r; x++) {
+            if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= r)
+                image.data.set([...color, 255], 4 * (y * image.width + x));
+        }
+    }
+}
+
+// A chart with no axis lines and no tick marks, as song-cents and ggplot2's theme_minimal draw them: light gridlines
+// with a gray label off the left end of each, level with it; labels in a row under the last gridline; a title over
+// the first gridline's start; a dashed orange reference line with an orange label between two gridlines. Blue dots
+// with white strokes lie over the gridlines and leave no run of 30% of the width on the second and the fourth; one
+// covers the fourth near its start, leaving a 14 px stub before it; and a gray ring sits on the first gridline.
+function gridPlot() {
+    const image = { width: 560, height: 400, data: new Uint8ClampedArray(4 * 560 * 400).fill(255) };
+    const gray = [88, 88, 88];
+    for (const y of GRID_Y) {
+        fill(image, [GRID_X[0], y - 1, GRID_X[1], y + 2], [229, 229, 229]);
+        fill(image, [52, y - 6, 74, y + 7], gray);
+    }
+    // a light stroke 1 px thick off the third gridline's end, in its middle row: no piece of the line, which is 3
+    fill(image, [530, GRID_Y[2], 542, GRID_Y[2] + 1], [229, 229, 229]);
+    fill(image, [GRID_X[0], 12, 250, 26], gray);
+    for (let x = GRID_X[0]; x < GRID_X[1]; x += 14)
+        fill(image, [x, 214, x + 8, 216], [223, 105, 59]);
+    fill(image, [60, 209, 74, 222], [223, 105, 59]);
+    for (const x of YEARS_X)
+        fill(image, [x - 17, 345, x + 17, 358], gray);
+    // the ring on the first gridline: gray, 2 px wide
+    for (let y = 30; y < 62; y++) {
+        for (let x = 140; x < 172; x++) {
+            const d = Math.hypot(x + 0.5 - 156, y + 0.5 - 46);
+            if (d <= 10 && d > 8)
+                image.data.set([119, 119, 106, 255], 4 * (y * image.width + x));
+        }
+    }
+    const dots = [];
+    for (const y of [GRID_Y[1], GRID_Y[3]]) {
+        for (let x = y === GRID_Y[3] ? 106 : 100; x < GRID_X[1] - 12; x += 60)
+            dots.push([x, y + (x % 3) - 1]);
+    }
+    const rng = createRng(3);
+    for (const { x, y } of scatterPoints(rng, { n: 30, box: [100, 50, 500, 310] }))
+        dots.push([x, y]);
+    for (const [x, y] of dots) {
+        disc(image, x, y, 12, [255, 255, 255]);
+        disc(image, x, y, 10, [93, 146, 205]);
+    }
+    return image;
+}
+
+test('gridlines under dots, their labels off their ends, and labels under the last one: both axes, no lines or ticks', () => {
+    const image = gridPlot();
+    const ax = detectAxes(image);
+    // every gridline, the two broken by a row of dots too, from its start to its end
+    const grid = ax.lines.filter(l => l.dir === 'h' && !l.dark);
+    assert.deepEqual(grid.map(l => [Math.round(l.pos * 10) / 10, l.from, l.to]), GRID_Y.map(y => [y + 0.5, GRID_X[0], GRID_X[1]]));
+    assert.deepEqual(ax.y.ticks.map(t => t.source), ['grid', 'grid', 'grid', 'grid', 'grid']);
+    // each with the label off its end, not the title over the first, the ring on it, the stub of the fourth, or the
+    // reference line's own label
+    assert.deepEqual(ax.y.ticks.map(t => t.label), GRID_Y.map(y => [52, y - 6, 74, y + 7]));
+    // the labels under the last gridline are the x axis's positions
+    assert.deepEqual(ax.x.ticks.map(t => [t.pos, t.source]), YEARS_X.map(x => [x, 'label']));
+    near(ax.x.line.pos, GRID_Y[4] + 0.5, 0.05, 'the last gridline');
+    // the plot ends where the gridlines start, and at the last gridline
+    assert.ok(ax.y.line.edge);
+    const bounds = plotBounds(ax);
+    assert.deepEqual([bounds.left, bounds.right, bounds.top], [GRID_X[0], null, null]);
+    near(bounds.bottom, GRID_Y[4] + 0.5, 0.05, 'bottom');
+});
+
+test('regression: ink beside a gridline\'s end is no label of it, and gridlines without labels have no labels under them', () => {
+    // gridlines with a row of words under the last, and `mark` at each one's start
+    const scene = mark => {
+        const image = { width: 560, height: 400, data: new Uint8ClampedArray(4 * 560 * 400).fill(255) };
+        for (const y of GRID_Y) {
+            fill(image, [GRID_X[0], y - 1, GRID_X[1], y + 2], [229, 229, 229]);
+            mark(image, y);
+        }
+        for (const x of YEARS_X)
+            fill(image, [x - 17, 345, x + 17, 358], [88, 88, 88]);
+        return detectAxes(image);
+    };
+    const none = { left: null, right: null, top: null, bottom: null };
+    // no labels: a slanted light curve is such "gridlines" too, a pixel or two apart (an opaque test's scene: 11 of
+    // them), and the dots under the last were an x axis of labels that ended the plot there, above every dot
+    const bare = scene(() => {});
+    assert.deepEqual(bare.y.ticks.map(t => [t.source, t.label]), GRID_Y.map(() => ['grid', null]));
+    assert.equal(bare.x, null);
+    assert.deepEqual(plotBounds(bare), none);
+    // gray ink off each line's start that begins level with the line and lies below it: a label level with a line
+    // has some of itself on either side. In a synthetic swarm two "gridlines" 2 px apart took slivers of a dot for
+    // their labels, and the plot ended at the dot.
+    const beside = scene((image, y) => fill(image, [60, y, 76, y + 7], [88, 88, 88]));
+    assert.deepEqual(beside.y.ticks.map(t => t.label), GRID_Y.map(() => null));
+    assert.equal(beside.x, null);
+    assert.deepEqual(plotBounds(beside), none);
+    // the same ink a few rows higher is the lines' labels, and the words under the last line the x axis's
+    const level = scene((image, y) => fill(image, [60, y - 3, 76, y + 4], [88, 88, 88]));
+    assert.deepEqual(level.y.ticks.map(t => t.label), GRID_Y.map(y => [60, y - 3, 76, y + 4]));
+    assert.deepEqual(level.x.ticks.map(t => t.pos), YEARS_X);
+    assert.equal(plotBounds(level).left, GRID_X[0]);
+    // labels over the lines' far ends, along them (economist): the gridlines' labels, and no end of the plot
+    const along = scene((image, y) => fill(image, [GRID_X[1] - 30, y - 17, GRID_X[1] - 4, y - 4], [88, 88, 88]));
+    assert.deepEqual(along.y.ticks.map(t => t.label), GRID_Y.map(y => [GRID_X[1] - 30, y - 17, GRID_X[1] - 4, y - 4]));
+    assert.equal(along.y.line, null);
+    assert.deepEqual(plotBounds(along), none);
+});
+
+test('regression: a row through light gray dots is no line in pieces', () => {
+    // nicest language: rows through its packed gray dots are pieces of light ink too, chords that fill most of
+    // their span, and three of them were "gridlines" and a y axis. A chord's ink across is as tall as the dot there.
+    const image = { width: 560, height: 300, data: new Uint8ClampedArray(4 * 560 * 300).fill(255) };
+    for (let x = 60; x < 500; x += 22)
+        disc(image, x, 150 + (x % 5) - 2, 8, [200, 200, 200]);
+    assert.deepEqual(detectAxes(image).lines, []);
+    // … in touching pairs, in a larger image, where a line may be as thick as the dots are: the ink across is not
+    // of one thickness along a pair's chord
+    const large = { width: 1500, height: 1000, data: new Uint8ClampedArray(4 * 1500 * 1000).fill(255) };
+    for (let x = 200; x < 1300; x += 42) {
+        disc(large, x, 500, 9, [200, 200, 200]);
+        disc(large, x + 18, 500, 9, [200, 200, 200]);
+    }
+    assert.deepEqual(detectAxes(large).lines, []);
+});
+
+test('a light line in pieces is thin and fills its span; a dark line under dots keeps its run', () => {
+    const blank = () => ({ width: 560, height: 300, data: new Uint8ClampedArray(4 * 560 * 300).fill(255) });
+    // a light gray ellipse in stripes: every row is long pieces of light ink, each as thick as the ellipse there
+    // (and the ellipse under 5% of the image, or its color would be a background's and no ink)
+    const region = blank();
+    for (let y = 0; y < 300; y++) {
+        for (let x = 0; x < 560; x++) {
+            if (((x - 280) / 220) ** 2 + ((y - 150) / 14) ** 2 <= 1 && x % 40 >= 8)
+                region.data.set([215, 215, 215, 255], 4 * (y * 560 + x));
+        }
+    }
+    assert.deepEqual(detectAxes(region).lines, []);
+    // a slanted light band in stripes: its rows are pieces that start and end 12 px farther along from one row to
+    // the next, a few rows alike at a time, and each piece as thick as the band
+    const band = blank();
+    for (let y = 130; y < 150; y++) {
+        const x0 = 40 + 12 * (y - 130);
+        for (let x = x0; x < x0 + 280; x++) {
+            if (x % 45 < 39)
+                band.data.set([215, 215, 215, 255], 4 * (y * 560 + x));
+        }
+    }
+    assert.deepEqual(detectAxes(band).lines.filter(l => l.dir === 'h'), []);
+    // a light bar 30 px thick, in stripes of 29 px, too short for pieces, but for three rows in its middle, where
+    // every second gap is filled: those rows' pieces are flat and fill their span, and the ink across them is the
+    // bar's, thicker than a line (beeswarm-boxplot: rows of the box's light band, between the dots over it). The
+    // image is tall enough that the bar is under 5% of it, and no background.
+    const bar = { width: 1500, height: 700, data: new Uint8ClampedArray(4 * 1500 * 700).fill(255) };
+    for (let x = 100; x < 1400; x++) {
+        if (x % 33 < 29)
+            fill(bar, [x, 140, x + 1, 170], [215, 215, 215]);
+        else if (x % 66 < 33)
+            fill(bar, [x, 154, x + 1, 157], [215, 215, 215]);
+    }
+    assert.deepEqual(detectAxes(bar).lines, []);
+    // two short light rules in one row, far apart: enough ink between them for a line, over little of their span
+    const rules = blank();
+    fill(rules, [40, 149, 130, 152], [229, 229, 229]);
+    fill(rules, [430, 149, 520, 152], [229, 229, 229]);
+    assert.deepEqual(detectAxes(rules).lines, []);
+    // a dark line with light edges, dots over it: it is its longest run, as before, whatever its light edges' pieces
+    // add up to
+    const dark = blank();
+    fill(dark, [40, 149, 520, 152], [200, 200, 200]);
+    fill(dark, [40, 150, 520, 151], [60, 60, 60]);
+    for (const x of [70, 120, 170, 420, 470])
+        disc(dark, x, 150, 10, [93, 146, 205]);
+    const lines = detectAxes(dark).lines;
+    assert.deepEqual(lines.map(l => [l.dir, l.from, l.to, l.thickness, l.dark]), [['h', 180, 410, 3, true]]);
+});
+
+const GRADER1 = 'grader1-10.1371-journal.pone.0361887.png';
+
+test('regression: grader1, gridlines both ways with their labels off their ends (theme_minimal)', { skip: !existsSync(PLOS + GRADER1) && 'bench-plos grader1 absent' }, () => {
+    // before: the labels were scraps (a gridline's label was looked for above or below the line), and no axis had
+    // values. Each gridline has its label now, and the plot ends where the gridlines do.
+    const ax = detectAxes(readImage(PLOS + GRADER1));
+    for (const axis of [ax.x, ax.y]) {
+        assert.deepEqual(axis.ticks.map(t => t.source), ['grid', 'grid', 'grid', 'grid']);
+        assert.ok(axis.ticks.every(t => t.label), 'every gridline has a label');
+        assert.ok(axis.line.edge);
+    }
+    // the y labels left of the lines' starts, the x labels under the lines' ends
+    assert.ok(ax.y.ticks.every(t => t.label[2] <= ax.y.line.pos));
+    assert.ok(ax.x.ticks.every(t => t.label[1] >= ax.x.line.pos));
+    assert.deepEqual(plotBounds(ax), { left: 96, right: null, top: null, bottom: 1154 });
+});
+
+test('regression: song-cents, seven gridlines under 325 dots, labels off their ends, years under the last', { skip: !has('song-cents.png') && 'local test image absent' }, () => {
+    // before: no x axis; five of the seven gridlines (the 20 and 10 lines have no run of 30% of the width), labeled
+    // with the title, a dot's rim and scraps
+    const ax = detectAxes(readImage(TESTGRAPHS + 'song-cents.png'));
+    assert.equal(ax.y.ticks.length, 7);
+    assert.ok(ax.y.regular, 'evenly spaced');
+    near(ax.y.spacing, 142.15, 0.1, 'gridline spacing');
+    assert.ok(ax.y.ticks.every(t => t.source === 'grid' && t.label && t.label[2] <= 143 && t.label[1] < t.pos && t.label[3] > t.pos), 'labels off the lines\' starts, level with them');
+    // the dashed orange reference line at 7 is no gridline
+    assert.ok(!ax.y.ticks.some(t => Math.abs(t.pos - 706) < 20));
+    assert.deepEqual(ax.x.ticks.map(t => t.source), ['label', 'label', 'label', 'label', 'label', 'label', 'label']);
+    assert.ok(ax.x.regular);
+    near(ax.x.spacing, 323.9, 0.3, 'label spacing');
+    const bounds = plotBounds(ax);
+    assert.equal(bounds.left, 143);
+    near(bounds.bottom, 905.4, 0.1, 'bottom');
 });

@@ -36,8 +36,8 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         (page, flat pixels, tolerances, the Scan passed through the search), levels.js (translucent
                         families: levels, alpha, color), opaque.js (opaque families: measureOpaque, opaqueFamilies, radius
                         from shapes), shape.js (isolated dots, components, edge blur), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
-                        dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines, a
-                        filled panel's edges, ticks, labels, scales), labels.js (reading tick labels' numbers: glyphs, digits by template, raised
+                        dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines, light ones in pieces
+                        under dots too, a filled panel's edges, gridlines' ends with their labels off them, ticks, labels, scales), labels.js (reading tick labels' numbers: glyphs, digits by template, raised
                         exponents, scientific notation ("1e+05", "2 × 10³"), the check by the axis's scale; digit-templates.js, generated: the shapes of the digits and of the signs e, E, +, × in 18 fonts), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
