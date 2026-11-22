@@ -154,6 +154,22 @@ const THICK_OPENING = 1.5; // px
 // white, and against a single background color the edges on the other one were unreadable.
 const NEAR_FAMILY = 2; // px: pixels this close to the family's color don't inform its background
 const MIN_CONTRAST = 30; // 0–255 units between a dot's color and the local background for its coverage to be read
+// A blurred dot's edge is wider than NEAR_FAMILY, and beyond it passes through the color of any other ink that lies
+// between the dots' color and their background's (biomarker: black dots with an edge 4 px wide, in a gray frame). Out
+// there every rim had a ring of pixels read as the frame's, and the pixels nearer in were read against that ring as
+// their background, so no dot was whole and the radius, from the distance transform, was 4.5 for 6.0: the fit put
+// 216 dots in for 83. For a family with no whole dot, read again as blurred dots (softGround): the near zone goes on
+// outward along a dot's own slope, through pixels that are a mix of the family's color and its background, each with
+// less of the color than its neighbor nearer in by this much, for this many pixels. Other ink is flat along itself,
+// and a crisp dot's edge has ended within NEAR_FAMILY: where the zone grows by less than SOFT_EDGE_MIN_GROWTH × the
+// family's own pixels the dots aren't blurred, and the first reading stands, as it does when the second shows no
+// whole dot either. (The growth: biomarker 0.29, its black being text and lines too; blurred dots alone, the test's,
+// 1.65; biomarker's grays and the test's, 0.00 to 0.02.) Read so always, dots with whole ones moved too: violin-beeswarm 722 found for
+// 712 (702 there), cattle 298 for 300.
+const SOFT_EDGE_MIN_STEP = 0.05; // of the family's color, per px
+const SOFT_EDGE_MIN_SHARE = 0.05; // of the family's color: less is the background
+const SOFT_EDGE_MAX_REACH = 3; // px beyond NEAR_FAMILY
+const SOFT_EDGE_MIN_GROWTH = 0.15;
 // A pixel is a mix of the dot and its background only if it lies close to the line between them, within OFF_MIX_ABS
 // or OFF_MIX_REL × its distance along the line. An absolute 25 units let another family's antialiased rims through
 // (synthetic swarm: blue–white rims read as gray coverage 0.89 at 20.5 units off, about 13° off the gray mix, and
@@ -484,6 +500,63 @@ function componentRadii(D, width, height) {
     return [...new Set([median, deepest, pieces[pieces.length - 1].depth].filter(d => d !== null))].map(d => d + DT_RADIUS_OFFSET);
 }
 
+// A plain family's ground for blurred dots: the near zone grown along their edges, and the family's background and
+// the local one read beyond them (right beside the family's pixels the commonest color can be a tone of the edge
+// itself: 187 for black dots on white, in a rendering with a Gaussian's smooth edge). Null where the zone hardly
+// grows (SOFT_EDGE_MIN_GROWTH).
+function softGround(scan, ground) {
+    const { image, color, mask, own, others } = ground;
+    const beyond = dilate(mask, image.width, image.height, NEAR_FAMILY + SOFT_EDGE_MAX_REACH);
+    const B = ringBackground(image, beyond) ?? ground.B;
+    const near = ground.near.slice();
+    const grown = alongSoftEdges(image, near, B, color);
+    if (grown < SOFT_EDGE_MIN_GROWTH * own.reduce((sum, v) => sum + v, 0))
+        return null;
+    const pageColors = [...scan.backgrounds, B].filter(P => colorDistance(P, color) > CLUSTER_TOL);
+    return { ...ground, B, near, pageColors, bg: localBackground(image, near, pageColors, others) };
+}
+
+// The near zone of a family's pixels, grown outward along blurred dots' edges (SOFT_EDGE_MIN_STEP), in place; returns
+// the pixels added. O(pixels · SOFT_EDGE_MAX_REACH).
+function alongSoftEdges(image, near, B, color) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const w = color.map((v, ch) => v - B[ch]);
+    const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
+    // a pixel's share of the family's color against its usual background, or -1 off the line between them
+    const share = p => {
+        const v = [data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]];
+        const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
+        return Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) <= OFF_MIX_ABS ? m : -1;
+    };
+    let front = [];
+    for (let p = 0; p < n; p++) {
+        if (near[p])
+            front.push(p);
+    }
+    let grown = 0;
+    for (let layer = 0; layer < SOFT_EDGE_MAX_REACH && front.length; layer++) {
+        const next = [];
+        for (const p of front) {
+            const from = share(p);
+            const x = p % width;
+            for (const q of [x > 0 ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p - width, p + width]) {
+                if (q < 0 || q >= n || near[q])
+                    continue;
+                const m = share(q);
+                if (m >= SOFT_EDGE_MIN_SHARE && from - m >= SOFT_EDGE_MIN_STEP) {
+                    near[q] = 1;
+                    next.push(q);
+                }
+            }
+        }
+        // (the first layer starts from the whole zone; the later ones from what the last one added)
+        front = next;
+        grown += next.length;
+    }
+    return grown;
+}
+
 /**
  * The background under and around a family, per pixel: the color of the nearest pixel that is not close to the
  * family's color. For an edge pixel that is the pixel just outside the dot, which is what the dot's edge was
@@ -764,16 +837,28 @@ export function strokeColor(image, color, B) {
 export function measureOpaque(scan, color, others = [], outline = null, opts = {}) {
     const { width, height } = scan.image;
     const stroke = opts.stroke ?? null;
-    const ground = opaqueGround(scan, color, others, outline, stroke, opts.rings ?? null);
-    const { paged, own, mask, B } = ground;
-    const cover = opaqueCoverage(ground);
-    const { D, edgeInk, fillW } = cover;
+    let ground = opaqueGround(scan, color, others, outline, stroke, opts.rings ?? null);
+    let cover = opaqueCoverage(ground);
     if (!stroke)
-        fillSaturatedOverlaps(scan.image, D, B, color, ground.others);
+        fillSaturatedOverlaps(scan.image, cover.D, ground.B, color, ground.others);
+    let shape = opaqueRadius(ground, cover, scan.tol, opts.radius);
+    // a plain family with no whole dot: read again as blurred dots, and so taken if that shows whole ones
+    const soft = !shape.isolated.length && !outline && !stroke && !ground.paged ? softGround(scan, ground) : null;
+    if (soft) {
+        const softCover = opaqueCoverage(soft);
+        fillSaturatedOverlaps(scan.image, softCover.D, soft.B, color, soft.others);
+        const softShape = opaqueRadius(soft, softCover, scan.tol, opts.radius, true);
+        if (softShape.isolated.length) {
+            ground = soft;
+            cover = softCover;
+            shape = softShape;
+        }
+    }
+    const { paged, own, mask, B } = ground;
+    const { D, edgeInk, fillW } = cover;
     const fitColor = paged ? outline : color;
     const line = colorLine(B, fitColor);
     const table = [B, fitColor];
-    const shape = opaqueRadius(ground, cover, scan.tol, opts.radius);
     const { isolated, byFill } = shape;
     let { radius } = shape;
     let dots = 0;
@@ -1102,12 +1187,12 @@ function mixReader(ground, { D, edgeInk }) {
 
 /**
  * An opaque family's radius: the one given, else the isolated dots' median, else the fills' (outlined or stroked
- * dots), else the distance transform's.
+ * dots), else the distance transform's. With `blurred`, blurred discs are isolated dots too (shape.js).
  *
  * @returns {{isolated: object[], byFill: object|null, fillCover: Float32Array|null, radius: number,
  *   fromDistance: boolean}}  radius in px
  */
-function opaqueRadius(ground, cover, tol, given) {
+function opaqueRadius(ground, cover, tol, given, blurred = false) {
     const { outline, stroke, own } = ground;
     const { D, fillW, fillK } = cover;
     const { width, height } = ground.image;
@@ -1115,7 +1200,7 @@ function opaqueRadius(ground, cover, tol, given) {
     // (hair2: the stroke's black, so the decimal points and a colon's dots, r 4.9, outvoted the one whole dot, r 30.3)
     // are not its dots
     const fill = stroke ? fillW : own;
-    const isolated = isolatedDots(D, width, height, tol).filter(d => discShare(fill, width, height, d.cx, d.cy, ISOLATED_FILL_RADII * d.r) >= DOT_MIN_FILL);
+    const isolated = isolatedDots(D, width, height, tol, blurred).filter(d => discShare(fill, width, height, d.cx, d.cy, ISOLATED_FILL_RADII * d.r) >= DOT_MIN_FILL);
     // outlined or stroked dots without an isolated whole one: their fills give the radius, and the center search runs
     // on the fills, whose edges are each dot's own wherever it's on top (D's edge is the union's, joined to lines of
     // the fill's color and to touching dots; cells1's magenta, chained to its neighbors by gray lines that read as

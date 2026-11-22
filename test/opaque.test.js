@@ -1196,3 +1196,35 @@ test('regression: stroked dots of a color with none alone: the whole dots among 
     assert.ok(hit >= truth.length - 2, `${hit} of ${truth.length} orange dots, ${r.fit.dots.length} found`);
     near(r.fit.radius, 10, 0.8, 'radius by the fit');
 });
+
+test('regression: blurred black dots in a gray frame are whole dots at their radius (biomarker)', () => {
+    // before: beyond 2 px from the dots' own color their soft edges pass through the frame's gray, which is other ink:
+    // every dot had a ring of pixels read as the frame's, none was whole, and the radius came from the distance
+    // transform, small (biomarker: 4.5 for 6.0, and 216 dots fitted for 83)
+    const rng = createRng(5);
+    const dots = [];
+    for (let i = 0; i < 24; i++)
+        dots.push({ x: 60 + 52 * (i % 6) + 8 * rng.uniform(), y: 60 + 48 * Math.floor(i / 6) + 8 * rng.uniform() });
+    // (… and a column of touching ones, as a beeswarm has)
+    for (let i = 0; i < 6; i++)
+        dots.push({ x: 400 + 11 * (i % 2), y: 60 + 11 * i });
+    const model = createDotModel(solidImage(460, 300, [255, 255, 255]), { color: [3, 3, 3], alpha: 1, radius: 6, blur: 1.3 });
+    model.addAll(dots);
+    const image = toRgba(model.image);
+    // the frame, 4 px of gray
+    const gray = (x0, y0, x1, y1) => {
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++)
+                image.data.set([190, 190, 190, 255], 4 * (y * image.width + x));
+        }
+    };
+    gray(20, 20, 440, 24);
+    gray(20, 276, 440, 280);
+    gray(20, 20, 24, 280);
+    gray(436, 20, 440, 280);
+    const { estimates } = estimateFamilies(image);
+    const black = familyOf(estimates.map(e => ({ est: e })).filter(f => f.est.style), [3, 3, 3])?.est;
+    assert.ok(black, 'the black dots are a family');
+    assert.ok(black.isolated.length >= 20, `${black.isolated.length} whole dots`);
+    assert.ok(Math.abs(black.style.radius - 6) < 0.25, `radius ${black.style.radius}`);
+});

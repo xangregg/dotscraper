@@ -45,3 +45,33 @@ test('discShare', () => {
     assert.ok(Math.abs(discShare(D, W, H, 28, 20, 6) - 0.5) < 0.1, `half on the edge: ${discShare(D, W, H, 28, 20, 6)}`);
     assert.equal(discShare(D, W, H, 60, 40, 6), 0);
 });
+
+// a disc's coverage with an edge `ramp` px wide (linear across it), as resampling leaves it
+function softDisc(D, x, y, r, ramp) {
+    for (let py = 0; py < H; py++) {
+        for (let px = 0; px < W; px++)
+            D[py * W + px] += Math.min(1, Math.max(0, 0.5 + (r - Math.hypot(px + 0.5 - x, py + 0.5 - y)) / ramp));
+    }
+}
+
+test('regression: a blurred dot is an isolated dot where blurred ones are asked for; one in a faint halo is not', () => {
+    // before: a soft rim spreads a dot's second moments and not its area (here r(moment) / r(area) is 1.07 against
+    // ISOLATED_MAX_MOMENT_RATIO 1.03), so blurred dots were never isolated (biomarker: none of its dots, and the
+    // radius was read from the distance transform, 4.5 for 6.0)
+    const D = new Float32Array(W * H);
+    softDisc(D, 20.3, 20.6, 6, 5);
+    softDisc(D, 58.5, 38.2, 6, 5);
+    // a halo at 0.3 around the second dot, out to 10 px: round too, and no part of the dot
+    for (let py = 0; py < H; py++) {
+        for (let px = 0; px < W; px++) {
+            if (Math.hypot(px + 0.5 - 58.5, py + 0.5 - 38.2) <= 10)
+                D[py * W + px] = Math.max(D[py * W + px], 0.3);
+        }
+    }
+    assert.equal(isolatedDots(D, W, H).length, 0, 'none as crisp dots');
+    const found = isolatedDots(D, W, H, undefined, true);
+    assert.equal(found.length, 1, `${found.length} isolated`);
+    assert.ok(Math.hypot(found[0].cx - 20.3, found[0].cy - 20.6) < 0.1, `center ${found[0].cx}, ${found[0].cy}`);
+    // (the radius of the soft area: a linear edge 5 px wide adds 5² / 12 to r²)
+    assert.ok(Math.abs(found[0].r - Math.hypot(6, 5 / Math.sqrt(12))) < 0.05, `radius ${found[0].r}`);
+});

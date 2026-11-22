@@ -3764,3 +3764,99 @@ on an orange dot: song-cents has both. Two ways tried, on one zoomed view of it 
 
 Checked in the app: song-cents zoomed in and at the fitted view, dog-ages (95 translucent dots, many overlapping)
 at the fitted view; no console errors. No test: view.js draws on a canvas.
+
+**Fifteen more PLOS ONE figures** (2026-11-22)
+
+The user added fifteen figures to `bench-plos/` (fourteen with hand truth, saved from the app after correcting its
+fit; funnel has none), with notes on each and three general ones. Credits are in `bench-plos/README.md` (Crossref;
+funnel is CC0, the rest CC BY). First run, before any change:
+
+| Image | Dots | Found | P | R | What goes wrong |
+|---|---|---|---|---|---|
+| alloys | 25 | 25 | 1.000 | 1.000 | the top y label isn't found (the scale gives its value) |
+| biomarker | 83 | 112 | 0.348 | 0.470 | zero line read as the x axis, so half the plot masked; radius 4.5 for 6.0 |
+| cattle | 325 | 300 | 1.000 | 0.923 | the red family (25 dots) not found |
+| corneal | 121 | – | – | – | no family: hollow rings and black dots |
+| crimson | 180 | 189 | 0.952 | 1.000 | x label 10² read as 70; y labels, clipped, not read |
+| expression | 46 | 46 | 0.978 | 0.978 | y labels with no ticks, off the gridlines: no y axis |
+| funnel | – | – | – | – | rotated y labels not read (dots right, by eye) |
+| gait | 17 | 17 | 1.000 | 1.000 | outline not noticed |
+| lung-tumor | 473 | – | – | – | no family with exact colors (found with noisy matching); border lines as gridlines |
+| mpo | 45 | – | – | – | opaque dots over gray boxes read as translucent, no radius; a bracket as the x axis |
+| richness | 48 | 170 | 0.282 | 1.000 | 122 dots in the confidence band of the dots' color |
+| stiffness | 305 | 39 | 0.846 | 0.108 | outlines masked; no axes |
+| synthetic | 16 | 13 | 0.923 | 0.750 | two families of 2 dots each not found |
+| tsne | 257 | 252 | 0.972 | 0.953 | crescents under white edges (translucent families) |
+| viability | 236 | 252 | 0.937 | 1.000 | the tick labels' zeros as a family of rings; no axes (labels only) |
+
+Done in this round: the three general notes and biomarker. The rest are open, each its own piece of work.
+
+*The general notes.*
+
+- **A category axis's ticks are numbered 1, 2, …** (`axes-panel.js defaultEntry`): they were placeholders in empty
+  boxes. They are the categories' names until typed over, and values at once if the axis's type is set to linear,
+  which gives each dot a position between the categories (a beeswarm's jitter) instead of the nearest one's name.
+  A remembered entry of unnamed categories is numbered when loaded.
+- **A family is described by the α in effect.** The mask and the fit already go by it (opaque from 1), but the
+  list and the Fit line went by how the family was measured: an opaque one with α typed to 0.5 still said opaque.
+  Now "translucent, α 0.50 (typed)", or "opaque (α typed)" for a translucent one set to 1, and the Fit line says
+  how it was measured and how it is fitted. The estimate isn't measured again: an opaque family fitted as translucent
+  has no overlap levels, a translucent one fitted as opaque keeps its own reading of the image. Measuring again as
+  the other kind is what mpo needs, and is not done.
+- **Ticks can be added and removed by hand.** Each axis has an Add tick button: then a click in the image puts a
+  tick at the click's x (or y), a line under the pointer showing where; Esc ends it. Each tick's row has a button to
+  remove it. An axis that wasn't found gets the same button, so two clicks and two typed values give a scale
+  (stiffness, viability, expression's y). Once the ticks are changed the entry lists every tick's position
+  (`ticks`), remembered with the values; detected ticks keep their label crops and read values, placed ones are
+  marked "placed" and drawn as dashed lines across the image, and "Detected ticks" brings the detected set back.
+  The changed ticks are the scale's only: the mask and the plot's bounds stay the detected axis's. A placed tick
+  is where it was clicked, to 0.1 px, not snapped to a tick mark or gridline: zoom in to place it.
+
+*Biomarker* (83 dots: 112 found, P 0.348, R 0.470 → 92 found, P 0.902, R 1.000). Three causes, in order:
+
+1. **The zero line was the x axis.** The dots standing on it are strokes off the line, as ticks are (10 of them),
+   and the dots above those were their labels; the labels' side, above the line, was outside the plot, and every dot
+   there was masked. Now a line through the middle of the plot (the other axis has labeled ticks on both sides of it)
+   is a reference line when another line of its direction lies at an end of the other axis (`axes.js detectAxes`,
+   `reference`); axes that cross in the middle with nothing at the plot's edges stay axes. With the zero line out,
+   the frame's bottom is the x axis by its two labels, once a frame's side counts as dark where it is as dark as the
+   other axis (the gray frame's sides have mean luminance 175 and 181, either side of the threshold of 180):
+   `FRAME_LUMINANCE_TOL`. Of the 160 local images, only biomarker's axes changed. Recall 0.470 → 0.976, 216 found.
+2. **The radius was 4.5 for 6.0**, so the fit put two or three dots in each. The dots are blurred, with edges about
+   4 px wide. No dot counted as whole, for two reasons. Beyond 2 px from the dots' own color (`NEAR_FAMILY`) a soft
+   edge passes through the frame's gray, which is other ink: every dot had a ring of pixels read as the frame's,
+   and the pixels nearer in were read against that ring as their background. And a blurred disc fails the test of a
+   whole dot's second moments (1.07 against 1.03): blur spreads the moments and not the area. So the radius came
+   from the distance transform.
+3. Now a plain opaque family with no whole dot is **read a second time as blurred dots** (`opaque.js softGround`):
+   the near zone goes on outward along each dot's own falling slope (other ink is flat along itself), the family's
+   background is read beyond the edges, and a blurred disc counts as whole when its pixels at half coverage or more
+   are a disc of the same area (`shape.js isolatedDots`, `blurred`). The second reading is taken only if it shows
+   whole dots. Radius 5.98, five whole dots, 92 found; the 9 extras are second dots in the touching rows (at radius
+   6.6 with blur 1.6, typed, 83 are found for 83, so the measured blur, 1.1, is low).
+
+Tried first and dropped, each for what it moved elsewhere (full benchmark, 183 rows):
+
+- Other ink in a blend of the dots' color and the page counted only where it is flat: phase1's gray fills are such a
+  blend and their edges aren't flat (19 black dots for 16), and boxdots1 and song-cents moved.
+- The near zone grown along soft edges for every family: violin-beeswarm 722 found for 712 (702 there), cattle 298
+  for 300, tsne 250 for 252.
+- Blurred discs counted as whole dots everywhere: round specks of text passed and outvoted the dots (adults1: no
+  family found), and fibers-distance, expression and boxdots1 moved.
+
+As it is, the full benchmark changes in biomarker's row alone (182 rows the same). 307 tests pass, with regression
+tests for the zero line (and an x axis across the middle of the y axis, which stays), a blurred dot as a whole
+one (and one in a faint halo, which isn't), and blurred black dots in a gray frame; each fails with its fix taken
+out. Limit: at a blur of 2 px on dots of 6 the same synthetic scene finds no family at all.
+
+*Open, from the notes, in the order I would take them:*
+
+1. **stiffness** (39 of 305): outlines masked. The largest miss, and gait's unnoticed outline and corneal's hollow
+   rings are the same area (outlined families).
+2. **richness** (122 extra) and **mpo**: a filled shape in the dots' own color under them (a band, boxes).
+3. **corneal**, **lung-tumor**, **cattle**'s red, **synthetic**'s pairs: families the scan misses.
+4. **Axes and labels**: stiffness and viability (none found), lung-tumor (border lines as gridlines), mpo (a
+   bracket as an axis), crimson (10² as 70, clipped labels), funnel (rotated labels), alloys (a label not found),
+   expression (labels with no ticks).
+5. **tsne**: the white edge around translucent dots (the stroke reading is for opaque families).
+6. **viability**: tick labels' zeros as rings.

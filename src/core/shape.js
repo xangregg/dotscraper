@@ -11,6 +11,14 @@ const ISOLATED_MAX_LEVEL = 1.25; // components never above this count are single
 export const ISOLATED_MIN_AREA = 12; // px² (JMP's tiny dots: r 2.6, area 21)
 export const ISOLATED_MAX_ASPECT = 1.05; // ratio of principal second-moment radii
 export const ISOLATED_MAX_MOMENT_RATIO = 1.03; // r(moment) / r(area); 1 for a uniform disc
+// A blurred disc's soft rim spreads its moments and not its area: biomarker's dots, r 6.0 with an edge 4 px wide, have
+// a ratio of 1.07 and none passed, so the radius came from the distance transform, 4.5, and the fit put two or three
+// dots in each. Cut at half coverage, a blurred disc is the disc again (ratio 1.00) of the same area (r 5.9), which
+// a dot on something faint (a halo, a lighter disc under it) is not: its soft area is the larger. Asked for by the caller, where no
+// dot passes as a crisp one: counted always, round specks of text passed too and outvoted the dots (adults1: no
+// family), and four more images' counts moved.
+const ISOLATED_HALF_LEVEL = 0.5; // counts
+const ISOLATED_BLUR_RADIUS_TOL = 0.05; // × r, between the radius of the soft area and of the area at half coverage
 // Outlined dots (bench1 stroked-dots: a light gray fill, a darker ring 2 px wide at the rim) read deeper than one dot
 // at the ring, so none passed as isolated. A component above ISOLATED_MAX_LEVEL is still one dot if every such pixel
 // lies in its outer part, beyond this fraction of the radius from the center.
@@ -70,17 +78,19 @@ export function components(D, width, height) {
 
 /**
  * Isolated whole dots: components that never exceed ISOLATED_MAX_LEVEL, away from the image border, with no
- * off-line pixel nearby (a dot touching a line is partly hidden), and disc-shaped by their second moments.
- * Centroid and area weight pixels by min(D, 1), so the soft rim counts fractionally.
+ * off-line pixel nearby (a dot touching a line is partly hidden), and disc-shaped by their second moments, or, with
+ * `blurred`, by those of their pixels at half coverage or more. Centroid and area weight pixels by min(D, 1), so
+ * the soft rim counts fractionally.
  *
  * @param {Float32Array} D
  * @param {number} width
  * @param {number} height
  * @param {Tolerances} [tol]
+ * @param {boolean} [blurred]  blurred discs count too (ISOLATED_HALF_LEVEL)
  * @returns {{cx: number, cy: number, r: number, aspect: number, box: number[], ringed: boolean}[]}  ringed: deeper
  *   than one dot only in its outer part (an outline)
  */
-export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
+export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES, blurred = false) {
     const dots = [];
     const m = EDGE_RING;
     for (const comp of components(D, width, height)) {
@@ -126,6 +136,8 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
         let mxx = 0;
         let myy = 0;
         let mxy = 0;
+        let halfArea = 0; // px, at half coverage or more, and their summed squared distance from the centroid
+        let halfTr = 0;
         for (let y = y0 - m; y <= y1 + m; y++) {
             for (let x = x0 - m; x <= x1 + m; x++) {
                 const d = D[y * width + x];
@@ -135,6 +147,10 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
                 mxx += w * dx * dx;
                 myy += w * dy * dy;
                 mxy += w * dx * dy;
+                if (d >= ISOLATED_HALF_LEVEL) {
+                    halfArea++;
+                    halfTr += dx * dx + dy * dy;
+                }
             }
         }
         mxx /= a;
@@ -144,7 +160,9 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES) {
         const disc = Math.sqrt(Math.max(0, tr * tr / 4 - (mxx * myy - mxy * mxy)));
         const aspect = Math.sqrt((tr / 2 + disc) / (tr / 2 - disc));
         const r = Math.sqrt(a / Math.PI);
-        if (aspect > ISOLATED_MAX_ASPECT || Math.sqrt(2 * tr) / r > ISOLATED_MAX_MOMENT_RATIO)
+        const halfR = Math.sqrt(halfArea / Math.PI);
+        const blurredDisc = blurred && Math.sqrt(2 * halfTr / halfArea) / halfR <= ISOLATED_MAX_MOMENT_RATIO && Math.abs(r - halfR) <= ISOLATED_BLUR_RADIUS_TOL * r;
+        if (aspect > ISOLATED_MAX_ASPECT || (Math.sqrt(2 * tr) / r > ISOLATED_MAX_MOMENT_RATIO && !blurredDisc))
             continue;
         let ringed = false;
         if (maxD > ISOLATED_MAX_LEVEL) {
