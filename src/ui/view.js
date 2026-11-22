@@ -20,6 +20,13 @@ const CLOSE_THICKEN_SCALE = 1.5;
 const FAMILY_THICKEN_SCALE = 2;
 const MARK_GROWTH = 0.7; // exponent: 1 would keep the stroke a fixed width in image px
 const MARK_CROSS = 4; // CSS px, half-length of a dot's center cross
+// A mark on a dot of nearly its own color is lost (the blue of a found dot on song-cents's blue dots), so every mark
+// is drawn over a wider white stroke: this much on either side. On the page the white doesn't show and the mark's
+// own color does; on a dot it parts the two. Tried first: the mark in a lighter shade of its color where the dot's
+// is near it. That showed the cross, but the circle, half on the page, was lost there, and the shade no longer
+// matched the legend.
+const MARK_CASING = 1; // CSS px
+const MARK_CASING_COLOR = '#fff';
 export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b', selected: '#f0a000', axis: '#e07800' };
 // dots of a family almost on one another: their marks coincide, so the group gets one more ring this far outside
 // all of them, or farther with a thick stroke
@@ -122,36 +129,48 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         return MARK_LINE;
     }
 
-    function drawMarks() {
-        marks.dots.forEach((d, i) => {
-            const close = isClose(d);
+    // The marks, each a path stroked in its color at its width (CSS px): a dot's circle and center cross, and one ring
+    // around each group of near-duplicates, centered on the group, outside every dot of it.
+    function markPaths() {
+        const paths = marks.dots.map((d, i) => {
             const line = markLine(d);
-            ctx.lineWidth = line / scale;
             const c = Math.max(MARK_CROSS, 2 * line) / scale;
             const otherFlags = d.flags?.some(f => f !== 'close');
-            ctx.strokeStyle = i === marks.selected ? MARK_COLORS.selected
-                : close ? MARK_COLORS.close : (otherFlags ? MARK_COLORS.flagged : MARK_COLORS.ok);
-            ctx.beginPath();
-            const r = d.r ?? marks.radius;
-            ctx.arc(d.x, d.y, r, 0, 2 * Math.PI);
-            ctx.moveTo(d.x - c, d.y);
-            ctx.lineTo(d.x + c, d.y);
-            ctx.moveTo(d.x, d.y - c);
-            ctx.lineTo(d.x, d.y + c);
-            ctx.stroke();
+            const color = i === marks.selected ? MARK_COLORS.selected
+                : isClose(d) ? MARK_COLORS.close : (otherFlags ? MARK_COLORS.flagged : MARK_COLORS.ok);
+            const path = new Path2D();
+            path.arc(d.x, d.y, d.r ?? marks.radius, 0, 2 * Math.PI);
+            path.moveTo(d.x - c, d.y);
+            path.lineTo(d.x + c, d.y);
+            path.moveTo(d.x, d.y - c);
+            path.lineTo(d.x, d.y + c);
+            return { path, line, color };
         });
-        // one ring around each group of near-duplicates, centered on the group, outside every dot of it
-        ctx.strokeStyle = MARK_COLORS.close;
         for (const group of closeGroups) {
             const dots = group.map(i => marks.dots[i]);
             const line = markLine(dots[0]);
-            ctx.lineWidth = line / scale;
             const cx = dots.reduce((t, d) => t + d.x, 0) / dots.length;
             const cy = dots.reduce((t, d) => t + d.y, 0) / dots.length;
             const reach = Math.max(...dots.map(d => Math.hypot(d.x - cx, d.y - cy) + (d.r ?? marks.radius)));
-            ctx.beginPath();
-            ctx.arc(cx, cy, reach + Math.max(CLOSE_RING_GAP, CLOSE_RING_GAP_LINES * line) / scale, 0, 2 * Math.PI);
-            ctx.stroke();
+            const path = new Path2D();
+            path.arc(cx, cy, reach + Math.max(CLOSE_RING_GAP, CLOSE_RING_GAP_LINES * line) / scale, 0, 2 * Math.PI);
+            paths.push({ path, line, color: MARK_COLORS.close });
+        }
+        return paths;
+    }
+
+    // (every casing before any mark: a mark's casing doesn't break the marks it crosses)
+    function drawMarks() {
+        const paths = markPaths();
+        ctx.strokeStyle = MARK_CASING_COLOR;
+        for (const { path, line } of paths) {
+            ctx.lineWidth = (line + 2 * MARK_CASING) / scale;
+            ctx.stroke(path);
+        }
+        for (const { path, line, color } of paths) {
+            ctx.lineWidth = line / scale;
+            ctx.strokeStyle = color;
+            ctx.stroke(path);
         }
     }
 

@@ -3743,3 +3743,24 @@ Not done, and known:
 - The radius of a family with no isolated dot comes out high by up to a pixel from the scan (10.96 for 10), and
   the fit's refit leaves 0.3 to 0.7.
 - A family with fewer than three dots at least half in view, or one at no found family's radius, is still none.
+
+**The view: dot marks on dots of their own color** (2026-11-22)
+
+A found dot's mark (circle and center cross, 1.5 CSS px, blue) is hard to see on a blue dot, and a flagged one's red
+on an orange dot: song-cents has both. Two ways tried, on one zoomed view of it (304%):
+
+- **A lighter shade of the mark's color where the dot's is near it** (the user's first choice). The color under
+  each mark read from the image as shown (the mean in the dot's middle), the mark's own color kept when it stood
+  out by lightness (25 units of CIELAB L*) or by color (ΔE 60), else a lighter shade, or a darker one over a dot too
+  light for that. The cross showed. The circle did not: it lies half on the page, and a pale blue line on white is
+  as hard to see as a blue one on blue. And the rule gave neighbors different shades: song-cents's mid blue (L* 59)
+  is too light for the lighter shade, so its dots got navy marks, except those with a black line across their
+  middle, which got pale ones. ΔE alone is no guide here: the blue mark is 43 and 41 from the two blues, a
+  difference a thin line doesn't carry. Dropped.
+- **A white border round every mark** (the second). Each mark is stroked first in white, 1 CSS px wider on either
+  side (`MARK_CASING`), then in its color; every border before any mark, so a mark's border doesn't break the
+  marks it crosses. On the page the white doesn't show; on a dot it parts mark and fill. The marks keep the
+  legend's colors, and nothing is read from the image. Kept, for every mark and the ring around near-duplicates.
+
+Checked in the app: song-cents zoomed in and at the fitted view, dog-ages (95 translucent dots, many overlapping)
+at the fitted view; no console errors. No test: view.js draws on a canvas.
