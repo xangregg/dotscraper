@@ -11,6 +11,7 @@ import { buildMask, plotClips } from './layers.js';
 import { fitDots } from './fit.js';
 import { dotFamilies } from './outline.js';
 import { paletteColors, paletteFamilies } from './colormap.js';
+import { pageStroke } from './stroke.js';
 
 /** @typedef {import('./image.js').RgbaImage} RgbaImage */
 /** @typedef {import('./style.js').Estimate} Estimate */
@@ -137,11 +138,14 @@ export function familyClips(axes, families, width, height) {
  * @param {number[][]} exclude  boxes [x0, y0, x1, y1) px (excludedBoxes)
  * @param {ClipEdge[]} [clips]  the family's clip edges (familyClips); without them the mask reads the cuts from the
  *   family's own coverage alone
+ * @param {Uint8Array|null} [strokes]  the pixels of a stroke in the page's color around the dots (stroke.js
+ *   pageStroke's mask)
  * @returns {{bounds: {left: number|null, right: number|null, top: number|null, bottom: number|null},
- *            clips: ClipEdge[], exclude: number[][]}}  bounds: px, the plot area's sides (axes.js plotBounds)
+ *            clips: ClipEdge[], exclude: number[][], strokes: Uint8Array|null}}  bounds: px, the plot area's sides
+ *   (axes.js plotBounds)
  */
-export function maskOptions(axes, exclude, clips = clipEdges(axes)) {
-    return { bounds: plotBounds(axes), clips, exclude };
+export function maskOptions(axes, exclude, clips = clipEdges(axes), strokes = null) {
+    return { bounds: plotBounds(axes), clips, exclude, strokes };
 }
 
 /**
@@ -207,8 +211,9 @@ export function extractAll(source, jpeg = false) {
     if (missing)
         throw new Error(missing.notes.join(' '));
     const clips = familyClips(axes, prepared.estimates.map(e => ({ D: e.D, radius: e.style.radius })), work.width, work.height);
+    const stroke = pageStroke(work, prepared.estimates);
     return prepared.estimates.flatMap((est, k) => {
-        const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius), clips[k]));
+        const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius), clips[k], stroke.mask));
         const fit = fitDots(fitInput(est.image, est, layers.mask));
         return byFill(work, { est, layers, fit });
     }).map(r => ({ ...r, jpegAuto: switched }));

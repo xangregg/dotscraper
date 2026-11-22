@@ -19,6 +19,7 @@ import { createOutlineModel } from '../core/outline.js';
 import { detectAxes, plotBounds } from '../core/axes.js';
 import { readTickLabels } from '../core/labels.js';
 import { excludedBoxes, familyClips, maskOptions, fitInput, dotFills } from '../core/extract.js';
+import { pageStroke } from '../core/stroke.js';
 import { axisScale, toAxisData, axisResolution, formatData, loadEntries, saveEntries, renderAxis, tickStatus } from './axes-panel.js';
 import { decodeImage, listTestImages, loadTestImage, wireImageInput } from './input.js';
 import { createView, MARK_COLORS } from './view.js';
@@ -94,6 +95,7 @@ const state = {
     worker: null,
     scanning: false, // the scan worker is estimating families: Find dots and the edits wait for it
     annotations: null, // { image, byRadius }: text and legend markers in state.work by dot radius, masked (annotations.js)
+    stroke: null, // { image, key, width, mask, … }: stroke.js pageStroke of the families as they are (strokeNow)
     fitStart: 0,
     tick: null, // the status timer while a fit runs
     blockedShown: false, // the status shows why Find dots can't run (findBlocked)
@@ -188,7 +190,17 @@ function analysisImage() {
 function maskOpts(k) {
     // (the clip edges ask every family, each at the radius in effect: read again whenever a mask is built)
     const clips = familyClips(state.axes, state.families.map((f, i) => ({ D: f.estimate.D, radius: styleOf(i)?.radius })), state.work.width, state.work.height);
-    return { ...maskOptions(state.axes, annotations(styleOf(k)?.radius), clips[k]), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+    return { ...maskOptions(state.axes, annotations(styleOf(k)?.radius), clips[k], strokeNow().mask), ...(k === state.current && state.dilate !== null ? { dilate: state.dilate } : {}) };
+}
+
+// A stroke in the page's color around the opaque dots (stroke.js pageStroke), read again only when a family's
+// estimate or its radius in effect has changed: it is read from all of them together.
+function strokeNow() {
+    const key = state.families.map((f, i) => [f.estimate, styleOf(i)?.radius]);
+    const s = state.stroke;
+    if (s?.image !== state.work || s.key.length !== key.length || key.some(([e, r], i) => s.key[i][0] !== e || s.key[i][1] !== r))
+        state.stroke = { image: state.work, key, ...pageStroke(state.work, state.families.map((f, i) => ({ ...f.estimate, style: styleOf(i) }))) };
+    return state.stroke;
 }
 
 // text and legend markers to mask (extract.js excludedBoxes), read once per analyzed image and radius
@@ -809,7 +821,10 @@ function renderStylePanel() {
         for (const id of ['outline-color', 'outline-width'])
             $(id).classList.toggle('overridden', fam0.outlineEdit !== undefined);
     }
-    $('style-notes').replaceChildren(...est.notes.map(n => Object.assign(document.createElement('p'), { textContent: n })));
+    const stroke = style?.alpha >= 1 && !est.outlineMask ? strokeNow() : null;
+    const strokeNote = stroke?.mask ? [`The dots have a stroke in the page’s color, about ${stroke.width.toFixed(1)} px wide (read where a whole dot lies over another). `
+        + 'It cuts the dots under it; the fit ignores its pixels there (the Residual view shows them as masked).'] : [];
+    $('style-notes').replaceChildren(...[...est.notes, ...strokeNote].map(n => Object.assign(document.createElement('p'), { textContent: n })));
     renderSample();
 }
 

@@ -41,7 +41,7 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         exponents, scientific notation ("1e+05", "2 × 10³"), the check by the axis's scale; digit-templates.js, generated: the shapes of the digits and of the signs e, E, +, × in 18 fonts), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
-                        whole images whose fills vary, and single outlined families), annotations.js (text lines and legend markers, masked), families.js (all of the
+                        whole images whose fills vary, and single outlined families), annotations.js (text lines and legend markers, masked), stroke.js (a stroke in the page's color around opaque dots, read where whole dots lie over cut ones; its pixels masked), families.js (all of the
                         above, per image: the families to fit), extract.js (from an image to its dots: the scan with the choice of color
                         matching, mask options, fit input, dots' fill colors, and extractAll, all of it at once: the steps the app takes
                         and the bench and tests run), stats.js (medians, quantile), rng.js

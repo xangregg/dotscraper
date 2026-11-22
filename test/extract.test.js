@@ -53,10 +53,13 @@ test('scanFamilies with tryNoisy: both scans run, each on half the progress, and
 test('maskOptions and fitInput: the axes\' bounds and clip edges with the boxes given; the estimate\'s style unless one is given', () => {
     const axes = detectAxes(sparse.image);
     const boxes = [[1, 2, 3, 4]];
-    assert.deepEqual(maskOptions(axes, boxes), { bounds: plotBounds(axes), clips: clipEdges(axes), exclude: boxes });
+    assert.deepEqual(maskOptions(axes, boxes), { bounds: plotBounds(axes), clips: clipEdges(axes), exclude: boxes, strokes: null });
     // with the family's clip edges (familyClips), those instead of the candidates
     const cuts = [{ ...clipEdges(axes)[0], cut: 7 }];
     assert.equal(maskOptions(axes, boxes, cuts).clips, cuts);
+    // … and a stroke's pixels (stroke.js pageStroke), as given
+    const strokes = new Uint8Array(4);
+    assert.equal(maskOptions(axes, boxes, cuts, strokes).strokes, strokes);
     const est = scanFamilies(sparse.image).prepared.estimates[0];
     const mask = new Uint8Array(sparse.image.width * sparse.image.height);
     const input = fitInput(est.image, est, mask);

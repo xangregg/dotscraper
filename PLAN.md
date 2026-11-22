@@ -3620,3 +3620,77 @@ gridlines are within 0.12 px). That is 0.02 years at most, and it is what an axi
 Label benchmark: both axes of song-cents solved, 7 of 7 labels each (testgraphs 33 of 33 labels, 4 of 5 axes; the y
 axis was not paired before, when the header listed the reference line's 7). RESULTS.md has the new row, its time
 from a run of this image alone.
+
+**song-cents: the white stroke around the dots** (2026-11-22, open question 10)
+
+The dots of song-cents have a white stroke, 1 SVG unit, 2.36 px. On a dot alone it shows nowhere (white on a white
+page). Where a dot lies over another it cuts an arc of the page's color through the one below, often through its
+center. The opaque model has no stroke, so a dot placed where the cut dot is pays for every pixel of that arc, and
+the fit leaves it out. Looked into first: the 36 missed dots are not hidden (by a count that includes same-color
+neighbors, about two thirds of each one's fill shows), and with the thin white gaps between dot inks ignored by the
+fit, in a throwaway script, 27 of them were found.
+
+What is built (src/core/stroke.js, `pageStroke`; layers.js `buildMask` option `strokes`; extract.js `maskOptions`
+and `extractAll`; the app's mask options and a note in the family's panel):
+
+- **Reading the stroke, before the fit.** Each opaque family's ink (coverage 0.5 or more) falls into pieces. A piece
+  with a disc's area (0.85 to 1.12 of π r²) and a disc's box is a whole dot: one on top, bounded all round by its own
+  stroke. A smaller piece is a cut dot, unless it is a speck (under 0.08 of a dot) or has no pixel 2 px inside it (a
+  dash or a line in the family's color). Outward from each whole dot's edge, a direction for each px of its circle,
+  where a cut piece's ink lies within reach (half a radius, 4 to 8 px) with the page's color between, the width of
+  the page is measured, the edges' pixels counted by their coverage. The dots have a stroke when there are 40 such
+  gaps or more (about an arc and a half) and 0.75 of them are within 0.75 px of their median, which is the stroke's
+  width.
+- **Why whole dots and cut pieces.** Dots packed side by side (a beeswarm) have a ring of the page round each of
+  them, about one width for small dots, and no stroke: whole dots beside whole dots tell nothing. A piece cut by
+  the whole dot's own stroke lies at one distance from it all along; without a stroke a dot is cut only by ink that
+  touches it, and a cut piece beside a whole dot merely lies near it, at any distance, the gap widening along it.
+- **What the fit does with it.** The pixels that aren't dot ink, in gaps no wider than the stroke plus 1.75 px
+  between dot inks with the page's color in them (across in a row, a column or a diagonal), are masked, with no
+  margin. Any family's ink bounds a gap, a sliver's too: what shows of a dot under a stroke may be no more. Other ink
+  between two dots (a line) is no gap.
+- **The page** is the image's most common background, not a family's own ground: hair1's pink fills lie on their
+  black outlines, 3.5 px wide and one width all round, and were "stroked" for a while.
+- Only opaque families are read: a translucent family's overlaps show in its levels, and rings are fitted in their
+  drawing order. The hollow rings of song-cents are untouched.
+
+Tried and dropped: runs of directions round a whole dot told as an arc (one width) or a near miss (growing by
+r θ²): too few runs go far enough round to tell (song-cents 11 to 15 arcs of 164 whole dots, and 5 "near misses"),
+and small packed dots pass. Gaps by the first ink pixel instead of by coverage: ±0.5 px of noise, a peak 1.5 px
+wide. Joining what a stroke parts in the mask's opening for thin marks: 3 more false navy dots, nothing gained.
+Limits on mixed pixels along a radius and on gaps narrower than the stroke: no image or test needed them.
+
+Results.
+- The 145 local images: one stroke, song-cents (760 gaps, 0.83 of one width, 2.37 px against the SVG's 2.36). The
+  two other images with 40 gaps or more are a beeswarm over a box (bench3 dots-swarm-box: 400, 0.43) and cantons
+  (59, 0.53); nicest language has 20 (0.75). comment1, whose near-duplicates an earlier entry put down to a thin white
+  outline, has none that shows: its overlapping dots are one piece of ink, with no page between.
+- song-cents: 323 found of 325, precision 0.978, recall 0.972 (297, 0.973, 0.889): 27 of the 36 missed dots are
+  found, and the dots that aren't there go from 8 to 7, all navy on the black lines and flagged. Position RMSE
+  0.09 px against the by-hand truth (0.04): two of the dots found under others are 1.2 and 0.7 px off; the median
+  error is 0.025 px, as before. Still missed, 9: 5 hollow rings and 4 dots with little showing.
+- The other 170 rows of the dot benchmark are identical apart from times. `pageStroke` takes 20 ms an image (2.9 s
+  over the 145; song-cents 0.19 s).
+- In the app song-cents gives 323 dots, and the family's notes say the dots have a stroke and how wide.
+- Times. The first full run with the stroke read had row times 3% up at the median; two later runs, with the
+  machine busy (load average 6 to 8), 14% and 16% up on every row. One image alone takes the same with the code
+  and without (cantons at one job: 5.41 s twice, against 5.42 and 5.49 s). RESULTS.md keeps the other 170 rows of
+  the run before, whose numbers are the same, and takes song-cents's two rows from the last run (51 and 52 s, on
+  the busy machine).
+- The reach of the mask, measured on song-cents: at the stroke plus 1.25, 1.75 and 2.75 px the fit finds 316, 316
+  and 315 of 325 with position RMSE 0.13, 0.09 and 0.24 px.
+
+Tests (test/stroke.test.js, 6): synthetic piles of stroked dots in two colors (width 2.5 px read within 0.25; 58
+of 60 dots found, 29 without the mask); no stroke for the same piles unstroked, a packed swarm, dark outlines, one
+stroked pair, near misses beside dots cut by bars, and dashes in the dots' color; the mask beside a sliver and not
+on a line between dots; a part of song-cents against its truth (66 of 72, 57 without). 14 mutations, one per
+condition, each fail a test.
+
+Not done, and known:
+- The scan did not find a family in two synthetic scenes made for these tests: orange dots with none on top, in
+  stroked piles (found when the same piles had no strokes), and orange dots nearly all cut by blue ones, without
+  strokes. song-cents has whole dots of every fill. Not looked into.
+- Translucent dots with a white edge (score1's teal, α 0.72: 38 gaps, 0.95 of one width when read as if opaque;
+  wages2025's rims) are not read, and their fits are unchanged.
+- The stroke is not drawn by the model: the Model and Residual views show the dots without it, the arcs masked.
+- Fewer than 40 gaps (one or two overlapping pairs in an image) are no stroke, and those cut dots stay missed.

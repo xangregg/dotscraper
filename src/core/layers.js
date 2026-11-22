@@ -636,6 +636,8 @@ function overInk(fm) {
  * @param {import('./axes.js').ClipEdge[]} [opts.clips]  lines where the plot may clip its dots (axes.clipEdges), or, with `cut`, lines
  *   where it does (plotClips, which also asks the other families); beyond one that cuts this
  *   family's coverage, everything is masked
+ * @param {Uint8Array|null} [opts.strokes]  1 on the pixels of a stroke in the page's color around the dots, where it
+ *   cuts the dots under them (stroke.js pageStroke): masked, with no margin
  * @returns {{classes: Uint8Array, thin: Uint8Array, mask: Uint8Array, dilate: number,
  *            stats: {background: number, family: number, other: number, thin: number, masked: number,
  *                    maskedFamily: number, outside: number, clipped?: import('./axes.js').ClipEdge[]}}}
@@ -732,6 +734,12 @@ export function buildMask(image, estimate, opts = {}) {
         seedMask[p] = classes[p] === CLASS_OTHER || thin[p] || (over && over[estimate.familyMeasure.edgeInk[p]]) ? 1 : 0;
     fillBoxes(seedMask, width, height, opts.exclude);
     const mask = dilate(seedMask, width, height, r);
+    // a stroke's pixels are the page's color where a dot may be: unknown, and only they (the ink on either side is
+    // what shows of the dots)
+    if (opts.strokes) {
+        for (let p = 0; p < n; p++)
+            mask[p] ||= opts.strokes[p];
+    }
     let outside = opts.bounds && style.radius ? maskOutside(mask, width, height, opts.bounds, OUTSIDE_MARGIN_RADII * style.radius) : 0;
     for (const edge of cuts)
         outside += maskBeyond(mask, width, height, edge, edge.cut);
