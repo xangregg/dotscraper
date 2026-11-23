@@ -163,11 +163,11 @@ test('regression: bench-r gg-gray-hi, the tick labels and tick marks are no tran
 
 // Translucent dots with a ring over a band of one dot's color (the dots' color at their α) with a line of the full
 // color along its middle, as a regression line and its confidence band are drawn in the points' color (richness)
-function bandScene() {
+// `ties`: a second dot on the first dot wholly on the band, and on the first wholly off it
+function bandScene(ties = false, seed = 3, alpha = 0.22) {
     const W = 520;
     const H = 380;
     const color = [58, 94, 204];
-    const alpha = 0.22;
     const page = solidImage(W, H, [255, 255, 255]);
     const mid = x => 300 - 0.42 * (x - 40); // the line's y at x
     const half = x => 16 + 0.0012 * (x - 260) ** 2; // the band's half-height there
@@ -179,13 +179,17 @@ function bandScene() {
             }
         }
     }
-    const rng = createRng(3);
+    const rng = createRng(seed);
     const dots = [];
     // dots off the band, on it and across its edges
     while (dots.length < 36) {
         const d = { x: 50 + 420 * rng.uniform(), y: 40 + 300 * rng.uniform() };
         if (dots.every(e => Math.hypot(e.x - d.x, e.y - d.y) > 16))
             dots.push(d);
+    }
+    if (ties) {
+        const off = d => Math.abs(d.y - mid(d.x)) - half(d.x);
+        dots.push({ ...dots.find(d => off(d) < -12.5) }, { ...dots.find(d => off(d) > 12.5) });
     }
     const model = createDotModel(page, { color, alpha, radius: 12.5, ring: { inner: 0.79, alpha: 0.1 } });
     model.addAll(dots);
@@ -210,4 +214,25 @@ test('regression: outlined translucent dots over a band of one dot\'s color: a d
     assert.ok(res.fit.dots.length <= 38, `${res.fit.dots.length} dots in all`);
     const rings = res.fit.log.find(l => l.stage === 'rings');
     assert.ok(rings?.removed >= 40, `removed for their rings: ${rings?.removed}`);
+});
+
+test('regression: a dot under a dot on the band is the band, and goes; two dots in one place stay two, on the band or off it (richness)', () => {
+    // before: with the dots on the band gone for their rings, the band is missing from the model, and a dot left
+    // under a real one on it, within 0.35 r, stayed as a possible tie under the same ring (richness: 7 of 58). Such
+    // a dot shows no more inside it than around it; a real tie does. And the dots left on the band lay up to 4 px
+    // off, covering more of it, until the band was divided out of the fit's image.
+    // Seed 5: the tie is on the line, and its rings read 0.34 and 0.41 among the band's dots. 16: a dot of the band
+    // under the tie, all three with nothing more inside than around. At α 0.45 a ring over a band the model lacks
+    // reads low unless what lies under the dot is taken off (ringShown's k): the tie on the band lost a dot
+    for (const [seed, alpha] of [[3, 0.22], [5, 0.22], [16, 0.22], [3, 0.45]]) {
+        const { image, dots } = bandScene(true, seed, alpha);
+        const [res] = extractAll(image);
+        const m = matchDots(dots, res.fit.dots, 6);
+        assert.equal(m.pairs.length, 38, `seed ${seed}, α ${alpha}: ${m.pairs.length} of 38 found`);
+        assert.equal(res.fit.dots.length, 38, `seed ${seed}, α ${alpha}`);
+        const worst = Math.max(...m.pairs.map(p => p.d));
+        assert.ok(worst < 0.3, `seed ${seed}, α ${alpha}: a dot ${worst} px off`);
+    }
+    const plain = bandScene();
+    assert.equal(extractAll(plain.image)[0].fit.dots.length, 36);
 });

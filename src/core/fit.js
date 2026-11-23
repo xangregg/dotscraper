@@ -120,12 +120,23 @@ export const FLAG_CLOSE_RADII = MERGE_RADII;
 // fit: the 48 dots 0.43 to 2.29 (median 1.02), the 122 others −2.1 to 1.4 (median −0.19, ninth decile 0.45).
 // Dots under RING_MIN_SHOWN go, and the rest are read again until none does (richness: 57 left, the 48 among them;
 // at 0.35, 108 left; at 0.65, 53 with 47 of the 48; by the sectors' mean, 59 with 45).
+// (Those numbers are of the step as first read, without what lies under the dot taken off: k in ringShown.)
 const RING_SECTORS = 12;
 const RING_MIN_SECTORS = 6; // sectors needed with RING_SECTOR_MIN_PIXELS of rim and of inside unmasked
 const RING_SECTOR_MIN_PIXELS = 2; // px (summed coverage)
 const RING_MIN_SHOWN = 0.5;
 // (the step is predicted without the blur: not for rings narrower than this many blurs)
 const RING_MIN_WIDTH_BLURS = 2;
+// Once ringless dots have gone, what they explained (the band) is missing from the model, and a dot left to explain
+// it under a real one, or where too little of its ring can be read, shows by its fill: the model lacks no more
+// layers inside it than just outside its rim (fillShown: 1 for a dot, 0 for none). Richness, read in t: the 51 dots
+// 0.88 to 1.67, the four others −0.00 to 0.20; bench2 stroked-dots' 204, where nothing goes, 0.78 to 1.18.
+const FILL_OUTSIDE = [1.5, 4.5]; // px beyond the rim (and two blurs): just outside the dot
+const FILL_MIN_SHOWN = 0.5;
+const UNDER_SMOOTH = 3; // px either way: the box the missing layers are averaged over
+const LACKING_MAX = 4; // layers the model may be read as lacking, or having too many, at a pixel
+const T_MIN = 1e-3; // least transmittance read
+const T_BISECTIONS = 20; // halvings in reading a pixel's transmittance
 const PROGRESS_INTERVAL = 150; // ms between progress reports
 
 function huber(r) {
@@ -488,6 +499,7 @@ export function createFit(input) {
     const fitColor = style.fitColor ?? style.color;
     const fillT = FILL_LEVEL * colorDistance(B, fitColor);
     const pos = new Map(); // id → { x, y }
+    const shownT = new Float32Array(n).fill(NaN); // the transmittance each pixel shows, once read (imageT)
     const pinned = new Set(); // ids placed by hand: refinement leaves them where they are
 
     function modelT(p) {
@@ -1092,6 +1104,7 @@ export function createFit(input) {
         const dots = style.layered ? model.dots() : [...pos.values()];
         style = s;
         model = makeModel(style);
+        shownT.fill(NaN);
         pos.clear();
         for (const d of dots) {
             const id = add(d.x, d.y, d.z);
@@ -1104,18 +1117,54 @@ export function createFit(input) {
         return loss([0, 0, width, height]);
     }
 
-    // The share of a dot's ring that the image shows (RING_SECTORS): per sector, 1 + (the mean residual on the ring −
-    // that on the band of the ring's width just inside it) / the ring's contribution there, which is the fill's
-    // color through what the rest of the model lets through, tC · T · a / (1 − α·m − a·m_ring) per unit of ring;
-    // the median over sectors, NaN with too few unmasked.
+    // The transmittance that renders to a value t, by the model's own values (valueOf falls as T rises).
+    function transmittanceOf(t) {
+        let lo = 0;
+        let hi = 1;
+        for (let k = 0; k < T_BISECTIONS; k++) {
+            const mid = (lo + hi) / 2;
+            if (model.valueOf(mid) > t)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        return (lo + hi) / 2;
+    }
+
+    // The transmittance a pixel of the fit's image shows; kept.
+    function imageT(p) {
+        if (Number.isNaN(shownT[p]))
+            shownT[p] = transmittanceOf(imgT[p]);
+        return shownT[p];
+    }
+
+    // The layers of the dots' color the model lacks at a pixel (fewer than none where it is too dark), a layer being
+    // one dot's fill: log(T shown / T modeled) / log(1 − α). In layers, what lies under a dot and isn't in the model
+    // counts the same inside it and around it, and drops out of their difference; in t it counts by what the model
+    // lets through there. NaN where another layer would no longer show (BIRTH_MIN_STEP).
+    function lacking(p) {
+        const Tp = model.transmittance[p];
+        if (!(model.valueOf(Tp * (1 - style.alpha)) - model.valueOf(Tp) >= BIRTH_MIN_STEP))
+            return NaN;
+        const layers = Math.log(Math.max(T_MIN, imageT(p)) / Math.max(T_MIN, Tp)) / Math.log(1 - style.alpha);
+        return Math.min(LACKING_MAX, Math.max(-LACKING_MAX, layers));
+    }
+
+    const sectorOf = (x, y, i, j) => Math.min(RING_SECTORS - 1, Math.floor((Math.atan2(j + 0.5 - y, i + 0.5 - x) + Math.PI) / (2 * Math.PI) * RING_SECTORS));
+
+    // The share of a dot's ring that the image shows (RING_SECTORS). Per sector, what the image lets through on the
+    // band of the ring's width just inside the ring, over what the model does, is k: 1, or (1 − α)ⁿ with n layers
+    // under the dot that the model lacks. The share is 1 + the mean of k·T modeled − T shown on the ring, over the
+    // ring's own part there, k · T · a / (1 − α·m − a·m_ring) per unit of ring. The median over sectors, NaN with
+    // too few unmasked. Without k, a real dot on richness's band, the band gone from the model, had 0.78 of its ring
+    // at best, and two dots in one place 0.53. (Not in layers, as fillShown: a ring nearly opaque is many layers.)
     function ringShown(x, y) {
         const { radius: r, ring, alpha } = style;
         const ri = ring.inner * r;
         const ro = (ring.outer ?? 1) * r;
         const inside = Math.max(0, 2 * ri - ro);
-        const tC = colorDistance(B, fitColor);
         const T = model.transmittance;
-        const sectors = Array.from({ length: RING_SECTORS }, () => ({ rim: 0, rimW: 0, inner: 0, innerW: 0, expected: 0 }));
+        const sectors = Array.from({ length: RING_SECTORS }, () => ({ rim: 0, rimT: 0, rimW: 0, own: 0, inner: 0, innerT: 0, innerW: 0 }));
         for (let j = Math.max(0, Math.floor(y - r - 1)); j <= Math.min(height - 1, y + r + 1); j++) {
             for (let i = Math.max(0, Math.floor(x - r - 1)); i <= Math.min(width - 1, x + r + 1); i++) {
                 const p = j * width + i;
@@ -1127,42 +1176,150 @@ export function createFit(input) {
                 const within = pixelCoverage(x, y, ri, i, j);
                 const mRing = (ro < r ? pixelCoverage(x, y, ro, i, j) : m) - within;
                 const mInner = within - pixelCoverage(x, y, inside, i, j);
-                const res = imgT[p] - modelT(p);
-                const s = sectors[Math.min(RING_SECTORS - 1, Math.floor((Math.atan2(j + 0.5 - y, i + 0.5 - x) + Math.PI) / (2 * Math.PI) * RING_SECTORS))];
-                s.rim += mRing * res;
+                const modeled = transmittanceOf(modelT(p));
+                const s = sectors[sectorOf(x, y, i, j)];
+                s.rim += mRing * imageT(p);
+                s.rimT += mRing * modeled;
                 s.rimW += mRing;
-                s.expected += mRing * tC * T[p] * ring.alpha / (1 - alpha * m - ring.alpha * mRing);
-                s.inner += mInner * res;
+                s.own += mRing * T[p] * ring.alpha / (1 - alpha * m - ring.alpha * mRing);
+                s.inner += mInner * imageT(p);
+                s.innerT += mInner * modeled;
                 s.innerW += mInner;
             }
         }
-        const shown = sectors.filter(s => s.rimW >= RING_SECTOR_MIN_PIXELS && s.innerW >= RING_SECTOR_MIN_PIXELS && s.expected > 0)
-            .map(s => 1 + (s.rim / s.rimW - s.inner / s.innerW) / (s.expected / s.rimW)).sort((a, b) => a - b);
+        const shown = sectors.filter(s => s.rimW >= RING_SECTOR_MIN_PIXELS && s.innerW >= RING_SECTOR_MIN_PIXELS && s.own > 0 && s.innerT > 0)
+            .map(s => 1 + (s.inner / s.innerT * s.rimT - s.rim) / (s.inner / s.innerT * s.own)).sort((a, b) => a - b);
         return shown.length >= RING_MIN_SECTORS ? shown[Math.floor(shown.length / 2)] : NaN;
+    }
+
+    // The dots the image shows at a dot's place beyond what lies under them: per sector, 1 + the layers the model
+    // lacks inside the dot's ring − those it lacks just outside its rim; the median over sectors, NaN with too few
+    // unmasked. A dot on a band the model doesn't have reads 1 (the band is missing on both sides of its rim), a dot
+    // put there to explain the band reads 0.
+    function fillShown(x, y) {
+        const { radius: r, ring, blur = 0 } = style;
+        const ri = ring.inner * r;
+        const from = r + FILL_OUTSIDE[0] + 2 * blur;
+        const to = r + FILL_OUTSIDE[1] + 2 * blur;
+        const sectors = Array.from({ length: RING_SECTORS }, () => ({ inner: 0, innerW: 0, outer: 0, outerW: 0 }));
+        for (let j = Math.max(0, Math.floor(y - to - 1)); j <= Math.min(height - 1, y + to + 1); j++) {
+            for (let i = Math.max(0, Math.floor(x - to - 1)); i <= Math.min(width - 1, x + to + 1); i++) {
+                const p = j * width + i;
+                if (!weight[p])
+                    continue;
+                const d = Math.hypot(i + 0.5 - x, j + 0.5 - y);
+                const inner = d < ri - blur;
+                if (!inner && !(d >= from && d < to))
+                    continue;
+                const lack = lacking(p);
+                if (Number.isNaN(lack))
+                    continue;
+                const s = sectors[sectorOf(x, y, i, j)];
+                if (inner) {
+                    s.inner += lack;
+                    s.innerW++;
+                }
+                else {
+                    s.outer += lack;
+                    s.outerW++;
+                }
+            }
+        }
+        const shown = sectors.filter(s => s.innerW >= RING_SECTOR_MIN_PIXELS && s.outerW >= RING_SECTOR_MIN_PIXELS)
+            .map(s => 1 + s.inner / s.innerW - s.outer / s.outerW).sort((a, b) => a - b);
+        return shown.length >= RING_MIN_SECTORS ? shown[Math.floor(shown.length / 2)] : NaN;
+    }
+
+    // What the removed dots explained lies under the dots left, in their color: the layers the model lacks, averaged
+    // over UNDER_SMOOTH px either way and rounded (a band is wide and flat; a ring the model has a little off its
+    // place is narrow, and averages out), are divided out of the fit's image, as an overlay is out of the image
+    // itself (background.js). Else a dot on the band moves to cover more of it: on synthetic bands, dots up to 4 px
+    // off, and 0.13 px with the band divided out. O(pixels).
+    function divideUnder() {
+        const q = 1 - style.alpha;
+        const sum = new Float64Array((width + 1) * (height + 1));
+        const known = new Float64Array((width + 1) * (height + 1));
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const p = y * width + x;
+                const lack = weight[p] ? lacking(p) : NaN;
+                const k = (y + 1) * (width + 1) + x + 1;
+                sum[k] = (Number.isNaN(lack) ? 0 : Math.max(0, lack)) + sum[k - 1] + sum[k - width - 1] - sum[k - width - 2];
+                known[k] = (Number.isNaN(lack) ? 0 : 1) + known[k - 1] + known[k - width - 1] - known[k - width - 2];
+            }
+        }
+        const box = (I, x0, y0, x1, y1) => I[y1 * (width + 1) + x1] - I[y0 * (width + 1) + x1] - I[y1 * (width + 1) + x0] + I[y0 * (width + 1) + x0];
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const p = y * width + x;
+                const rect = [Math.max(0, x - UNDER_SMOOTH), Math.max(0, y - UNDER_SMOOTH), Math.min(width, x + UNDER_SMOOTH + 1), Math.min(height, y + UNDER_SMOOTH + 1)];
+                const under = weight[p] && box(known, ...rect) ? Math.round(box(sum, ...rect) / box(known, ...rect)) : 0;
+                if (under) {
+                    shownT[p] = Math.min(1, imageT(p) / q ** under);
+                    imgT[p] = model.valueOf(shownT[p]);
+                }
+            }
+        }
     }
 
     /**
      * Removes the dots of a translucent, outlined family whose rings the image doesn't show (RING_MIN_SHOWN); dots
-     * placed by hand stay, and dots within FLAG_CLOSE_RADII × r of one whose ring shows. Returns how many went. Nothing is born afterwards: what such a dot
-     * explained (a band in the dots' color) is left to the residual. O(rounds · dots · r²).
+     * placed by hand stay, and dots within FLAG_CLOSE_RADII × r of one whose ring shows. Where any went, so do the
+     * dots left that show no more inside them than around them (FILL_MIN_SHOWN). Returns how many went. Nothing is
+     * born afterwards: what such a dot explained (a band in the dots' color) is left to the residual.
+     * O(rounds · dots · r²).
      */
     function ringless() {
         const { ring, radius, alpha, blur = 0, layered } = style;
         if (!ring || layered || !(alpha > 0 && alpha < 1) || ((ring.outer ?? 1) - ring.inner) * radius < RING_MIN_WIDTH_BLURS * blur)
             return 0;
-        let removed = 0;
+        const gone = [];
         for (;;) {
             const shown = [...pos].filter(([id]) => !pinned.has(id)).map(([id, p]) => ({ id, s: ringShown(p.x, p.y) })).filter(q => !Number.isNaN(q.s));
             // (a dot almost at a dot whose ring shows may be a second one under that ring, a tie: it stays. bench2
             // stroked-dots: of three dots within 4 px, two of them 1 px apart, one read 0.18)
-            const tied = q => shown.some(o => o !== q && o.s >= RING_MIN_SHOWN && Math.hypot(pos.get(o.id).x - pos.get(q.id).x, pos.get(o.id).y - pos.get(q.id).y) <= FLAG_CLOSE_RADII * radius);
+            const close = (a, b) => Math.hypot(pos.get(a.id).x - pos.get(b.id).x, pos.get(a.id).y - pos.get(b.id).y) <= FLAG_CLOSE_RADII * radius;
+            const tied = q => shown.some(o => o !== q && o.s >= RING_MIN_SHOWN && close(o, q));
             const out = shown.filter(q => q.s < RING_MIN_SHOWN && !tied(q));
             if (!out.length)
-                return removed;
-            for (const q of out)
+                break;
+            // Two of them almost in one place wait until the others have gone, whose rings, drawn across theirs, spoil
+            // the reading (a tie on a synthetic band's line read 0.34 and 0.41 among them, 1.72 for the one left).
+            // Then the lesser of the two goes, and the other is read again: they may have one real dot's ring between
+            // them, a dot of the model on either side of its place.
+            const partners = q => out.filter(o => o !== q && close(o, q));
+            const alone = out.filter(q => !partners(q).length);
+            const lesser = out.filter(q => partners(q).every(o => o.s > q.s || (o.s === q.s && o.id > q.id)));
+            for (const q of alone.length ? alone : lesser) {
+                gone.push(pos.get(q.id));
                 remove(q.id);
-            removed += out.length;
+            }
         }
+        if (!gone.length)
+            return 0;
+        // What the removed dots explained is missing from the model now, under the dots left there too: a dot with
+        // no more inside it than just outside its rim is that, not a dot. One at a time, the one with the least
+        // ring first: the dots it lay on read no better than it until it has gone (a tie on a synthetic band with
+        // such a dot under it: −0.05, −0.00 and −0.03, their rings 2.57, 2.52 and 0.12). Then the band is divided out
+        // and the dots placed again (divideUnder); no ring is read again.
+        for (;;) {
+            let least = null;
+            for (const [id, p] of pos) {
+                if (pinned.has(id) || !(fillShown(p.x, p.y) < FILL_MIN_SHOWN))
+                    continue;
+                const ringed = ringShown(p.x, p.y);
+                const s = Number.isNaN(ringed) ? -Infinity : ringed;
+                if (!least || s < least.s)
+                    least = { id, s };
+            }
+            if (!least)
+                break;
+            gone.push(pos.get(least.id));
+            remove(least.id);
+        }
+        divideUnder();
+        refineAll();
+        return gone.length;
     }
 
     // robust residual sd over unmasked pixels the model covers (inside dots)

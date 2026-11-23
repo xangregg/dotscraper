@@ -18,6 +18,8 @@ export const CLASS_OTHER = 2;
 // line is long and narrower than a dot. A "deep" pixel is saturated and beyond the measured levels; deep pixels
 // that an opening removes, in components long enough to be lines, are thin marks.
 const SATURATION_TOL = 8; // 0–255 units from the saturated color
+const PAST_FULL = 1.5; // 0–255 units, over α²: how far past the full color on the line a pixel is still saturated
+const THIN_EDGE_REACH = 2; // px from a thin mark: ink farther past the full color there is the mark's edge
 // The fitted c extrapolates from the levels (economist red: 2 levels, c off by 4.5 units in a synthetic copy); a
 // plateau measured beyond the levels near c is the opaque mark's own color and a better anchor.
 const ANCHOR_MAX_OFFSET = 20; // 0–255 units: a beyond-level this close to c anchors the saturation test
@@ -668,6 +670,14 @@ export function buildMask(image, estimate, opts = {}) {
         const anchor = beyond.length ? beyond.reduce((a, b) => (colorDistance(a.color, style.color) <= colorDistance(b.color, style.color) ? a : b)).color : style.color;
         const d = image.data;
         const opaque = style.alpha >= 1;
+        // (… or a little past the full color on the family's line, where no stack of translucent dots gets: c is
+        // extrapolated from the levels, and an error in them grows as 1 / α² on the way. richness: c, from two levels
+        // at α 0.22, is 25 units short of the regression line's color, and nothing of the line was deep. Farther
+        // past, it is another ink: bench2 gradient-dots-stroke's darker strokes around its dots, at α 0.74)
+        const line = estimate.familyMeasure?.line;
+        const along = p => (line.B[0] - d[4 * p]) * line.u[0] + (line.B[1] - d[4 * p + 1]) * line.u[1] + (line.B[2] - d[4 * p + 2]) * line.u[2];
+        const past = Math.max(SATURATION_TOL, PAST_FULL / style.alpha ** 2);
+        const full = line ? (line.B[0] - anchor[0]) * line.u[0] + (line.B[1] - anchor[1]) * line.u[1] + (line.B[2] - anchor[2]) * line.u[2] : Infinity;
         for (let p = 0; p < n; p++) {
             // opaque families: every pixel of the family's color is "deep" (Laser's bar outlines are drawn in the
             // dot colors, about 6 px wide against dots 11 px across)
@@ -678,7 +688,7 @@ export function buildMask(image, estimate, opts = {}) {
             if (classes[p] !== CLASS_FAMILY || D[p] < limit)
                 continue;
             const e = Math.hypot(d[4 * p] - anchor[0], d[4 * p + 1] - anchor[1], d[4 * p + 2] - anchor[2]);
-            deep[p] = e <= SATURATION_TOL ? 1 : 0;
+            deep[p] = e <= SATURATION_TOL || (line && along(p) >= full && along(p) <= full + past) ? 1 : 0;
         }
         // Other marks may hide the rest of a dot: open the family's pixels together with them, so a dot cut in two by
         // a line over it stays whole (synthetic swarm: half-discs along the median lines joined into "thin" marks).
@@ -707,6 +717,15 @@ export function buildMask(image, estimate, opts = {}) {
         const fam = estimate.familyMeasure;
         if (opaque && fam?.outline && fam.fillRadius && fam.radius - fam.fillRadius >= BARE_MIN_OUTLINE)
             bareFill(image, classes, D, fam.seed, fam.outline, cuts, thin);
+        if (!opaque && line) {
+            // darker still beside a thin mark is its edge (richness: the regression line's first two rows, resampled,
+            // are 10 and 22 units past its own color)
+            const beside = dilate(thin, width, height, THIN_EDGE_REACH);
+            for (let p = 0; p < n; p++) {
+                if (beside[p] && classes[p] === CLASS_FAMILY && along(p) > full + past)
+                    thin[p] = 1;
+            }
+        }
         if (!opaque) {
             // pixels masked anyway are unknown, not empty: the pale halos of dog-ages' curve and dashes broke the
             // dots beside them

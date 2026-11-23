@@ -142,13 +142,31 @@ const RICHNESS = new URL('../bench-plos/richness-10.1371-journal.pone.0359333.pn
 
 test('regression: richness, a confidence band in the color of one dot is not filled with dots', { skip: !existsSync(RICHNESS) && 'bench-plos absent' }, () => {
     // before: 170 found for 48, the band and the regression line through it (the dots' full color) covered with
-    // dots. The dots have rings and the band has none: 113 go for theirs. Left over: 9, on or beside real dots
-    const results = extractAll(readImage(RICHNESS));
+    // dots. The dots have rings and the band has none: 113 went for theirs, and 58 were left. Of the 10 too many, 4
+    // were a pile on the regression line, which wasn't masked (its color is 25 units past the full color the levels
+    // give), and 3 lay under real dots on the band. The last 3 are second dots where the image is two layers deep
+    // off the band, which the truth of 48 placed by hand didn't have; it has 51 now
+    const image = readImage(RICHNESS);
+    const results = extractAll(image);
     assert.equal(results.length, 1);
     const truth = readTruthJson(RICHNESS.replace('bench-plos/', 'bench-plos/truth/').replace('.png', '.json')).dots;
     const m = matchDots(truth, results[0].fit.dots, 0.5 * results[0].fit.radius);
-    assert.equal(m.pairs.length, 48, `${m.pairs.length} of 48 found`);
-    assert.ok(results[0].fit.dots.length <= 60, `${results[0].fit.dots.length} dots in all`);
+    assert.equal(m.pairs.length, truth.length, `${m.pairs.length} of ${truth.length} found`);
+    assert.equal(results[0].fit.dots.length, 51);
+    assert.equal(results[0].layers.mask[443 * image.width + 418], 1, 'the regression line is masked');
+});
+
+const GRADER1 = new URL('../bench-plos/grader1-10.1371-journal.pone.0361887.png', import.meta.url).pathname;
+
+test('regression: grader1, nearly opaque dots with a ring (α 0.93 and 0.07): none goes for its ring', { skip: !existsSync(GRADER1) && 'bench-plos absent' }, () => {
+    // the ring's share read in layers, as the fill's is (fit.js lacking), took 19 of 45 dots: a ring that leaves
+    // nothing through is as many layers as one likes. It is read in what the dots let through
+    const results = extractAll(readImage(GRADER1));
+    const truth = readTruthJson(GRADER1.replace('bench-plos/', 'bench-plos/truth/').replace('.png', '.json')).dots;
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, 0.5 * results[0].fit.radius);
+    assert.equal(m.pairs.length, truth.length, `${m.pairs.length} of ${truth.length} found`);
+    assert.ok(!results[0].fit.log.some(l => l.stage === 'rings'), 'no dot removed for its ring');
 });
 
 const MPO = new URL('../bench-plos/mpo-10.1371-journal.pone.0359318.png', import.meta.url).pathname;

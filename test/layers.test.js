@@ -134,6 +134,43 @@ test('an opaque line in the family’s full color is masked as thin; dots under 
     assert.ok(stats.thin > 0);
 });
 
+test('regression: a line darker than the full color the levels give is past any stack of dots, and masked as thin (richness)', () => {
+    // richness: c, from two levels at α 0.22, came out 25 units short of the regression line's color on the family's
+    // line. More than 8 from c, the line wasn't "saturated": nothing of it was masked, and the fit read it as dots
+    // 14 deep. Here c comes out 16 units short of the dots' own, and the line, 4% farther from the page than that, is
+    // 27 past it
+    const c = [246, 66, 60];
+    const dark = c.map(v => Math.round(255 + 1.04 * (v - 255)));
+    const rng = createRng(4);
+    const points = Array.from({ length: 40 }, () => ({ x: 30 + 340 * rng.uniform(), y: 30 + 240 * rng.uniform() }));
+    const spec = {
+        width: 400, height: 300, background: [255, 255, 255], blur: 0.6,
+        families: [{ color: c, alpha: 0.22, radius: 8.4, points }],
+        lines: [{ points: [[10, 250], [200, 120], [390, 60]], width: 7, color: dark }],
+    };
+    const { image } = synthGraph(spec);
+    const est = estimateStyle(image);
+    const short = Math.hypot(...est.style.color.map((v, ch) => v - dark[ch]));
+    assert.ok(short > 20 && short < 30, `the line's color is ${short} from the full color read`);
+    const { mask, thin } = buildMask(image, est);
+    let core = 0;
+    let coreThin = 0;
+    for (let y = 0; y < 300; y++) {
+        for (let x = 0; x < 400; x++) {
+            const d = lineDistance(x + 0.5, y + 0.5, spec.lines[0].points);
+            if (d < 2) {
+                core++;
+                coreThin += thin[y * 400 + x];
+            }
+            if (d < spec.lines[0].width / 2)
+                assert.equal(mask[y * 400 + x], 1, `line pixel ${x},${y} masked`);
+        }
+    }
+    assert.ok(coreThin / core > 0.95, `${coreThin} of ${core} line core pixels thin`);
+    const far = points.find(p => lineDistance(p.x, p.y, spec.lines[0].points) > 20 && points.every(q => q === p || Math.hypot(q.x - p.x, q.y - p.y) > 20));
+    assert.equal(mask[Math.floor(far.y) * 400 + Math.floor(far.x)], 0);
+});
+
 const DOG = new URL('../testgraphs/dog-ages.png', import.meta.url).pathname;
 test('dog-ages: curve, dashes and text masked; dots and background not', { skip: !existsSync(DOG) && 'local test image absent' }, () => {
     const image = readPng(DOG);

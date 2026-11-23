@@ -4204,3 +4204,73 @@ app: 501 dots, axes read, no console errors.
 
 Open: the one dot short of the title's 502; richness's pile on its line; and the family still hangs on 8 flat
 pixels two layers deep, though every ring is two layers deep and could give level 2 where no two fills overlap.
+
+**richness: the regression line masked, and the band taken off the dots left on it** (2026-11-23)
+
+48 dots in the hand truth: 58 found → 51, the 48 among them. The other three are second dots: see "The truth is
+short" below. Of the 10 too many, 4 were a pile on the regression line, 3 lay under real dots on the band, and 3 are
+those second dots. Three causes and what each needed:
+
+1. **The regression line wasn't masked.** A line in the family's full color is masked where its pixels are
+   saturated, within 8 units of c (`layers.js SATURATION_TOL`). Here c comes from two levels at α 0.22, (76, 110,
+   211), and the line is (58, 94, 204): 25 units past it on the family's line, with its first two rows, resampled,
+   10 and 22 units past that. Nothing of the line was deep, the fit read it as 14 dots deep (275 candidates, 54 s)
+   and left a pile of four on it. An error in the levels grows as 1 / α² in c, so a pixel up to
+   `PAST_FULL` / α² (1.5: 30 units here, 8 at α 0.5 or more) past c on the line is saturated too, and ink farther
+   past it beside a thin mark is the mark's edge (`THIN_EDGE_REACH`, 2 px). Without a limit, every pixel past c: bench2
+   gradient-dots-stroke lost dots to its darker strokes (png 207 → 199 found, R 0.971 → 0.951; jpg R 0.951 → 0.907).
+   With the line masked the fit starts from 48 candidates, the 48 dots, and takes 11 s.
+2. **A dot under a real dot on the band stayed.** Once the ring check has taken the band's dots out, the band is
+   missing from the model, and a dot left on it within 0.35 r of a ringed one stayed as a possible tie under that
+   ring. A second measure tells them: the layers the model lacks inside the dot less those it lacks just outside
+   its rim, plus one (`fit.js fillShown`, by sectors, the median). A real dot reads 1 whatever is under it, a dot
+   that is the band 0. Where the ring check removed anything, dots under 0.5 go one at a time, the one with the
+   least ring first (the dots it lies on read no better until it has gone). Richness, at the first version: the 51
+   dots 0.88 to 1.67, the four others −0.00 to 0.20. Bench2 stroked-dots' 204 dots, where nothing goes: 0.78 to
+   1.18; lung-tumor's 428 readable: 421 within 0.8 to 1.2, the least 0.48 (its ring check removes nothing, so the
+   fill check doesn't run).
+3. **The dots left on the band lay off their places.** A dot on a band the model lacks moves to cover more of it.
+   On synthetic scenes with exact positions (36 dots and two ties over a band of one dot's color and a line, `test/
+   extract.test.js bandScene`, six seeds): RMSE up to 0.62 px and single dots up to 3.7 px off; with the dots beside
+   a removed one placed again, up to 4.1 px and a dot lost; with all placed again, up to three lost. So the band is
+   divided out of the fit's image first (`divideUnder`: the layers the model lacks, averaged over 7 × 7 px and
+   rounded, so that a ring a little off its place averages out), then all dots are placed again: RMSE 0.021 to
+   0.048 px, the worst dot 0.18 px off, over 28 seeds.
+
+The synthetic scenes also showed the ring check losing real dots, which richness's 48 don't show:
+
+- A ring over a band the model lacks reads low: in t, what is under the dot counts by what the model lets through,
+  less on the ring than inside it (a single dot 1 − α of its ring at best, two in one place 0.53 at α 0.22). The
+  share is now read against the model scaled by what the image lets through just inside the ring (`ringShown`'s k).
+  At α 0.45, 8 of 10 seeds lost a tie's second dot without it, 1 of 10 with it.
+- Read in layers instead, as the fill is, a nearly opaque ring is many layers: grader1 (α 0.93, ring 0.07) lost 19
+  of 45 dots. Hence k, in transmittance. Grader1 has a test now.
+- Two ringless dots almost in one place wait until the others have gone, whose rings across theirs spoil the
+  reading (a tie on the line: 0.34 and 0.41 among the band's dots, 1.72 for the one left); then the lesser goes and
+  the other is read again.
+- Tried and dropped: keeping the second of such a pair when their shares sum to 0.5 (no seed needs it once k is
+  in), and removing only the least-ringed of all overlapping dots each round (13 of 14 seeds at α 0.45, against 9 of
+  10: one fixed, another broken).
+
+28 seeds at α 0.22: 38 of 38 found in each, nothing more. At α 0.45: 9 of 10.
+
+**The truth is short.** At three of the 48 the image is two layers deep inside the dot and none outside it, off
+the band: (468, 460), (489, 460) and the right one of the pair at (586, 338). Measured from the count image by
+sectors against the truth's own dots, inside less outside: 2.00, 2.00 and 1.97 there, 0.96 to 1.11 at the other 45.
+The first two are visibly darker in the figure. The fit has two dots at each: against the 48, the benchmark's
+precision was 0.941 (R 1.000, RMSE 0.43 px). The user then saved the truth from the fit: 51 dots, so the row now
+reads 51 for 51 at RMSE 0.00 and checks the count, not the positions. (PLOS papers seldom share their data, so
+these figures have no truth but the image; the Nature ones often do.)
+
+Full benchmark: richness's row alone changes (184 the same; lung-tumor's is the truth's 501): 58 → 51 found,
+P 0.828 → 0.941, R 1.000, flagged 15 → 8, 54 s → 10.5 s at 10 jobs. RMSE against the hand truth 0.39 → 0.43 px:
+four dots, two on the band and two in the pile at (585, 338), are 0.7 to 1.8 px from the truth's places; at
+(402, 459), the farthest, the ring in the image puts the dot between the two by eye, 0.7 px from the truth's place
+and 1.1 from the fit's. 335 tests pass (332 before): a line 27 units past the full color
+read (layers), the band scene with ties at four seeds and α 0.22 and 0.45 (extract), grader1, and richness with 51
+dots and its line masked. Each fails with its fix taken out: the saturation past c, the mark's edge, the fill check,
+the least ring first, the pairs' wait, the division, k. In the app: 51 dots, 8 flagged, the three ties shown as
+double rings, axes read, no console errors.
+
+Open: at α 0.45 one synthetic seed in ten still loses a dot to the
+ring check, read among the band's dots; the fit still fills the band with dots first (88 born) and removes them.
