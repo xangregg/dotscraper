@@ -538,15 +538,20 @@ test('regression: wave1, decimal points beside regular dots are no family', { sk
 const HAIR2 = 'hair2-10.1038-s41586-026-11098-y.png';
 const HAIR3 = 'hair3-10.1038-s41586-026-11098-y.png';
 
-test('regression: hair3, pink fills in a black stroke are one family at their full radius; its decimal points are none', { skip: !existsSync(NATURE + HAIR3) && 'bench-nature hair3 absent' }, () => {
+test('regression: hair3, pink fills in a black stroke are one family at their full radius, its five gray ones another; its decimal points are none', { skip: !existsSync(NATURE + HAIR3) && 'bench-nature hair3 absent' }, () => {
     // before: black decimal points (r 4.97, coverage 0.02) were the only family, 722 "dots"; the pink family's
     // isolated dots were outvoted by those specks (black is its stroke), its coverage diluted by all black ink, and
-    // once found, its radius cut to 18 by the speck family's color excluded from its stroke
+    // once found, its radius cut to 18 by the speck family's color excluded from its stroke.
+    // The gray dots, five in one cluster, were no family: two centers in the black ring's reading, one of them strong,
+    // where a family needed three; they are one as a color all in dots of the pink family's size
     const { estimates } = estimateFamilies(readImage(NATURE + HAIR3));
-    assert.equal(estimates.length, 1, estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
+    assert.equal(estimates.length, 2, estimates.map(e => `${e.style?.color.map(Math.round)} r ${e.style?.radius}`).join('; '));
     assert.ok(Math.hypot(...estimates[0].style.color.map((v, ch) => v - [255, 175, 179][ch])) < 8);
     near(estimates[0].style.radius, 28.3, 0.5, 'radius');
     assert.ok(estimates[0].style.outline, 'outlined');
+    assert.ok(Math.hypot(...estimates[1].style.color.map((v, ch) => v - [226, 225, 226][ch])) < 8);
+    near(estimates[1].style.radius, 28.3, 1, 'the gray dots\' radius');
+    assert.ok(estimates[1].style.outline, 'outlined');
 });
 
 test('regression: hair2, decimal points alone are no family; its clustered pink dots are one, by their outlines, and its white ones by their crescents', { skip: !existsSync(NATURE + HAIR2) && 'bench-nature hair2 absent' }, () => {
@@ -685,6 +690,9 @@ test('regression: engagement1, five blues in one dark stroke are stroked familie
     assert.ok(estimates.length >= 4, `${estimates.length} families`);
     for (const e of estimates)
         near(e.style.radius, 14.3, 0.6, `radius of ${e.style.color.map(Math.round)}`);
+    // the gray of text's edges, 209, is within a cluster's reach of the lavender fills: read in the dark ring it
+    // "had" their ten dots, all its thick pixels in discs of the families' size, and was a fifth family with no dot
+    assert.ok(!estimates.some(e => Math.max(...e.style.color) - Math.min(...e.style.color) < 15), 'no gray family');
 });
 
 const KITE1 = 'kite1-10.1038-s41586-026-11194-z.png';
@@ -981,6 +989,45 @@ test('regression: myeloid1, touching teal dots crossed by lines are a family at 
     assert.deepEqual(results.map(r => r.fit.dots.length), [9, 9]);
     assert.equal(found.length, 18);
     assert.equal(m.recall, 1);
+});
+
+test('a color in two dots of a found family\'s size is a family; at another size, or with a line in it, none', () => {
+    // bench-plos synthetic: a group of two points beside groups of seven and five; a dot family needed three strong
+    // centers, and the two were left out
+    const TEAL = [0, 150, 160];
+    const gray = { color: [90, 90, 90], alpha: 1, radius: 8, points: Array.from({ length: 12 }, (_, i) => ({ x: 40 + 44 * (i % 6), y: 40 + 44 * Math.floor(i / 6) })) };
+    const scene = (radius, lines = []) => synthGraph({
+        width: 320, height: 240, background: [255, 255, 255], blur: 0.5, lines,
+        families: [gray, { color: TEAL, alpha: 1, radius, points: [{ x: 70.3, y: 160.6 }, { x: 210.7, y: 172.2 }] }],
+    }).image;
+    // (with the line, the color's mean is 10 units off the dots')
+    const teal = image => estimateStyle(image).candidates.find(c => Math.hypot(...c.seed.map((v, ch) => v - TEAL[ch])) < 20);
+    const found = teal(scene(8));
+    assert.ok(found, 'two dots at the gray dots\' radius');
+    near(found.radius, 8, 0.3, 'radius');
+    assert.equal(found.dots, 2);
+    // two round marks of another size are not a group of the plot's points
+    assert.equal(teal(scene(12)), undefined);
+    // … nor two dots with a line in their color, which is most of its pixels
+    assert.equal(teal(scene(8, [{ points: [[30, 215], [290, 215]], width: 3, color: TEAL }])), undefined);
+});
+
+const SYNTHETIC = 'synthetic-10.1371-journal.pone.0361775';
+
+test('regression: synthetic, a group of two ringed dots is a family at the translucent families\' radius', { skip: plosSkip(SYNTHETIC) }, () => {
+    // before: 13 found for 16, teal (2 dots, one touching a salmon dot) no family: one strong center in the reading by its ring,
+    // where a family needed three. Olive, two dots 2.5 px apart whose one blob is their overlap's color, is still none.
+    const { results, m } = plos(SYNTHETIC);
+    assert.equal(results.length, 3);
+    const teal = results[2];
+    assert.equal(teal.est.style.alpha, 1);
+    assert.ok(Math.hypot(...teal.est.style.color.map((v, ch) => v - [59, 202, 206][ch])) < 6, `color ${teal.est.style.color}`);
+    near(teal.fit.radius, 11.6, 0.3, 'radius');
+    assert.equal(teal.fit.dots.length, 2);
+    for (const [x, y] of [[397.15, 116.24], [468.48, 116.23]])
+        assert.ok(teal.fit.dots.some(d => Math.hypot(d.x - x, d.y - y) <= 0.5), `teal dot at ${x}, ${y}`);
+    // (the truth's 14 dots of the three families found; olive's 2 missed)
+    assert.equal(m.missed.length, 2);
 });
 
 test('regression: score1, teal dots near a gray line\'s color are not the gray\'s', { skip: plosSkip(SCORE1) }, () => {

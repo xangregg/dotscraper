@@ -95,6 +95,12 @@ const DOT_MANY_ISOLATED = 10;
 // in pairs and a stack, gray pair lines reaching each, arcs at most 0.72; 5 filled centers at its radius, coverage
 // 0.64, radius 13.84 as the orange family's). It still needs DOT_MIN_STRONG centers of DOT_MIN_ARC and coverage.
 const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
+// … and a color that is all dots of that size needs only two of them, one seen whole or by a strong arc: a group can be
+// two points (bench-plos synthetic's teal: 2 dots of 16, one alone and one touching a salmon dot, radius 11.5 beside the
+// translucent families' 11.7, 0.99 of the color inside the two discs, one strong arc). FEW_MIN_COVERAGE of the color lies in the discs: a glyph or
+// a line in it would be most of its pixels.
+const FEW_MIN_DOTS = 2;
+const FEW_MIN_COVERAGE = 0.9;
 // A layer's color lies this far off the line from the page to the family's color, or "seen through it" says nothing:
 // on one line (phase1's grays, white to black) every color is any other seen through a third. The bands measured
 // 48 units off (bench3 ANOVA 206, 213, 231 and bench1 group-smoother-ci 205, 213, 232 against pink and red).
@@ -1807,20 +1813,22 @@ export function isDotFamily(f) {
  *
  * The stages, in order: each color cluster is screened, measured and read as a plain, outlined or stroked fill
  * (tryCluster); the clusters that failed are tried again with what the families found since can tell about them
- * (fillsInFoundOutlines, solidsInOutlineColor, siblingFills); a fill in the page's color is looked for; specks go;
+ * (fillsInFoundOutlines, solidsInOutlineColor, siblingFills, fewSiblings); a fill in the page's color is looked for; specks go;
  * and every family is measured again against the others for the fit (measuredForFit).
  *
  * @param {Scan} scan  its image, backgrounds (the page first, then regions under the dots) and tolerances
  * @param {import('./levels.js').LevelMeasure[]} translucent  the translucent families found
  * @param {number[][]} [ink]  0–255
  * @param {((fraction: number) => void)|null} [onProgress]
+ * @param {number[]} [radii]  px, the radii of the translucent families' whole dots: a color in a few dots of that size
+ *   is a family (fewSiblings)
  * @returns {OpaqueMeasure[]}  the families, each measured against the others, most dots first
  */
-export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
+export function opaqueFamilies(scan, translucent, ink = [], onProgress = null, radii = []) {
     // The search's state, passed through its stages. `out` is the families found so far, which the screens of later
     // clusters ask about; `rejected` the clusters measured and found no family, for the stages after the loop.
     const search = {
-        scan, translucent, ink,
+        scan, translucent, ink, radii,
         // translucent families' level colors are theirs (see measureOpaque's `others`)
         levelColors: translucent.flatMap(f => f.levels.filter(L => !L.inferred).map(L => L.color)),
         // Only the dominant color is excluded up front: a dot color can cover 5% of an image (sparse #3: 5.9%) and
@@ -1839,6 +1847,7 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null) {
     fillsInFoundOutlines(search);
     solidsInOutlineColor(search);
     siblingFills(search);
+    fewSiblings(search);
     const paged = pageFilledFamily(scan);
     if (paged)
         search.out.push(paged);
@@ -1902,12 +1911,12 @@ function tryCluster(search, c) {
         return;
     if (!count || share < DOT_MIN_INTERIOR)
         return;
-    const { fam, plain, found } = outlineReadings(search, c);
+    const { fam, plain, ringed, found } = outlineReadings(search, c);
     fam.interior = share;
     if (found)
         out.push(fam);
     else
-        search.rejected.push(Object.assign(plain, { interior: share }));
+        search.rejected.push(Object.assign(plain, { interior: share, ringed }));
 }
 
 // A color's pixels (within CLUSTER_TOL, off the image's border) and the share of them whose eight neighbors are its
@@ -2000,9 +2009,14 @@ function outlineReadings(search, color) {
     const ring = plain.background;
     const notPage = !backgrounds.some(P => colorDistance(P, ring) <= CLUSTER_TOL);
     const ringable = !onLevelLine(search.translucent, ring) && notPage;
+    // (the reading in the ring's color, measured once and kept when it is no family: fewSiblings asks it again)
+    let ringed = null;
     const outlinedFamily = () => {
-        const outlined = measureOpaque(scan, color, [], ring);
-        return isDotFamily(outlined) ? { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius } : null;
+        if (!ringed) {
+            const outlined = measureOpaque(scan, color, [], ring);
+            ringed = { ...outlined, fillRadius: outlined.fillRadius ?? plain.radius };
+        }
+        return isDotFamily(ringed) ? ringed : null;
     };
     if (!isDotFamily(fam) && ringable && isThin(scan, ring))
         fam = outlinedFamily() ?? fam;
@@ -2031,7 +2045,7 @@ function outlineReadings(search, color) {
             }
         }
     }
-    return { fam, plain, found: byHueRing || isDotFamily(fam) };
+    return { fam, plain, ringed, found: byHueRing || isDotFamily(fam) };
 }
 
 // Fills in a found family's outline: a plot draws every family's outline alike, so a fill whose surroundings read
@@ -2098,6 +2112,22 @@ function siblingFills(search) {
     for (const f of search.rejected) {
         if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots + f.dotsUnder >= DOT_MIN_STRONG && f.coverageUnder >= DOT_MIN_COVERAGE)
             out.push(f);
+    }
+}
+
+// A color that is all dots of a found family's size, too few for the dot test (FEW_MIN_DOTS): read plain, or in the
+// ring around its fills. The size is a family's found here or a translucent family's (`radii`).
+// Not a color within a found family's cluster: read in the ring, its thick fills are that family's dots (engagement1:
+// the gray of text's edges, 209, is 33 units from the lavender fills, whose 10 dots in their dark stroke it "had").
+function fewSiblings(search) {
+    const { out, rejected } = search;
+    const radii = [...search.radii, ...out.filter(g => !g.pageFill).map(g => g.radius)];
+    const few = m => m && m.radius && radii.some(r => Math.abs(m.radius - r) <= SIBLING_RADIUS_TOL * r)
+        && m.dots >= FEW_MIN_DOTS && m.coverage >= FEW_MIN_COVERAGE && (m.strongDots > 0 || m.isolated.length > 0);
+    for (const f of rejected) {
+        const m = [f, f.ringed].find(few);
+        if (m && !out.some(g => g === f || sameCluster(g.seed, f.seed)) && !throughLayer(search, f.seed))
+            out.push(m === f ? f : { ...m, interior: f.interior });
     }
 }
 

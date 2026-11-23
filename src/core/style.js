@@ -209,7 +209,9 @@ export function estimateStyle(image, opts = {}) {
 export function findCandidates(scan, onProgress = null) {
     const { translucent, ink } = translucentFamilies(scan);
     onProgress?.(TRANSLUCENT_SHARE);
-    const opaque = opaqueFamilies(scan, translucent, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f));
+    // (the translucent families' own whole dots give their size, for the colors with too few dots to show theirs)
+    const radii = translucent.map(t => lonelyDots(scan, t)).filter(lone => lone.length).map(lone => median(lone.map(d => d.r)));
+    const opaque = opaqueFamilies(scan, translucent, ink, f => onProgress?.(TRANSLUCENT_SHARE + (1 - TRANSLUCENT_SHARE) * f), radii);
     // a translucent "family" with a level in an opaque family's outline color is those outlines (degradation1: the
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));

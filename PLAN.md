@@ -4335,3 +4335,44 @@ words, with no box over any of its 180 dots; each fails with the rule taken out,
 the share at 1.2 or the limit dropped.
 340 tests pass (338 before). In the app: 186 dots, 14 flagged, the six possible doubles shown as double rings, none on
 the text, no console errors.
+
+**synthetic: a family of two dots** (2026-11-23)
+
+Bench-plos synthetic has four colors, two of them with two dots each; salmon and purple were found, teal and
+olive weren't. Neither was a candidate:
+
+- **Teal**, two dots, one alone and one touching a salmon dot, with the ring ggplot2's translucent dots have. With
+  one layer it shows no levels, so it is an opaque candidate, and read in its ring's color it measures right: radius
+  11.5 beside the translucent families' 11.7, both centers, 0.99 of the color inside the two discs. But a dot family
+  needs three strong centers (`DOT_MIN_STRONG`), and it has one (the other dot's edge is cut by the salmon dot).
+- **Olive**, two dots 2.5 px apart: one blob in the color of two layers (131, 178, 15), with 64 pixels of the single
+  layer in two thin crescents. No color cluster (442 pixels where 443 are needed), and one center if there were.
+  Left alone, as the user expected.
+
+A group can be two points, and a figure draws its groups in one marker size. So a color that failed the dot test
+is a family when it is all dots of a found family's size (`opaque.js fewSiblings`): two centers or more
+(`FEW_MIN_DOTS`), one of them whole or seen by a strong arc, 0.9 of the color in their discs (`FEW_MIN_COVERAGE`),
+the radius within 0.1 of a family's found (`SIBLING_RADIUS_TOL`), an opaque one's or the median of a translucent
+family's whole dots (passed in from `style.js findCandidates`). It is read plain or in the ring around its fills;
+the ring's reading, measured in `outlineReadings` and thrown away when it was no family, is kept for this.
+
+The first full benchmark showed two more rows change:
+
+- **hair3**: five gray dots in black strokes, one cluster at dose 0, are now a family (two centers in the black
+  ring's reading, one strong): 29 → 34 found for 34, R 0.824 → 0.971.
+- **engagement1** gained a fifth family with no dots: the gray of text's edges (209), 33 units from the lavender
+  fills and so within a cluster's reach of them, "had" their ten dots when read in the dark ring. A color within a
+  found family's cluster is now left out, and engagement1 is as it was.
+
+Full benchmark after that: synthetic 13 → 15 found for 16 (P 0.933, R 0.875) and hair3 as above; 184 rows the same.
+Synthetic's one extra is a second purple dot at (447, 244), where every pixel inside the dot is the two-layer color
+(201, 131, 254; one layer is 208, 152, 250): two dots in one place, and the hand truth had one.
+The user then added the second purple dot to the truth (17 dots, the pair 0.7 px apart): 15 found for 17, P 1.000,
+R 0.882, RMSE 0.005 px, the two missed being olive's.
+
+Tests: a synthetic scene with a two-dot color at the gray dots' radius (found), at another radius and with a line in
+its color (not found); synthetic itself (three families, teal's two dots within 0.5 px); hair3 (two families);
+engagement1 (no gray family). Each fails with its part of the rule taken out: the stage, the size, the coverage, the
+cluster guard.
+342 tests pass (340 before). In the app: synthetic "Found 15 dots, 2 flagged", both teal dots marked, the purple double as a
+double ring, olive unmarked, no console errors.
