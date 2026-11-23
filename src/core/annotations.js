@@ -4,7 +4,7 @@
 //
 // Text is lines of glyphs: pieces of ink thin for their height (a stroke's half width under TEXT_MAX_STROKE of the
 // glyph's height; a dot's inscribed radius is half its height) and thinner than a dot (TEXT_MAX_STROKE_RADII of the
-// dots' radius), side by side along a row. A chain of touching dots is thin for its height too, and as black as text
+// dots' radius, or TEXT_MAX_STROKE_DOTS of a whole dot's thickness as the image shows it), side by side along a row. A chain of touching dots is thin for its height too, and as black as text
 // (bench-plos adults1: a cluster's pieces, strokes 13.5–20 px beside dots of 13, made a "line" and lost 18 dots), so
 // the dots' radius is the test that holds; bold text as thick as a dot stays unmasked (wages2025's title: 15–17 px
 // beside dots of 17.6). A legend is a column of markers, each just before a line of text; its markers are the dots'
@@ -23,6 +23,15 @@ const GLYPH_MIN_PIXELS = 10;
 // text 0.1–0.15, the median label 0.18–0.2; a disc 0.5)
 const TEXT_MAX_STROKE = 0.3;
 const TEXT_MAX_STROKE_RADII = 0.6; // × the dots' radius (adults1's tick labels 6–8 px beside dots of 13; wages2025's subtitle and legend 4–6 beside 17.6)
+// Where the image shows whole dots, they say how thick a dot is as measured here, an inscribed radius that takes in the
+// antialiased edge (crimson: 11.2–11.7 px for dots of 9.4): the round, filled pieces with an inscribed radius from
+// WHOLE_DOT_RADIUS[0] px under the dots' radius to WHOLE_DOT_RADIUS[1] × it and WHOLE_DOT_RADIUS[2] px more, when
+// there are WHOLE_DOTS_MIN of them. A piece that holds a dot is as thick as their median; a stroke under
+// TEXT_MAX_STROKE_DOTS of it holds none, and may be text (crimson's bold "Productive" and "Latent", strokes 8–10 px:
+// 0.85–1.07 of the dots' radius, 0.70–0.88 of a whole dot here; the crossings of their three t's were dots)
+const TEXT_MAX_STROKE_DOTS = 0.9;
+const WHOLE_DOT_RADIUS = [1, 1.5, 2];
+const WHOLE_DOTS_MIN = 3;
 // … filling this share of its box at least (a plot's frame is thin for its height: testgraphs violin-beeswarm's, 0.02,
 // made a "line" of the whole plot; letters fill 0.15 or more), and no wider than GLYPH_MAX_ASPECT × its height
 const GLYPH_MIN_FILL = 0.08;
@@ -73,11 +82,14 @@ const BOX_PAD = 2; // px around each box, the antialiasing
  */
 export function annotationBoxes(image, page, radius) {
     const pieces = inkPieces(image, page);
+    const round = c => Math.max(c.x1 - c.x0, c.y1 - c.y0) <= MARKER_ASPECT * Math.min(c.x1 - c.x0, c.y1 - c.y0) && c.r >= MARKER_MIN_FILL * (c.y1 - c.y0);
+    const whole = pieces.filter(c => round(c) && c.r >= radius - WHOLE_DOT_RADIUS[0] && c.r <= WHOLE_DOT_RADIUS[1] * radius + WHOLE_DOT_RADIUS[2]);
+    const maxStroke = Math.max(TEXT_MAX_STROKE_RADII * radius, whole.length >= WHOLE_DOTS_MIN ? TEXT_MAX_STROKE_DOTS * upperMedian(whole.map(c => c.r)) : 0);
     const glyphs = pieces.filter(c => {
         const h = c.y1 - c.y0;
         const w = c.x1 - c.x0;
         return h >= GLYPH_MIN_HEIGHT && w <= GLYPH_MAX_ASPECT * h && c.n >= GLYPH_MIN_PIXELS && c.n >= GLYPH_MIN_FILL * w * h
-            && c.r <= TEXT_MAX_STROKE * h && c.r <= TEXT_MAX_STROKE_RADII * radius;
+            && c.r <= TEXT_MAX_STROKE * h && c.r <= maxStroke;
     });
     const lines = textLines(glyphs);
     const pad = b => [b[0] - BOX_PAD, b[1] - BOX_PAD, b[2] + BOX_PAD, b[3] + BOX_PAD];

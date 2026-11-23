@@ -4311,3 +4311,27 @@ Crimson's row in the benchmark is the same (189 found for 180); no other image's
 synthetic x axis with low exponents and one label 2 px down, crimson itself, and small-e-r72's y axis. Each fails
 with its fix taken out: the box searched again, the reader's limit, the own line. In the app: crimson "x log,
 read · y log, read", no console errors.
+
+**crimson: bold text as thick as the dots** (2026-11-23)
+
+Crimson's 9 extras, by the user's reading and the fit's: six are second dots on true ones (three black, three red,
+0.1 to 0.6 px from the truth's, each flagged close), possible doubles that opaque dots don't settle and that stay
+for the user to judge; three, unflagged (margin 41), are the crossings of the t's in "Productive" and "Latent".
+
+The text is bold, black as the black dots, and was no text to `annotations.js`: a glyph's stroke had to be under
+0.6 of the dots' radius (`TEXT_MAX_STROKE_RADII`, set against adults1's chains of touching dots), and these
+measure 8 to 10 px beside a radius of 9.4. The two numbers aren't measured alike, though: a piece's inscribed
+radius takes in its antialiased edge, and crimson's whole dots measure 11.2 to 11.7 by it. Against that, the text's
+strokes are 0.70 to 0.88 of a dot, and a piece that holds a whole dot (adults1's chains) is 1 or more.
+
+So where the image shows whole dots (three or more round, filled pieces about the family's radius), a glyph's
+stroke may be up to 0.9 of their median thickness (`TEXT_MAX_STROKE_DOTS`), or 0.6 of the radius as before,
+whichever is more; without whole dots, as before. Ten lines in `annotationBoxes`; the other tests of a line of text
+(thin for its height, on a baseline, glyphs that vary) are as they were.
+
+Full benchmark: crimson's row alone changes (185 the same): 189 → 186 found for 180, P 0.952 → 0.968, R 1.000.
+Tests: a synthetic bold word (strokes 13 px beside dots of radius 10, with whole dots and without) and crimson's two
+words, with no box over any of its 180 dots; each fails with the rule taken out, and the adults1 scene fails with
+the share at 1.2 or the limit dropped.
+340 tests pass (338 before). In the app: 186 dots, 14 flagged, the six possible doubles shown as double rings, none on
+the text, no console errors.

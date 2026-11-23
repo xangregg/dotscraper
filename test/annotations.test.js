@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { annotationBoxes } from '../src/core/annotations.js';
 import { backgroundColors } from '../src/core/axes.js';
 import { readImage } from '../tools/png.mjs';
@@ -111,6 +111,42 @@ test('annotationBoxes: lines of text and a legend column are boxed; dots, cresce
     for (let x = 470; x <= 570; x += 10)
         assert.ok(!covered(x, 250), `touching dots at ${x}`);
     assert.ok(!covered(400, 290), 'the frame');
+});
+
+test('regression: bold text with strokes almost as thick as the dots is text where whole dots show their thickness (crimson)', () => {
+    // crimson: "Productive" and "Latent" in strokes of 0.85–1.07 of the dots' radius as measured here, with the
+    // antialiased edge, against 1.2 for the dots themselves; the crossings of the three t's were fitted as dots.
+    // Here, without blur: strokes of 13 px measure 7 to 8.6 (at their joints), the dots 9.8
+    const R = 10;
+    const bold = word(40, 120, 80, 'THE LIFT', 13);
+    const dots = [0, 1, 2, 3, 4].map(k => ({ x: 60 + 50 * k, y: 220, r: R, color: INK }));
+    // touching in pairs, their bottoms in line: pieces thin for their height that hold whole dots (adults1)
+    const pairs = [0, 1, 2, 3].flatMap(k => [{ x: 400 + 24 * k, y: 200, r: R, color: INK }, { x: 400 + 24 * k + 3, y: 218, r: R, color: INK }]);
+    const image = paint(700, 300, [...bold, ...dots, ...pairs]);
+    const { text } = annotationBoxes(image, backgroundColors(image)[0], R);
+    const covered = (boxes, x, y) => boxes.some(b => inside(b, x, y));
+    // (the T's crossing, and the word's far end)
+    assert.ok(covered(text, 64, 46) && covered(text, 400, 80), JSON.stringify(text));
+    for (const d of [...dots, ...pairs])
+        assert.ok(!covered(text, d.x, d.y), `a box over the dot at ${d.x}, ${d.y}`);
+    // without whole dots to measure, strokes over 0.6 of the radius stay unmasked, as before
+    const alone = paint(700, 300, [...bold, ...pairs]);
+    assert.deepEqual(annotationBoxes(alone, backgroundColors(alone)[0], R).text, []);
+});
+
+const CRIMSON = new URL('../bench-plos/crimson-10.1371-journal.pone.0361655.png', import.meta.url).pathname;
+
+test('regression: crimson, "Productive" and "Latent" are masked, and no dot is', { skip: !existsSync(CRIMSON) && 'bench-plos crimson absent' }, () => {
+    const image = readImage(CRIMSON);
+    const { text } = annotationBoxes(image, backgroundColors(image)[0], 9.37);
+    const covered = (x, y) => text.some(b => inside(b, x, y));
+    // where the fit had dots: the crossings of the t's
+    for (const [x, y] of [[693, 303], [1061, 863], [1166, 863]])
+        assert.ok(covered(x, y), `text at ${x}, ${y}`);
+    const truth = JSON.parse(readFileSync(new URL('../bench-plos/truth/crimson-10.1371-journal.pone.0361655.json', import.meta.url), 'utf8'));
+    assert.equal(truth.dots.length, 180);
+    for (const d of truth.dots)
+        assert.ok(!covered(d.x, d.y), `a box over the dot at ${d.x}, ${d.y}`);
 });
 
 const WAGES = new URL('../testgraphs/wages2025.png', import.meta.url).pathname;
