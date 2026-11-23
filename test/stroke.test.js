@@ -219,3 +219,42 @@ test('regression: song-cents, a white stroke 2.4 px wide, and the dots it cuts',
     assert.ok(now >= 65, `${now} of 72 found`);
     assert.ok(before <= 58, `${before} of 72 found without the stroke`);
 });
+
+// a Gaussian of sd `sigma` px over the image, as a figure enlarged from a small one is soft
+function blurred(image, sigma) {
+    const { width, height } = image;
+    const half = Math.ceil(3 * sigma);
+    const kernel = Array.from({ length: 2 * half + 1 }, (_, i) => Math.exp(-((i - half) ** 2) / (2 * sigma * sigma)));
+    const norm = kernel.reduce((s, v) => s + v, 0);
+    const pass = (src, dx, dy) => {
+        const dst = new Float32Array(src.length);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                for (let k = -half; k <= half; k++) {
+                    const q = 4 * (Math.min(height - 1, Math.max(0, y + k * dy)) * width + Math.min(width - 1, Math.max(0, x + k * dx)));
+                    for (let ch = 0; ch < 3; ch++)
+                        dst[4 * (y * width + x) + ch] += kernel[k + half] / norm * src[q + ch];
+                }
+            }
+        }
+        return dst;
+    };
+    const out = pass(pass(Float32Array.from(image.data), 1, 0), 0, 1);
+    const data = new Uint8ClampedArray(out.length);
+    for (let p = 0; p < width * height; p++)
+        data.set([out[4 * p], out[4 * p + 1], out[4 * p + 2], 255], 4 * p);
+    return { width, height, data };
+}
+test('regression: a blurred stroke never shows the page\'s color between two dots, and is masked all the same (tsne)', () => {
+    // before: the stroke was found, but its pixels count as the page\'s only within a quarter of the way to the dots\'
+    // color, and a stroke of 3 px under a blur of 1.2 is lighter than that nowhere between two gray dots: no gap was
+    // masked, and the dots under others were found as without the stroke (24 here; tsne: 8 of its gray dots missed)
+    const gray = [154, 154, 154];
+    const dots = piles(12, [gray]);
+    const image = blurred(draw(520, 370, dots, 3), 1.2);
+    assert.ok(scan(image).mask, 'the dots have a stroke');
+    const got = found(image);
+    assert.ok(matched(dots, got) >= 38, `${matched(dots, got)} of 60 found`);
+    assert.equal(got.length, matched(dots, got), 'no dot that isn\'t there');
+    assert.ok(matched(dots, foundPlain(image)) <= 26, `${matched(dots, foundPlain(image))} of 60 without the stroke`);
+});

@@ -53,6 +53,11 @@ const STROKE_WIDTH_TOL = 0.75; // px
 // 2.75 px the fit finds 316, 316 and 315 of 325 dots, with 10, 10 and 13 that aren't there and position RMSE 0.13,
 // 0.09 and 0.24 px.
 const MASK_EXTRA_REACH = 1.75; // px
+// … and the page shows in a gap where a pixel is within this share of the way from the page to the nearest family's
+// color: more than PAGE_TOL_SHARE, which finds the stroke. In a blurred image a stroke 3 px wide between two dots
+// never reaches the page's color (tsne: gray dots of 154, the stroke between them 204 to 238, 0.17 to 0.5 of the
+// way), and with the strict test few of its gaps were masked: 8 gray dots under others missed.
+const MASK_PAGE_SHARE = 0.5;
 
 /**
  * The stroke in the page's color around the image's opaque dots, if they have one, and the pixels it shows in.
@@ -120,7 +125,13 @@ export function pageStroke(image, estimates) {
     const stroke = median(gaps);
     const share = gaps.filter(g => Math.abs(g - stroke) <= STROKE_WIDTH_TOL).length / gaps.length;
     const found = gaps.length >= STROKE_MIN_GAPS && share >= STROKE_MIN_SHARE;
-    return { width: stroke, gaps: gaps.length, share, mask: found ? gapMask(piece, paper, width, height, stroke + MASK_EXTRA_REACH) : null };
+    if (!found)
+        return { width: stroke, gaps: gaps.length, share, mask: null };
+    const faded = new Uint8Array(n);
+    const fadedTol = MASK_PAGE_SHARE * Math.min(...fams.map(e => colorDistance(e.style.color, page)));
+    for (let p = 0; p < n; p++)
+        faded[p] = (!piece[p] || piece[p] === PIECE_SPECK) && Math.hypot(data[4 * p] - page[0], data[4 * p + 1] - page[1], data[4 * p + 2] - page[2]) <= fadedTol ? 1 : 0;
+    return { width: stroke, gaps: gaps.length, share, mask: gapMask(piece, faded, width, height, stroke + MASK_EXTRA_REACH) };
 }
 
 // Round a whole dot, a direction for each px of its circle: where a cut piece's ink lies beyond the page within reach

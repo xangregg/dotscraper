@@ -4099,3 +4099,44 @@ Still open from the notes on axes:
 - **corneal**: the dotted reference line is a tick of the y axis, unlabeled, at its true value (574.5).
 - Dots lying across an axis line just off its middle can still be taken for its ticks (seen in a synthetic scene:
   three dots 1.5 px above an unticked x axis became its ticks). Biomarker's rule covers a line across the plot only.
+
+**tsne: crescents under a blurred white edge** (2026-11-22)
+
+257 dots in five colors, each with a white edge: cyan, green and blue read as translucent (α 0.80), gray (125
+dots) and brown as opaque. 252 found, 12 missed (by family, as the benchmark counts; pooled over the families, 246
+of 257 matched and 11 missed). Eight of the missed are gray dots under other gray dots, the crescents of the user's
+note; three of the six "extra" dots were second dots put on the dot above such a crescent.
+
+The white edge is already read as a stroke around the gray dots (`stroke.js pageStroke`: 3.1 px wide, 120 gaps,
+0.78 of one width), and its pixels should be masked where a dot lies over another. They weren't: a pixel is the
+page's only within a quarter of the way from the page to the dots' color (at most 40 units), and this image is
+soft: between two gray dots of 154 the stroke reads 204 to 238, a quarter of the way at its very middle, if that.
+So few gaps showed "the page" and the rest stayed in the fit, where a dot placed under them pays for every pixel.
+
+Finding the stroke keeps its strict test (it was set on 145 images). Masking its gaps now takes a pixel within half
+the way to the dots' color as the page showing (`MASK_PAGE_SHARE`): only once a stroke is found, and only in gaps
+between dot inks no wider than the stroke. On tsne, by that share:
+
+| Share | Found | Matched (pooled) | Gray dots missed |
+|---|---|---|---|
+| 0.25 | 255 | 248 | 6 |
+| 0.5 | 256 | 253 | 1 |
+| 0.6 | 256 | 253 | 1 |
+
+The benchmark's row: 256 found, P 0.984, R 0.981 (was 252, 0.972, 0.953); nothing else changes (184 rows the same,
+song-cents among them), 324 tests pass. The regression test is the stroke test's piles in one gray under a blur of
+1.2 px: 40 of 60 found with the gaps masked and 24 without, as with no stroke read at all (at a blur of 1.0 both
+find 49: the gaps still reach the page's color). In the app: 256 dots, axes read, no console errors.
+
+What is left on tsne:
+
+- One gray dot 5.4 px from the dot over it: a sliver.
+- Three dots that the truth has as second blue dots at one place. The color there is not blue over blue (40, 124,
+  184, as at the two blue pairs that are found) but 55, 125, 174 at two of them and 57, 119, 166 at the third:
+  blue at α 0.8 over gray and over brown. So each is a gray or a brown dot lying exactly under a blue one, showing
+  through at a fifth. An opaque family isn't read through a translucent dot of another, and these aren't found.
+- Tried: reading the gray as translucent, which it is (its overlaps are 132 for 154, α 0.8 of a gray of 127). Its
+  levels aren't found because 547 flat pixels of 253, a tint of the page, stand as a first level ahead of them;
+  with that tint dropped the gray is a fourth translucent family, the dots under blue ones would be its, but it
+  then takes the brown dots too (150 gray found for 125, two on each brown dot): 280 found for 257. Dropped; it
+  needs the brown read as translucent with it, or kept out of the mix.
