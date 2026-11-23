@@ -97,6 +97,10 @@ const OTHER_SIDE_MAX_WIDTH = 1.5; // × the tick spacing
 const AXIS_CORNER_TOL = 3; // px
 const END_LINE_MIN_OVERLAP = 0.8; // of a line's length: another at the plot's end runs beside it this far
 const CATEGORY_MIN_LABELS = 2;
+const LABEL_MIN_GAP = 1; // px between an axis line without tick marks and its labels (labelAxis)
+// cornerLabelAxes: a line's two sides are compared this far beyond it, at every so many px along it
+const CORNER_SIDE_REACH = 2; // px
+const CORNER_SIDE_STEP = 4; // px
 // A frame is one color, and its sides' means can fall either side of DARK_LUMINANCE (biomarker's gray frame: 175 at the
 // left, the y axis, and 181 at the bottom): a line this near the other axis's luminance is as dark as it.
 const FRAME_LUMINANCE_TOL = 16; // 0–255
@@ -112,6 +116,7 @@ const PANEL_EDGE_MIN_FILL = 0.8;
 // the image dimension across the edge, and at least TICK_MIN_LENGTH px; labels begin a tick's length farther out.
 const EDGE_TICK_GAP_FRACTION = 0.003;
 const GRID_BASELINE_TOL = 0.03; // × spacing: a dark baseline this close to the gridlines' progression is a tick
+const GRID_SAME_LINE = 1; // px between the rows of two pieces of one gridline (oneLineEach)
 const GRID_LABEL_END_FRACTION = 0.2; // gridline labels sit within this share of the line's length of either end
 
 /**
@@ -731,7 +736,18 @@ function labelAxis(image, backgrounds, lines, dir, other) {
         const a1 = toEnd ? line.to : other.pos - other.thickness / 2;
         if (c1 <= c0 || a1 <= a0)
             continue;
-        const words = mergeWords(inkComponents(image, backgrounds, h ? [a0, c0, a1, c1] : [c0, a0, c1, a1]).map(c => c.box));
+        // The words are read whole, a label's width beyond that stretch at either end, and those centered within it
+        // (LABEL_BEYOND_TOL) are the axis's: cut at the stretch's ends, the labels at the corner and at the line's
+        // far end were half words, centered up to 10 px inward (viability's 250, read at 248; stiffness's 100 at
+        // 102). The other axis's labels, beyond its line, are centered beyond it.
+        // (ink that touches the line is no label: viability's dots at zero lie across its x axis, and their lower
+        // halves, at no gap, were the row nearest it)
+        const max = h ? image.width : image.height;
+        const b0 = Math.max(0, Math.floor(a0 - reach));
+        const b1 = Math.min(max, Math.ceil(a1 + reach));
+        const middle = b => (h ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2);
+        const words = mergeWords(inkComponents(image, backgrounds, h ? [b0, c0, b1, c1] : [c0, b0, c1, b1]).map(c => c.box))
+            .filter(b => wordGap(b, h, side, edge) >= LABEL_MIN_GAP && middle(b) >= a0 - other.thickness / 2 - LABEL_BEYOND_TOL && middle(b) <= a1 + other.thickness / 2 + LABEL_BEYOND_TOL);
         if (words.length < CATEGORY_MIN_LABELS)
             continue;
         // the labels are the row at the smallest gap, as an axis's tick labels are (labelsOnSide)
@@ -747,6 +763,83 @@ function labelAxis(image, backgrounds, lines, dir, other) {
         return { line, ticks };
     }
     return null;
+}
+
+// Gridlines of one direction, one for each: a gridline that dots or a curve cross is found in rows whose runs differ
+// (lung-tumor's at y = 5 as three lines within 2.2 px, each with the label 5; gait's at x = 0.4 as two). Lines whose
+// rows touch or lie within GRID_SAME_LINE px are one, across them all, the longest's extent along.
+function oneLineEach(grid) {
+    const out = [];
+    for (const l of [...grid].sort((a, b) => a.pos - b.pos)) {
+        const last = out[out.length - 1];
+        if (last && l.pos - l.thickness / 2 - (last.pos + last.thickness / 2) <= GRID_SAME_LINE) {
+            const lo = last.pos - last.thickness / 2;
+            const hi = Math.max(last.pos + last.thickness / 2, l.pos + l.thickness / 2);
+            const longer = l.to - l.from > last.to - last.from ? l : last;
+            out[out.length - 1] = { ...longer, pos: (lo + hi) / 2, thickness: hi - lo, luminance: Math.min(l.luminance, last.luminance) };
+        }
+        else {
+            out.push(l);
+        }
+    }
+    return out;
+}
+
+// Gridlines without the panel's border: a first or last line at the end of the gridlines that cross it (`across`,
+// within AXIS_CORNER_TOL of where most of them end) is the frame's side, unless it stands where the others' even
+// spacing puts a gridline (gait: the frame's sides are the gridlines of 0 and 1.6). Lung-tumor's frame, 8 px outside
+// its first gridline and 124 beyond its last, gave ticks at 10.3 and −14.5 beside the 10 and the −10.
+function withoutFrame(grid, across) {
+    if (grid.length < 4 || across.length < 2)
+        return grid;
+    const from = median(across.map(l => l.from));
+    const to = median(across.map(l => l.to));
+    const inner = grid.slice(1, -1);
+    const step = (inner[inner.length - 1].pos - inner[0].pos) / (inner.length - 1);
+    const frame = l => Math.min(Math.abs(l.pos - from), Math.abs(l.pos - to)) <= l.thickness / 2 + AXIS_CORNER_TOL
+        && Math.abs((l.pos - inner[0].pos) / step - Math.round((l.pos - inner[0].pos) / step)) * step > GRID_BASELINE_TOL * step;
+    return grid.filter((l, i) => !((i === 0 || i === grid.length - 1) && frame(l)));
+}
+
+/**
+ * Both axes without tick marks: two lines that meet in the plot's corner, each with its row of labels beyond it, as
+ * labelAxis finds one of them from the other (stiffness: black lines and numbers, as SPSS draws them; viability:
+ * light gray lines, 191, as Excel does). Neither is known first, so every vertical line is tried as the y axis: the x
+ * axis it gives must give it back.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[][]} backgrounds
+ * @param {Line[]} lines
+ * @returns {{x: {line: Line, ticks: Tick[]}|null, y: {line: Line, ticks: Tick[]}|null}}  both, or neither
+ */
+function cornerLabelAxes(image, backgrounds, lines) {
+    const { width, height, data } = image;
+    // A line drawn on the page has one color on both sides of it. The row where a panel ends, its color blended with
+    // the page's, is a light "line" too, with labels beyond it: ggplot2's panel with its tick marks turned off, whose
+    // labels alone are left without an axis as before.
+    const stroke = line => {
+        const h = line.dir === 'h';
+        const off = Math.ceil(line.thickness / 2) + CORNER_SIDE_REACH;
+        const sides = [[[], [], []], [[], [], []]];
+        for (let a = Math.ceil(line.from); a < line.to; a += CORNER_SIDE_STEP) {
+            [-off, off].forEach((d, k) => {
+                const c = Math.round(line.pos - 0.5) + d;
+                if (c < 0 || c >= (h ? height : width))
+                    return;
+                const p = 4 * (h ? c * width + a : a * width + c);
+                for (let ch = 0; ch < 3; ch++)
+                    sides[k][ch].push(data[p + ch]);
+            });
+        }
+        return sides.every(s => s[0].length) && Math.hypot(...[0, 1, 2].map(ch => median(sides[0][ch]) - median(sides[1][ch]))) <= INK_TOL;
+    };
+    for (const line of lines.filter(l => l.dir === 'v' && stroke(l))) {
+        const x = labelAxis(image, backgrounds, lines, 'h', line);
+        const y = x && stroke(x.line) && labelAxis(image, backgrounds, lines, 'v', x.line);
+        if (y && y.line === line)
+            return { x, y };
+    }
+    return { x: null, y: null };
 }
 
 /**
@@ -979,18 +1072,19 @@ export function detectAxes(image) {
         if (!best) {
             // gridlines perpendicular to this axis give its tick positions
             const other = dir === 'h' ? 'v' : 'h';
-            const grid = lines.filter(l => l.dir === other && !l.dark).sort((a, b) => a.pos - b.pos);
+            const grid = withoutFrame(oneLineEach(lines.filter(l => l.dir === other && !l.dark)), lines.filter(l => l.dir === dir && !l.dark));
             if (grid.length >= 2) {
                 const ticks = grid.map(l => ({ pos: l.pos, length: 0, side: 'after', label: null, source: 'grid' }));
                 const step = (ticks[ticks.length - 1].pos - ticks[0].pos) / (ticks.length - 1);
-                for (const base of lines.filter(l => l.dir === other && l.dark)) {
+                const dark = lines.filter(l => l.dir === other && l.dark);
+                for (const base of dark) {
                     const k = (base.pos - ticks[0].pos) / step;
                     if (Math.abs(k - Math.round(k)) * step <= GRID_BASELINE_TOL * step && !ticks.some(t => Math.abs(t.pos - base.pos) < 1))
                         ticks.push({ pos: base.pos, length: 0, side: 'after', label: null, source: 'grid' });
                 }
                 ticks.sort((a, b) => a.pos - b.pos);
-                gridLabels(image, backgrounds, ticks, lines.filter(l => l.dir === other), other);
-                best = { line: gridEndLine(dir, ticks, lines.filter(l => l.dir === other)), ticks };
+                gridLabels(image, backgrounds, ticks, [...grid, ...dark], other);
+                best = { line: gridEndLine(dir, ticks, [...grid, ...dark]), ticks };
             }
         }
         return best;
@@ -1024,11 +1118,13 @@ export function detectAxes(image) {
     // apart, with no labels, and the dots under it are no x axis), or at the plot's corner with the other axis
     const last = y?.ticks[y.ticks.length - 1];
     if (!x && last?.source === 'grid' && y.line?.edge)
-        x = labelsUnder(image, backgrounds, lines.find(l => l.dir === 'h' && Math.abs(l.pos - last.pos) < 0.5));
+        x = labelsUnder(image, backgrounds, lines.find(l => l.dir === 'h' && Math.abs(l.pos - last.pos) <= l.thickness / 2 + GRID_SAME_LINE));
     else if (!x && y?.line)
         x = labelAxis(image, backgrounds, lines, 'h', y.line);
     else if (!y && x?.line)
         y = labelAxis(image, backgrounds, lines, 'v', x.line);
+    else if (!x && !y)
+        ({ x, y } = cornerLabelAxes(image, backgrounds, lines));
     return { lines, backgrounds, x: finish(beyondOther(x, y)), y: finish(beyondOther(y, x)) };
 }
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import { detectAxes } from '../src/core/axes.js';
-import { labelGlyphs, glyphKinds, glyphGrid, classifyDigit, classifySign, readLabel, consistentValues, readAxisLabels } from '../src/core/labels.js';
+import { labelGlyphs, glyphKinds, glyphGrid, classifyDigit, classifySign, readLabel, consistentValues, readAxisLabels, readTickLabels } from '../src/core/labels.js';
 import { DIGIT_TEMPLATES, TEMPLATE_WIDTH, TEMPLATE_HEIGHT } from '../src/core/digit-templates.js';
 import { synthGraph } from '../src/core/synth.js';
 import { readImage } from '../tools/png.mjs';
@@ -903,4 +903,24 @@ test('bench-nature: phase1\'s and primates\' powers of ten, with minor ticks and
     assert.deepEqual(x.texts.filter(Boolean), ['10^-2', '10^-1']);
     assert.deepEqual(x.scale.values, [0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3]);
     assert.equal(x.scale.minor, 11);
+});
+
+test('regression: a y axis\'s labels written along it are read turned (funnel, bench-r log-e-turned)', { skip: !(existsSync(PLOS) && existsSync(BENCH_R + 'log-e-turned.png')) && 'bench-plos or bench-r absent' }, () => {
+    // before: no y scale. Stata and base R write the y labels on their sides, bottom to top
+    const funnel = readImage(PLOS + readdirSync(PLOS).find(f => f.startsWith('funnel-') && f.endsWith('.png')));
+    const axes = detectAxes(funnel);
+    const { x, y } = readTickLabels(funnel, axes);
+    assert.deepEqual(x.scale.values, [2.5, 3, 3.5, 4, 4.5]);
+    assert.deepEqual(y.scale.values, [0, 0.05, 0.1, 0.15]);
+    assert.deepEqual(y.read.map(r => r.text), ['0', '.05', '.1', '.15']);
+    // the readings' boxes are the image's: each inside its tick's label box, a pixel's margin
+    y.read.forEach((r, i) => {
+        const b = axes.y.ticks[i].label;
+        assert.ok(r.box[0] >= b[0] - 1 && r.box[1] >= b[1] - 1 && r.box[2] <= b[2] + 1 && r.box[3] <= b[3] + 1, `box ${r.box} in ${b}`);
+    });
+    // R's "1e+06" to "1e-01", 7 px tall (its e scores 0.74999 once turned)
+    const turned = readImage(BENCH_R + 'log-e-turned.png');
+    const r = readTickLabels(turned, detectAxes(turned));
+    assert.equal(r.y.scale.type, 'log');
+    assert.deepEqual(r.y.scale.values, [1e6, 1e5, 1e4, 1e3, 100, 10, 1, 0.1]);
 });

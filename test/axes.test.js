@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
 import { detectAxes, backgroundColors, panelEdges, fitScale, toData, toPixel, resolution, guessValues, plotBounds } from '../src/core/axes.js';
 import { synthGraph, scatterPoints, labelBlocks } from '../src/core/synth.js';
 import { readPng, readImage } from '../tools/png.mjs';
+import { readTickLabels } from '../src/core/labels.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
 
@@ -832,4 +833,57 @@ test('regression: black marks over a twentieth of the image are ink, not a secon
     near(ax.y.line.pos, 60.5, 0.2, 'y axis');
     assert.equal(ax.x.ticks.filter(t => t.label).length, 6);
     assert.equal(ax.y.ticks.filter(t => t.label).length, 5);
+});
+
+const plosImage = name => existsSync(PLOS) && readdirSync(PLOS).find(f => f.startsWith(`${name}-`) && f.endsWith('.png'));
+const plosAxes = name => {
+    const image = readImage(PLOS + plosImage(name));
+    const axes = detectAxes(image);
+    return { axes, readings: readTickLabels(image, axes) };
+};
+
+test('both axes with labels and no tick marks: the two lines that meet in the corner (synthetic)', () => {
+    // categoryPlot with no tick marks on the y axis either, and dots lying across the x axis line: ink that touches
+    // the line is no label (viability: the lower halves of its dots at zero were the row nearest the line)
+    // (no label at the corner: the synthetic one touches the x axis line and reads as part of it)
+    const spec = categoryPlot();
+    spec.axes.y = { ...spec.axes.y, ticks: [230, 170, 110, 50], labelsOnly: true };
+    spec.families[0].color = [0, 0, 0];
+    const { image } = synthGraph(spec);
+    for (const x of [100, 130, 240])
+        disc(image, x, 291, 5, [0, 0, 0]);
+    const ax = detectAxes(image);
+    near(ax.x.line.pos, 290.5, 0.5, 'the x axis line');
+    near(ax.y.line.pos, 60.5, 0.5, 'the y axis line');
+    assert.deepEqual(ax.x.ticks.map(t => t.source), ['label', 'label']);
+    ax.x.ticks.forEach((t, i) => near(t.pos, spec.axes.x.ticks[i], 1, `x position ${i}`));
+    assert.deepEqual(ax.y.ticks.map(t => t.source), ['label', 'label', 'label', 'label']);
+    [...spec.axes.y.ticks].sort((a, b) => a - b).forEach((t, i) => near(ax.y.ticks[i].pos, t, 1, `y position ${i}`));
+    assert.deepEqual(plotBounds(ax), { left: ax.y.line.pos, right: null, top: null, bottom: ax.x.line.pos });
+});
+
+test('regression: stiffness and viability, axis lines with numbers and no tick marks on either axis', { skip: !plosImage('stiffness') && 'bench-plos absent' }, () => {
+    // before: no axes (a label axis was found only from the other axis, by its ticks). Stiffness: black lines;
+    // viability: light gray ones (191), and dots at zero across the x axis. The end labels are read whole: cut at the
+    // corner and the line's end they were 250 at 248 and 100 at 102
+    const s = plosAxes('stiffness');
+    assert.deepEqual(s.readings.x.scale.values, [100, 200, 300, 400]);
+    assert.deepEqual(s.readings.y.scale.values, [400, 300, 200, 100]);
+    const v = plosAxes('viability');
+    assert.deepEqual(v.readings.x.scale.values, [0, 50, 100, 150, 200, 250]);
+    assert.deepEqual(v.readings.y.scale.values, [120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0]);
+    assert.ok([...v.axes.x.ticks, ...v.axes.y.ticks].every(t => t.source === 'label'));
+});
+
+test('regression: lung-tumor and gait, gridlines in pieces are one and the panel\'s border is none', { skip: !plosImage('lung-tumor') && 'bench-plos absent' }, () => {
+    // before: lung-tumor's y axis had 9 ticks for 5 (the gridline of 5 three times, where the dots cross it, and the
+    // border at 10.3 and −14.5), its x axis 8 for 6; gait's x axis the gridline of 0.4 twice
+    const l = plosAxes('lung-tumor');
+    assert.deepEqual(l.readings.x.scale.values, [7, 8, 9, 10, 11, 12]);
+    assert.deepEqual(l.readings.y.scale.values, [10, 5, 0, -5, -10]);
+    assert.ok(l.readings.x.scale.agree.every(Boolean) && l.readings.y.scale.agree.every(Boolean), 'every label read');
+    // (gait's frame is its outermost gridlines: 0 and 1.6 stay)
+    const g = plosAxes('gait');
+    assert.deepEqual(g.readings.x.scale.values, [0, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6]);
+    assert.deepEqual(g.readings.y.scale.values, [1.6, 1.4, 1.2, 1, 0.8, 0.6, 0.4, 0.2, 0]);
 });

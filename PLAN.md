@@ -4050,3 +4050,52 @@ taken out. In the app: 128 dots in two families ("opaque" and "hollow rings"), n
 Limits: three isolated rings are needed, inside the plot; the walls must be 0.3 of the radius or more (thinner
 open circles in a solid family's color are still left to that family); and a label's zeros inside the plot are
 rings to it, as viability's are to the search by thin ink.
+
+**Axes and labels of the new PLOS figures** (2026-11-22)
+
+Four things fixed, on six images; the rest of the notes on axes are listed at the end.
+
+1. **Both axes with labels and no tick marks** (stiffness, as SPSS draws them: black lines and numbers; viability,
+   as Excel does: light gray lines, 191). An axis of labels alone was found only from the other axis, found by
+   its ticks; with ticks on neither, no axes. Now, when neither is found, every vertical line is tried as the y axis:
+   the x axis that `labelAxis` gives from it must give it back (`cornerLabelAxes`). Three things it needed:
+   - the lines are strokes on the page, the same color on both sides: the row where ggplot2's panel ends is a light
+     "line" with labels beyond it too, and labels alone beside a panel stay without an axis, as before;
+   - ink that touches the line is no label (1 px clear at least): viability's dots at zero lie across its x axis,
+     and their lower halves were the row nearest the line;
+   - the labels are read whole. They were looked for from the other axis to the line's end, and a label at either
+     end was cut there, centered up to 10 px inward: viability's 250 at 248, its 120 and 0 at 119 and 1, stiffness's
+     100 at 102. Now words are found a label's reach beyond both ends and kept when centered within them.
+   Stiffness: 100 to 400 on both axes; viability: 0 to 250 and 120 to 0, every value read or given by the scale
+   exactly. Viability's family of hollow rings (the labels' zeros, 16 extras) is gone with it, its ink now beyond
+   the plot: 252 found → 236, P 0.937 → 1.000.
+2. **A gridline in pieces, and the panel's border** (lung-tumor, gait). A gridline that dots or a curve cross is
+   found in rows whose runs differ, so as two or three lines a pixel apart, each with the gridline's label
+   (lung-tumor's 5 three times, gait's 0.4 twice): lines whose rows touch are one (`oneLineEach`). And the
+   outermost lines at the ends of the gridlines that cross them are the panel's border, unless they stand where the
+   others' spacing puts a gridline (gait's border is its gridlines of 0 and 1.6): left out (`withoutFrame`).
+   Lung-tumor: 9 y ticks → 5 (10 to −10) and 8 x ticks → 6 (7 to 12), every label read, and the labels now lie off
+   the gridlines' ends, which bounds the plot. Gait: 10 x ticks → 9.
+3. **Labels written along the y axis** (funnel, as Stata writes them; bench-r log-e-turned, base R's default). When
+   a y axis's labels fit no scale upright, they are read on the image turned a quarter clockwise, as the labels of
+   an x axis, and their boxes turned back (`labels.js readTurned`). Funnel: "0", ".05", ".1", ".15" (the reader
+   already took a number without its leading zero). log-e-turned read "1?+06": the e of R's turned labels, 7 px
+   tall, scores 0.74999 against the 0.75 a sign needed; `SIGN_MIN_SCORE` is 0.72 now, and the label benchmark
+   differs in that axis alone. The label benchmark now reads labels as the app does (`readTickLabels`).
+4. Of the 160 local images the axes change on these six and no other. Label benchmark: 1372 of 1479 labels read
+   right (92.8%, from 92.2%), 214 of 235 axes solved (from 213), none wrong. Full benchmark: viability's row alone
+   (184 the same). 323 tests pass: the synthetic corner (with dots across the x axis line), stiffness and viability,
+   lung-tumor and gait, funnel and log-e-turned; nine parts taken out each fail one. In the app: viability
+   "x linear, read · y linear, read", 236 dots; funnel both axes read.
+
+Still open from the notes on axes:
+
+- **crimson**: the x axis isn't a log axis (10² lies 316 px from 10³, the decades above 271: a flow cytometer's
+  scale), so 10², read as "10?", gets 70 from the scale of the other three; read right, it would fit no scale.
+  The y labels are cut off at the image's left edge.
+- **alloys**: the top y label (12.5) isn't attached to its tick; the scale gives its value. Not looked at.
+- **expression**: two y labels with no ticks, not level with the gridlines: by hand (Add tick).
+- **biomarker**: the y axis misses four of its ticks (blurred); its scale is right from the three labels read.
+- **corneal**: the dotted reference line is a tick of the y axis, unlabeled, at its true value (574.5).
+- Dots lying across an axis line just off its middle can still be taken for its ticks (seen in a synthetic scene:
+  three dots 1.5 px above an unticked x axis became its ticks). Biomarker's rule covers a line across the plot only.

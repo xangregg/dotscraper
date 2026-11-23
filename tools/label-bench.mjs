@@ -20,7 +20,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readImage } from './png.mjs';
 import { detectAxes } from '../src/core/axes.js';
-import { readAxisLabels } from '../src/core/labels.js';
+import { readTickLabels } from '../src/core/labels.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
@@ -46,6 +46,8 @@ const same = (a, b) => Math.abs(a - b) <= VALUE_TOL * Math.max(1, Math.abs(b));
 function score(imagePath, csv) {
     const image = readImage(imagePath);
     const axes = detectAxes(image);
+    // (as the app reads them: a y axis's labels turned, when upright they fit no scale)
+    const readings = readTickLabels(image, axes);
     const out = [];
     for (const k of ['x', 'y']) {
         const values = headerValues(csv, k);
@@ -60,7 +62,7 @@ function score(imagePath, csv) {
         const sorted = [...values].sort((a, b) => a - b);
         // x ticks run left to right, y ticks bottom to top
         const truth = new Map((k === 'x' ? listed : [...listed].reverse()).map((t, i) => [t, sorted[i]]));
-        const { read, scale } = readAxisLabels(image, axes.backgrounds, axes[k], k);
+        const { read, scale } = readings[k];
         const at = ticks.map((t, i) => ({ t, i })).filter(({ t }) => t.label && truth.has(t));
         // (percent against fractions: see the header)
         const unit = scale && at.every(({ t, i }) => same(scale.values[i], 100 * truth.get(t))) ? 100 : 1;

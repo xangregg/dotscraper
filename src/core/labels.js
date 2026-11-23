@@ -69,8 +69,10 @@ const DIGIT_MIN_SCORE = 0.7;
 // 160 labels read (2026-11-21): e scores 0.87–0.97 at 0.68–0.78 H, + 0.90–0.99 at 0.60–0.78, × 0.83–0.99 at
 // 0.53–0.65 (a typed x 0.97 at 0.75), E 0.95–0.97. The score alone doesn't tell a sign from every letter (of 16
 // fonts' letters a "c" reaches 0.85 as an e, an "F" 0.83 as an E, a "÷" 0.89 as a plus): what a label reads as
-// must still be a number, and the axis's scale must agree
-const SIGN_MIN_SCORE = 0.75;
+// must still be a number, and the axis's scale must agree. (Was 0.75: the e of R's labels turned along the y axis,
+// 7 px tall, scores 0.74999 once turned back, and log-e-turned's eight labels read "1?+06". At 0.72 the label
+// benchmark differs in that axis alone.)
+const SIGN_MIN_SCORE = 0.72;
 const SIGN_MAX_HEIGHT = 0.9;
 const SIGN_MIN_HEIGHT = 0.45;
 // A multiplication sign stands apart from its numbers: glyphs this × H apart or less are one word when one of them is
@@ -987,8 +989,38 @@ export function readAxisLabels(image, backgrounds, axis, which) {
  * @returns {{x: AxisReading|null, y: AxisReading|null}}  null for an axis that wasn't found
  */
 export function readTickLabels(image, axes) {
-    return {
-        x: axes.x ? readAxisLabels(image, axes.backgrounds, axes.x, 'x') : null,
-        y: axes.y ? readAxisLabels(image, axes.backgrounds, axes.y, 'y') : null,
-    };
+    let y = axes.y ? readAxisLabels(image, axes.backgrounds, axes.y, 'y') : null;
+    // a y axis's labels written along it: read turned, when upright they fit no scale
+    if (y && !y.scale) {
+        const turned = readTurned(image, axes.backgrounds, axes.y);
+        if (turned.scale)
+            y = turned;
+    }
+    return { x: axes.x ? readAxisLabels(image, axes.backgrounds, axes.x, 'x') : null, y };
+}
+
+/**
+ * A y axis's labels written along the axis, bottom to top, as Stata and base R write them (funnel: "0", ".05",
+ * ".1", ".15" on their sides): read on the image turned a quarter clockwise, where they run left to right in one
+ * row over the axis. The readings' boxes are turned back; the scale is checked on the ticks as they are.
+ *
+ * @param {RgbaImage} image
+ * @param {number[][]} backgrounds  0–255, the page's colors
+ * @param {import('./axes.js').Axis} axis  the y axis
+ * @returns {AxisReading}
+ */
+function readTurned(image, backgrounds, axis) {
+    const { width, height, data } = image;
+    // pixel (x, y) goes to (height − 1 − y, x)
+    const turned = { width: height, height: width, data: new Uint8ClampedArray(data.length) };
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++)
+            turned.data.set(data.subarray(4 * (y * width + x), 4 * (y * width + x) + 4), 4 * (x * height + height - 1 - y));
+    }
+    const turn = b => b && [height - b[3], b[0], height - b[1], b[2]];
+    const back = b => b && [b[1], height - b[2], b[3], height - b[0]];
+    const line = axis.line && { ...axis.line, dir: 'h', from: height - axis.line.to, to: height - axis.line.from };
+    const ticks = axis.ticks.map(t => ({ ...t, pos: height - t.pos, label: turn(t.label) }));
+    const read = readAxisLabels(turned, backgrounds, { ...axis, line, ticks }, 'x').read.map(r => r && { ...r, box: back(r.box) });
+    return { read, scale: consistentValues(axis.ticks.map((t, i) => ({ pos: t.pos, value: read[i]?.value ?? null }))) };
 }
