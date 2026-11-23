@@ -101,6 +101,7 @@ const CATEGORY_MIN_LABELS = 2;
 // left, the y axis, and 181 at the bottom): a line this near the other axis's luminance is as dark as it.
 const FRAME_LUMINANCE_TOL = 16; // 0–255
 const BACKGROUND_MIN_FRACTION = 0.05; // any flat color covering this share of the image is a background (panels)
+const PANEL_MAX_CONTRAST = 128; // 0–255, luminance: a background of the axes differs from the page by less (detectAxes)
 // A panel is a rectangle filled with a background color that is not the page's (ggplot2's default theme: gray, with
 // white gridlines and no axis lines; the tick marks leave its edges). Its first and last rows and columns are of
 // its color at least this share of its width and height: gridlines cross them, a few percent in all, while the
@@ -928,7 +929,12 @@ function gridLabels(image, backgrounds, ticks, gridlines, dir) {
  * @returns {Axes}
  */
 export function detectAxes(image) {
-    const backgrounds = backgroundColors(image);
+    // A panel is a tint of the page. A color as far from it as PANEL_MAX_CONTRAST is ink, however much of it there is:
+    // mpo's black (dots of 13 px, axis lines and whiskers 7 px thick, bold labels) is 5.6% of the image, and as a
+    // background its axis lines were no ink: the y axis had one tick and the top bracket, with two stars for
+    // labels, was the x axis.
+    const all = backgroundColors(image);
+    const backgrounds = all.filter((c, i) => i === 0 || Math.abs(luminance(c, 0) - luminance(all[0], 0)) < PANEL_MAX_CONTRAST);
     const ink = grayInk(image, backgrounds);
     const lines = findLines(image, ink);
     // labeled ticks drawn as strokes (a corner tick, on a line, has none) are straight, and their labels are in

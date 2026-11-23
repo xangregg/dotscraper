@@ -818,3 +818,18 @@ test('an x axis across the middle of the y axis, with nothing at the y axis\'s e
     assert.equal(ax.x.ticks.length, 6);
     assert.ok(ax.x.ticks.every(t => t.source === 'tick' && t.label));
 });
+
+test('regression: black marks over a twentieth of the image are ink, not a second page: black axes are found (mpo)', () => {
+    // before: black, 5.6% of mpo (dots of 13 px, lines 7 px thick, bold labels), was a background color as a panel
+    // is, so its axis lines were no ink: the y axis showed one tick and a bracket over the plot was the x axis
+    const rng = createRng(31);
+    const spec = plot({ families: [{ color: [0, 0, 0], alpha: 1, radius: 12, points: scatterPoints(rng, { n: 40, box: [80, 30, 400, 270] }) }] });
+    const { image } = synthGraph(spec);
+    assert.deepEqual(backgroundColors(image), [[255, 255, 255], [0, 0, 0]]);
+    const ax = detectAxes(image);
+    assert.deepEqual(ax.backgrounds, [[255, 255, 255]]);
+    near(ax.x.line.pos, 290.5, 0.2, 'x axis');
+    near(ax.y.line.pos, 60.5, 0.2, 'y axis');
+    assert.equal(ax.x.ticks.filter(t => t.label).length, 6);
+    assert.equal(ax.y.ticks.filter(t => t.label).length, 5);
+});
