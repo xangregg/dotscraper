@@ -20,7 +20,15 @@ const ON_LINE_REL = 0.2; // a color within this × its distance along a family's
 const ON_LINE_ABS = 4; // 0–255 units
 const MODE_MIN_T = 15; // 0–255 units: region pixels at least this far from B₂ show a dot's offset
 const MODE_MIN_SHARE = 0.6; // of the region's dot pixels that one mode must explain better, or the region is masked
-const MODE_MIN_VOTES = 50; // flat dot pixels in the region needed to decide (fibers' band: 3)
+// flat dot pixels in the region needed to decide (fibers' band: 3). Small blurred dots have few flat pixels each:
+// lung-tumor's 22 dots under its band, 6 px across inside their rings, give 24, every one for a layer over them (at
+// 50 the band was masked with its dots).
+const MODE_MIN_VOTES = 20;
+// A pixel of a dot under a layer lies on the line from the layer's color B₂ along c − B, and one beside the layer on
+// the line from B: where it is on one (ON_LINE_ABS) and this far off the other, its own color says which side it is
+// on, whatever seed is nearest. Only within LABEL_REACH dot radii of a pixel of the layer's own color.
+const LABEL_OFF_LINE = 8; // 0–255 units
+const LABEL_REACH = 2; // × the dots' radius
 // A region is an area, not a stroke: its pixels must hold discs this many dot radii across. dog-ages' black curve
 // and text (52 000 flat pixels after upscaling) are strokes.
 const REGION_OPEN_RADII = 0.75;
@@ -50,6 +58,8 @@ const RECT_COLOR_TOL = 3; // 0–255 units (RGB distance) from the box's color
 const S_BIN = 0.02; // histogram bin for the overlay's s
 const S_MAX = 0.95; // an "overlay" that keeps more than this of what's under it isn't one (nicest language's white
                     // page read as one with s = 1)
+const S_MIN = 0.1; // … nor one that keeps less than this: nothing shows through it to vote (crimson: 28 pixels of
+                   // black ink in a dark gray region of 35, 35, 35 read as dots under a layer with s = 0.04)
 
 // distance of the offset e from the line through 0 with unit direction u, and the position along it
 function offLine(e, u) {
@@ -121,17 +131,20 @@ export function regionColors(image, B, families, flat, radius) {
  * @param {Uint8Array} flat
  * @param {number} radius  px, the dots' radius
  * @returns {{regions: {color: number[], mode: 'over'|'under'|'unknown', s: number|null, pixels: number,
- *            base?: number[], stack?: number[], stackedOver?: number, box?: boolean}[], label: Uint8Array}}  label: 0 the main
+ *            base?: number[], stack?: number[], stackedOver?: number, box?: boolean}[], label: Uint8Array,
+ *            sure: Uint8Array}}  label: 0 the main
  *   background, k the region k − 1; an overlap of two bands (stack: the upper's and lower's indices) comes after the
- *   region colors, with the base its pixels are undone to
+ *   region colors, with the base its pixels are undone to; sure: 1 where a pixel's own color says it lies under the
+ *   layer it is labeled with (labelByColor)
  */
 export function backgroundRegions(image, B, families, flat, radius) {
     const { width, height, data } = image;
     const n = width * height;
     const colors = regionColors(image, B, families, flat, radius);
     const label = new Uint8Array(n);
+    const sure = new Uint8Array(n);
     if (!colors.length)
-        return { regions: [], label };
+        return { regions: [], label, sure };
     const stacks = stackedRegions(image, B, colors, flat);
     // seeds: pixels of the background or a region color; every pixel takes its nearest seed's region. Region seeds
     // are the regions' bodies: a dot's antialiased rim passes through a band's color, and as seeds its rim pixels
@@ -183,6 +196,12 @@ export function backgroundRegions(image, B, families, flat, radius) {
         }
     });
     const regions = colors.map((c, i) => ({ ...regionMode(image, B, c, families, flat, label, i + 1), ...(isBox[i] ? { box: true } : {}) }));
+    if (!stacks.length) {
+        regions.forEach((r, i) => {
+            if (r.mode === 'over')
+                labelByColor(image, B, r, families, seeds, near, label, sure, i + 1, LABEL_REACH * radius);
+        });
+    }
     for (const st of stacks) {
         regions[st.top] = { ...regions[st.top], mode: 'over', s: st.s, stackedOver: st.bottom };
         const low = regions[st.bottom];
@@ -195,7 +214,50 @@ export function backgroundRegions(image, B, families, flat, radius) {
         if (label[p] > colors.length)
             regions[label[p] - 1].pixels++;
     }
-    return { regions, label };
+    return { regions, label, sure };
+}
+
+// Where a layer over the dots is narrower than a dot, or shows only in strips beside a line drawn along it, it has no
+// seed near the dots under it and they were read as dots on the page: left as they were, off their family's line,
+// and masked (lung-tumor: a confidence band 10 px across at its waist with the regression line through it, 8 dots of
+// 6.8 px radius under it). And a dot beside a band, nearer its seeds than the page's, was divided out with it. The
+// pixels of region k and of the page within `reach` px of a pixel of the region's color (`near`: its strips count,
+// which are no seeds) are labeled again by their colors (LABEL_OFF_LINE); the rest keep their nearest seed's region.
+// `sure` is set where the color says under the layer: such a pixel is wholly under it, even at the region's edge
+// (removeOverlays).
+function labelByColor(image, B, region, families, seeds, near, label, sure, k, reach) {
+    const { width, height, data } = image;
+    const own = new Uint8Array(label.length);
+    for (let p = 0; p < label.length; p++)
+        own[p] = near[p] === k ? 1 : 0;
+    // a family's two lines are parallel, apart by the layer's color's distance from the family's line from B: where
+    // they are too close the colors can't tell (mpo: black dots, gray boxes, every color on one line: the boxes'
+    // lighter edges went to the page and the dots across them were fitted twice, 56 found for 45)
+    const dirs = families.map(f => unit(sub(f.color, B))).filter(d => offLine(sub(region.color, B), d).perp > LABEL_OFF_LINE);
+    if (!dirs.length)
+        return;
+    const nearest = nearestTransform(own, width, height);
+    // the least distance of an offset from the families' lines, among those it lies along by MODE_MIN_T or more
+    const off = e => Math.min(...dirs.map(d => {
+        const { t, perp } = offLine(e, d);
+        return t >= MODE_MIN_T ? perp : Infinity;
+    }));
+    for (let p = 0; p < label.length; p++) {
+        if (seeds[p] || (label[p] !== 0 && label[p] !== k) || nearest[p] < 0)
+            continue;
+        const q = nearest[p];
+        if (Math.hypot(p % width - q % width, Math.floor(p / width) - Math.floor(q / width)) > reach)
+            continue;
+        const c = [data[4 * p], data[4 * p + 1], data[4 * p + 2]];
+        const page = off(sub(c, B));
+        const under = off(sub(c, region.color));
+        if (under <= ON_LINE_ABS && page > LABEL_OFF_LINE) {
+            label[p] = k;
+            sure[p] = 1;
+        }
+        else if (page <= ON_LINE_ABS && under > LABEL_OFF_LINE)
+            label[p] = 0;
+    }
 }
 
 // The rectangles of the pieces of a box's color (within RECT_COLOR_TOL: two dots' overlap 6 units off made pieces
@@ -352,7 +414,7 @@ function regionMode(image, B, B2, families, flat, label, k) {
         // the commonest scaled offset is one dot under the layer (deeper stacks are rarer)
         const [bin] = [...sHist].sort((a, b) => b[1] - a[1])[0];
         s = bin * S_BIN;
-        if (s > S_MAX) {
+        if (s > S_MAX || s < S_MIN) {
             mode = 'unknown';
             s = null;
         }
@@ -365,7 +427,8 @@ function regionMode(image, B, B2, families, flat, label, k) {
  * its base, B or the lower band's color, for B). Pixels on the
  * region's edge are only partly under the layer, and inverting them as if wholly under it overshoots (bench1
  * smoother-ci: slivers where the band's edge crosses a dot became (255, 214, 118), an "opaque family" that took
- * every orange dot a second time), so they are left as they are, for the masks.
+ * every orange dot a second time), so they are left as they are, for the masks, but for those whose own colors say
+ * they are under the layer (layers.sure).
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B
@@ -383,7 +446,7 @@ export function removeOverlays(image, B, layers) {
         const x = p % width;
         const edge = (x > 0 && label[p - 1] !== label[p]) || (x < width - 1 && label[p + 1] !== label[p])
             || (p >= width && label[p - width] !== label[p]) || (p + width < label.length && label[p + width] !== label[p]);
-        if (edge)
+        if (edge && !layers.sure[p])
             continue;
         const base = r.base ?? B;
         for (let ch = 0; ch < 3; ch++)

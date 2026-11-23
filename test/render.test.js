@@ -368,3 +368,17 @@ test('an outlined dot: α inside, α + ring α in the annulus, exact coverage at
     assert.ok(Math.abs(at(27, 23) - 255 * (1 - 0.3 * m - 0.4 * (m - mi))) < 1e-3);
     assert.equal(at(5, 5), 255);
 });
+
+test('an outline inside the rim: past outer × radius the dot is at its own α again', () => {
+    const style = { color: [0, 0, 0], alpha: 0.3, radius: 10, ring: { inner: 0.5, outer: 0.8, alpha: 0.4 } };
+    const im = renderDots(solidImage(40, 40, [255, 255, 255]), [{ x: 20, y: 20 }], style);
+    const at = (x, y) => im.data[3 * (y * 40 + x)];
+    // the center; a pixel 6.0–7.1 px out, inside the annulus 5–8; one 8.0–9.1 px out, past it and inside the rim
+    assert.ok(Math.abs(at(20, 20) - 255 * 0.7) < 1e-3);
+    assert.ok(Math.abs(at(26, 19) - 255 * 0.3) < 1e-3, `ring ${at(26, 19)}`);
+    assert.ok(Math.abs(at(28, 19) - 255 * 0.7) < 1e-3, `past the ring ${at(28, 19)}`);
+    // a pixel straddling the outer circle: 1 − α − ring α·m_outer
+    const mo = pixelCoverage(20, 20, 8, 27, 23);
+    assert.ok(mo > 0.05 && mo < 0.95, `straddles: ${mo}`);
+    assert.ok(Math.abs(at(27, 23) - 255 * (1 - 0.3 - 0.4 * mo)) < 1e-3);
+});

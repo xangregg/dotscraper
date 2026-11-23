@@ -166,3 +166,26 @@ test('regression: mpo, black dots over gray boxes are an opaque family, and the 
     assert.equal(m.pairs.length, 45, `${m.pairs.length} of 45 found`);
     assert.ok(results[0].fit.dots.length <= 50, `${results[0].fit.dots.length} dots in all`);
 });
+
+const LUNG = new URL('../bench-plos/lung-tumor-10.1371-journal.pone.0357864.png', import.meta.url).pathname;
+
+test('regression: lung-tumor, small blurred dots with a ring inside the rim, some under a band over the dots', { skip: !existsSync(LUNG) && 'bench-plos absent' }, () => {
+    // before: "No dot family found." The fill's color is thin as a whole (more of it in the soft rims than in the
+    // fills, 6 px across), so level 1 was left out; no dot was whole, each two layers deep from 0.45 of its radius;
+    // the band over 22 of the dots was masked for want of votes (24 flat pixels), and at its waist, 10 px across with
+    // the regression line through it, it had no seed and wasn't divided out
+    const results = extractAll(readImage(LUNG));
+    assert.equal(results.length, 1);
+    const { est, fit } = results[0];
+    assert.equal(est.familyMeasure.kind, 'translucent');
+    // measured: α 0.44, radius 6.9, a ring from 0.51 to 0.76 of it
+    assert.ok(Math.abs(est.style.alpha - 0.44) < 0.03 && Math.abs(est.style.radius - 6.9) < 0.3, `α ${est.style.alpha}, radius ${est.style.radius}`);
+    assert.ok(est.style.ring && est.style.ring.inner < 0.6 && est.style.ring.outer < 0.85, JSON.stringify(est.style.ring));
+    assert.ok(est.notes.some(t => t.startsWith('A translucent layer')), 'the band is divided out');
+    // the truth has 501 dots (the figure's title says n = 502): the 473 first placed by hand, and from this fit the
+    // 28 lying on others
+    const truth = readTruthJson(LUNG.replace('bench-plos/', 'bench-plos/truth/').replace('.png', '.json')).dots;
+    const m = matchDots(truth, fit.dots, 0.5 * fit.radius);
+    assert.ok(m.pairs.length >= 499, `${m.pairs.length} of ${truth.length} found`);
+    assert.ok(fit.dots.length <= 503, `${fit.dots.length} dots in all`);
+});

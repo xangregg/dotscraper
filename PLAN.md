@@ -4140,3 +4140,67 @@ What is left on tsne:
   with that tint dropped the gray is a fourth translucent family, the dots under blue ones would be its, but it
   then takes the brown dots too (150 gray found for 125, two on each brown dot): 280 found for 257. Dropped; it
   needs the brown read as translucent with it, or kept out of the mix.
+
+**lung-tumor: small blurred dots with a ring inside the rim, under a band** (2026-11-22)
+
+473 dots in the hand truth (the figure's title says n = 502): no family → 501 found, all 473 of the truth among
+them. The dots are matplotlib's translucent markers: a fill at α 0.44, and the edge stroked in the same color at the
+same alpha, half of it over the fill. So a dot is one layer deep in the middle, two in a ring, and one again in a
+band outside the ring. A blurred disc with such a ring, fitted to the pooled profile of 43 lone dots, leaves 1.3 of
+255 rms (radius 6.8, σ 0.6, the ring from 3.6 to 5.1 px, 0.29 more opaque; α(1 − α) is 0.25); with the ring made to
+reach the rim, as the model had it, 4.2. Five things stood between the image and its dots:
+
+1. **Level 1 was left out as thin.** An opening by 1.5 px keeps 0.239 of the fill's color (the limit is 0.25): the
+   fills are 6 px across, and more of the color is in the dots' soft rims. Over all local images only one other
+   first level is thin, microplastics1's border bar (0.233), which the rule is for; the share can't tell them apart.
+   Whole dots can: a first level thin as a whole is a fill all the same where ten whole dots show on the levels
+   with it (`levels.js THIN_FILL_MIN_DOTS`; lung-tumor has 43, the bar none). With level 1 back: α 0.44 from 807
+   flat pixels at level 1 and 8 at level 2.
+2. **No dot was whole.** A piece deeper than one dot is a dot if all of that is in its outer part, beyond 0.6 of
+   the radius; here it starts at 0.42 to 0.50. Now a third (`shape.js RING_MIN_RADIUS_FRACTION`). That alone let two
+   pieces of expression's red dots through when read with noisy matching (opaque dots at "α 0.96", their outer
+   halves a level deeper), which gave that scan two families with a radius and the win: 1033 dots for 46. So a piece
+   deeper in its outer part is a whole dot only where a ring is measured there (`estimateStyle`, and the radius
+   `unmix.js` reads later).
+3. **The ring's outer radius.** `style.ring` has `outer` (× the radius, 1 by default), the renderer and the fit's
+   ring check use it, and `measureRing` searches both radii with the image's blur (every candidate disc rendered
+   and blurred once, the pairs from their products). Lung-tumor: 0.51 to 0.76, 0.25 more opaque. It moves the rings
+   read before: bench1 and bench2 stroked-dots 0.82 to 0.96 (was 0.80 to the rim; all dots found as before),
+   richness 0.81 to 0.94 at 0.16 more opaque (α(1 − α) is 0.17: matplotlib again).
+4. **The band was masked with its 22 dots.** Over or under is voted by the flat dot pixels in the region, 50 needed;
+   dots this small have one or two each, 24 in all, every one for a layer over the dots. Now 20
+   (`background.js MODE_MIN_VOTES`), with a floor on what the layer lets through (`S_MIN` 0.1): at 20, crimson's
+   dark gray of 35 with 28 pixels of 23 to 26 in it was "a layer with s = 0.04" and was divided out.
+5. **The band's waist wasn't divided out.** Where the band is 10 px across with the regression line through it, its
+   color shows only in strips 2 px wide, which are no seeds; the 8 dots there took the page's label, stayed as drawn,
+   off the family's line, and were masked. A dot pixel under a layer lies on the line from the layer's color along
+   c − B, and one beside it on the line from B; here the two lines are 26 units apart. Where a pixel is within 4 of
+   one and more than 8 off the other, its own color now labels it (`labelByColor`), and such a pixel is divided out
+   even at the region's edge. Not where the lines coincide: mpo's boxes and dots are all gray, and with every color
+   on one line the boxes' lighter edges went to the page (56 found for 45).
+
+| Step | Found | Matched of 473 |
+|---|---|---|
+| 1 to 3 (the family, its radius and ring) | 478 | 451 |
+| 4 (the band divided out) | 496 | 465 |
+| 5 (its waist too) | 501 | 473 |
+
+**The truth is short.** At 26 of the 28 "extra" dots the count image shows about one layer more than the truth's
+dots put there, and what the fit's dots put there (at 530, 308: 2.36 shown, 1.68 by the truth, 2.44 by the fit):
+they are dots lying on others, which a hand truth misses. 501 found for the title's 502. Against those 473 the
+benchmark's precision was 0.944 (R 1.000, RMSE 0.60 px). The user then saved the truth from the fit: 501 dots, so
+the row now reads 501 for 501 at RMSE 0.00 and checks the count, not the positions.
+
+Full benchmark: 19 rows change, 167 the same. Better: lung-tumor; the bands over dots (bench2 smoother-ci 201 → 204
+found, R 0.985 → 1.000; its JPEG 195 → 199, R 0.951 → 0.966; bench1's JPEG P 0.990 → 1.000, R 0.970 → 0.980, RMSE
+0.29 → 0.09; bench2 group-smoother-ci P 0.995 → 1.000), from the labels by color; bench2 gradient-dots-stroke.jpg
+(220 → 215, P 0.877 → 0.902) and grader1 (46 → 45), which moved with steps 2 to 4 (not told apart). Worse by one
+dot: richness, 57 → 58 for 48 (four extras on the right gone, a pile of four on the regression line kept as ties of
+one another). The rest move in
+RMSE, flags or radius only (stroked-dots' radius 10.1 → 10.3). 332 tests pass (324 before): the renderer's ring,
+`measureRing`, a ringed whole dot, the synthetic of such dots, the no-ring rule, a band's waist, a dark region, and
+lung-tumor itself; each fails with its fix taken out, mpo's test with the coincident lines let through. In the
+app: 501 dots, axes read, no console errors.
+
+Open: the one dot short of the title's 502; richness's pile on its line; and the family still hangs on 8 flat
+pixels two layers deep, though every ring is two layers deep and could give level 2 where no two fills overlap.

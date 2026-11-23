@@ -2,7 +2,7 @@
 // blur of edges. Shared by translucent families (levels.js) and opaque ones (opaque.js).
 
 import { distanceTransform } from './layers.js';
-import { pixelCoverage } from './render.js';
+import { pixelCoverage, gaussianKernel, blurRect } from './render.js';
 import { EXACT_TOLERANCES } from './scan.js';
 
 /** @typedef {import('./scan.js').Tolerances} Tolerances */
@@ -21,10 +21,14 @@ const ISOLATED_HALF_LEVEL = 0.5; // counts
 const ISOLATED_BLUR_RADIUS_TOL = 0.05; // × r, between the radius of the soft area and of the area at half coverage
 // Outlined dots (bench1 stroked-dots: a light gray fill, a darker ring 2 px wide at the rim) read deeper than one dot
 // at the ring, so none passed as isolated. A component above ISOLATED_MAX_LEVEL is still one dot if every such pixel
-// lies in its outer part, beyond this fraction of the radius from the center.
-const RING_MIN_RADIUS_FRACTION = 0.6;
-const RING_INNER_RANGE = [0.5, 0.97]; // the ring's inner radius searched, × the radius
-const RING_INNER_STEP = 0.01;
+// lies in its outer part, beyond this fraction of the radius from the center. The ring need not be at the rim:
+// matplotlib strokes a translucent dot's edge in the fill's color at the fill's alpha, half of the stroke over the
+// fill and half beyond it, so the dot is two layers deep in a ring inside its rim (lung-tumor: a radius of 6.8 px,
+// deeper from 0.42 to 0.50 of it in 43 dots; at 0.6 none was whole and the family had no radius).
+const RING_MIN_RADIUS_FRACTION = 1 / 3;
+const RING_RANGE = [0.3, 1]; // the ring's inner and outer radius searched, × the radius
+const RING_STEP = 0.01;
+const RING_MIN_WIDTH = 0.03; // × the radius
 const RING_MIN_ALPHA = 0.05; // extra opacity below this is no ring
 const EDGE_RING = 4; // px outside a dot sampled for its edge
 const PROFILE_BIN = 0.25; // px, radial edge profile bins
@@ -182,47 +186,104 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES, blurred =
 }
 
 /**
- * An outline's inner radius (× radius) and extra opacity, fitted to isolated dots' pixels along the color line: a
- * dot is tC·(α·m + a·m_ring), with m its coverage and m_ring the annulus's (render.js style.ring). For each inner
- * radius the opacity a is linear least squares; blur is left out (outlined renderings so far are crisp).
+ * An outline's inner and outer radius (× radius) and extra opacity, fitted to isolated dots' pixels along the color
+ * line: a dot is tC·(α·m + a·m_ring), blurred, with m its coverage and m_ring the annulus's (render.js style.ring).
+ * For each pair of radii the opacity a is linear least squares, and the pair with the least squared error wins.
+ *
+ * Every candidate radius's disc is rendered once per dot and blurred (the blur is linear, so a ring is the difference
+ * of two discs), and the sums a pair needs come from the discs' products with the pixels and with each other:
+ * O(radii · pixels) coverages and O(radii² · pixels) multiplications, about 2400 pairs.
  *
  * @param {Float32Array} t  0–255 units along the line, per pixel
  * @param {number} width
+ * @param {number} height
  * @param {{cx: number, cy: number}[]} dots  isolated dots
  * @param {number} radius  px
  * @param {number} alpha  the fill's
  * @param {number} tC  0–255 units: t of the full color
- * @returns {{inner: number, alpha: number}|null}  null when there is no ring
+ * @param {number} [blur]  px, sd of the image's blur (the renderer's)
+ * @returns {{inner: number, outer: number, alpha: number}|null}  null when there is no ring
  */
-export function measureRing(t, width, dots, radius, alpha, tC) {
-    const pixels = [];
+export function measureRing(t, width, height, dots, radius, alpha, tC, blur = 0) {
+    const kernel = blur > 0 ? gaussianKernel(blur) : null;
+    const half = Math.ceil(radius) + 1 + (kernel ? (kernel.length - 1) / 2 : 0);
+    const side = 2 * half + 1;
+    const fractions = [];
+    for (let f = RING_RANGE[0]; f < RING_RANGE[1] - 1e-9; f += RING_STEP)
+        fractions.push(f);
+    fractions.push(RING_RANGE[1]);
+    const nf = fractions.length;
+    const whole = nf - 1; // the dot's own disc
+    // the pixels compared: each dot's square, where it lies in the image
+    const at = [];
     for (const d of dots) {
-        for (let y = Math.floor(d.cy - radius - 1); y <= d.cy + radius + 1; y++) {
-            for (let x = Math.floor(d.cx - radius - 1); x <= d.cx + radius + 1; x++) {
-                const m = pixelCoverage(d.cx, d.cy, radius, x, y);
-                pixels.push({ d, x, y, m, t: t[y * width + x] });
+        const x0 = Math.floor(d.cx) - half;
+        const y0 = Math.floor(d.cy) - half;
+        for (let j = 0; j < side; j++) {
+            for (let i = 0; i < side; i++)
+                at.push(x0 + i >= 0 && x0 + i < width && y0 + j >= 0 && y0 + j < height ? (y0 + j) * width + x0 + i : -1);
+        }
+    }
+    const n = at.length;
+    const discs = fractions.map(f => {
+        const all = new Float32Array(n);
+        const crisp = { width: side, height: side, data: new Float32Array(side * side) };
+        const soft = kernel ? { width: side, height: side, data: new Float32Array(side * side) } : crisp;
+        dots.forEach((d, k) => {
+            const x0 = Math.floor(d.cx) - half;
+            const y0 = Math.floor(d.cy) - half;
+            for (let j = 0; j < side; j++) {
+                for (let i = 0; i < side; i++)
+                    crisp.data[j * side + i] = pixelCoverage(d.cx, d.cy, f * radius, x0 + i, y0 + j);
             }
+            if (kernel)
+                blurRect(crisp, soft, kernel, [0, 0, side, side]);
+            all.set(soft.data, k * side * side);
+        });
+        return all;
+    });
+    // y: what the fill leaves of each pixel; its product with each disc, and the discs' with each other
+    const y = new Float32Array(n);
+    let syy = 0;
+    for (let p = 0; p < n; p++) {
+        if (at[p] < 0)
+            continue;
+        y[p] = t[at[p]] - tC * alpha * discs[whole][p];
+        syy += y[p] * y[p];
+    }
+    const sy = new Float64Array(nf);
+    const gram = new Float64Array(nf * nf);
+    for (let a = 0; a < nf; a++) {
+        const da = discs[a];
+        for (let p = 0; p < n; p++) {
+            if (at[p] >= 0)
+                sy[a] += y[p] * da[p];
+        }
+        for (let b = 0; b <= a; b++) {
+            const db = discs[b];
+            let s = 0;
+            for (let p = 0; p < n; p++) {
+                if (at[p] >= 0)
+                    s += da[p] * db[p];
+            }
+            gram[a * nf + b] = s;
+            gram[b * nf + a] = s;
         }
     }
     let best = null;
-    for (let inner = RING_INNER_RANGE[0]; inner <= RING_INNER_RANGE[1] + 1e-9; inner += RING_INNER_STEP) {
-        let num = 0;
-        let den = 0;
-        const rings = pixels.map(q => (q.m > 0 ? q.m - pixelCoverage(q.d.cx, q.d.cy, inner * radius, q.x, q.y) : 0));
-        pixels.forEach((q, i) => {
-            const g = tC * rings[i];
-            num += (q.t - tC * alpha * q.m) * g;
-            den += g * g;
-        });
-        const a = den > 0 ? Math.min(1 - alpha, Math.max(0, num / den)) : 0;
-        let sse = 0;
-        pixels.forEach((q, i) => {
-            sse += (q.t - tC * (alpha * q.m + a * rings[i])) ** 2;
-        });
-        if (!best || sse < best.sse)
-            best = { inner, alpha: a, sse };
+    for (let i = 0; i < nf; i++) {
+        for (let o = i + 1; o < nf; o++) {
+            if (fractions[o] - fractions[i] < RING_MIN_WIDTH - 1e-9)
+                continue;
+            const num = tC * (sy[o] - sy[i]);
+            const den = tC * tC * (gram[o * nf + o] - 2 * gram[o * nf + i] + gram[i * nf + i]);
+            const a = den > 0 ? Math.min(1 - alpha, Math.max(0, num / den)) : 0;
+            const sse = syy - 2 * a * num + a * a * den;
+            if (!best || sse < best.sse)
+                best = { inner: fractions[i], outer: fractions[o], alpha: a, sse };
+        }
     }
-    return best && best.alpha >= RING_MIN_ALPHA ? { inner: best.inner, alpha: best.alpha } : null;
+    return best && best.alpha >= RING_MIN_ALPHA ? { inner: best.inner, outer: best.outer, alpha: best.alpha } : null;
 }
 
 function erfc(x) {

@@ -237,3 +237,49 @@ test('siblingRadius: another family\'s radius when its dots show at it, none whe
     assert.equal(s?.radius, 15);
     assert.equal(siblingRadius(D, 300, 80, [8, 25]), null);
 });
+
+test('regression: nearly opaque dots a touch deeper in their outer halves have no ring to measure, so none is a whole dot (expression, noisy)', () => {
+    // expression read with noisy matching: red dots at α 0.96, the outer half of each a level deeper; two passed as
+    // whole outlined dots and gave a radius to this family and, as a sibling's, to a gray one: 1033 dots for 46
+    const W = 200;
+    const H = 120;
+    const style = { color: [20, 40, 60], alpha: 0.9, radius: 8, ring: { inner: 0.55, alpha: 0.035 } };
+    const dots = [];
+    for (let y = 20; y < H - 10; y += 30) {
+        for (let x = 20; x < W - 10; x += 30)
+            dots.push({ x: x + 0.3, y: y + 0.6 });
+    }
+    dots.push({ ...dots[0] }, { ...dots[5] });
+    const model = createDotModel(solidImage(W, H, [255, 255, 255]), style);
+    model.addAll(dots);
+    const im = toRgba(model.image);
+    const est = estimateStyle({ ...im, data: Uint8ClampedArray.from(im.data, v => Math.round(v)) }, { seed: [43, 61, 79] });
+    assert.ok(est.familyMeasure.translucent && est.style.alpha > 0.93, `α ${est.style.alpha}`);
+    assert.equal(est.style.ring, undefined);
+    assert.equal(est.isolated.length, 0);
+    assert.equal(est.style.radius, null);
+});
+
+test('small blurred translucent dots with a ring inside the rim: α, radius and the ring\'s radii and opacity', () => {
+    // as matplotlib draws them: the edge stroked in the fill's color and alpha, half over the fill
+    const W = 420;
+    const H = 300;
+    const style = { color: [71, 116, 164], alpha: 0.44, radius: 6.8, blur: 0.5, ring: { inner: 0.51, outer: 0.76, alpha: 0.44 * 0.56 } };
+    const rng = createRng(11);
+    const dots = [];
+    while (dots.length < 90)
+        dots.push({ x: 20 + (W - 40) * rng.uniform(), y: 20 + (H - 40) * rng.uniform() });
+    // coincident pairs, for flat pixels two layers deep
+    dots.push(...dots.slice(0, 8).map(d => ({ ...d })));
+    const model = createDotModel(solidImage(W, H, [255, 255, 255]), style);
+    model.addAll(dots);
+    const im = toRgba(model.image);
+    const est = estimateStyle({ ...im, data: Uint8ClampedArray.from(im.data, v => Math.round(v)) });
+    assert.equal(est.familyMeasure.kind, 'translucent');
+    near(est.style.alpha, 0.44, 0.01, 'α');
+    near(est.style.radius, 6.8, 0.1, 'radius');
+    near(est.style.blur, 0.5, 0.15, 'blur');
+    near(est.style.ring.inner, 0.51, 0.03, 'ring inner');
+    near(est.style.ring.outer, 0.76, 0.03, 'ring outer');
+    near(est.style.ring.alpha, 0.246, 0.04, 'ring opacity');
+});

@@ -22,10 +22,12 @@
  * @property {number[]} color   [r, g, b] the full color c, 0–255
  * @property {number} alpha     0–1
  * @property {number} radius    px
- * @property {{inner: number, alpha: number}} [ring]  an outline: between inner × radius and radius the dot is more
- *                              opaque by alpha (its opacity there is alpha + the dot's α, at most 1), in the same
- *                              color c. Exact for a gray outline on a gray fill over white up to compositing order;
- *                              otherwise an approximation (PLAN.md phase 5, milestone 2)
+ * @property {{inner: number, alpha: number, outer?: number}} [ring]  an outline: between inner × radius and outer ×
+ *                              radius (default 1: the rim) the dot is more opaque by alpha (its opacity there is
+ *                              alpha + the dot's α, at most 1), in the same color c. Exact for a gray outline on a
+ *                              gray fill over white up to compositing order, and for an edge stroked in the fill's
+ *                              color and alpha, which lies half over the fill (outer < 1); otherwise an
+ *                              approximation (PLAN.md phase 5, milestone 2)
  * @property {number} [blur]    px, sd of the Gaussian applied to the composited image (default 0)
  * @property {{B: number[], u: number[]}} [project]  render one value per pixel, the distance from B along the
  *                              unit vector u (a family's color line), instead of RGB: what the fit compares, at a
@@ -501,6 +503,7 @@ export function createDotModel(background, style) {
 
     const ring = style.ring ?? null;
     const innerRadius = ring ? ring.inner * radius : 0;
+    const outerRadius = ring ? (ring.outer ?? 1) * radius : 0;
 
     function makeRecord(x, y) {
         const rect = dotRect(x, y);
@@ -510,8 +513,8 @@ export function createDotModel(background, style) {
         for (let yy = y0; yy < y1; yy++) {
             for (let xx = x0; xx < x1; xx++) {
                 const m = pixelCoverage(x, y, radius, xx, yy);
-                // the ring's coverage is the disc's less the inner disc's: exact antialiasing for the annulus
-                const mr = ring && m > 0 ? m - pixelCoverage(x, y, innerRadius, xx, yy) : 0;
+                // the ring's coverage is its outer disc's less the inner disc's: exact antialiasing for the annulus
+                const mr = ring && m > 0 ? (outerRadius < radius ? pixelCoverage(x, y, outerRadius, xx, yy) : m) - pixelCoverage(x, y, innerRadius, xx, yy) : 0;
                 stamp[(yy - y0) * w + xx - x0] = 1 - alpha * m - (ring ? ring.alpha * mr : 0);
             }
         }

@@ -9,6 +9,7 @@
 
 import { sub, unit } from './image.js';
 import { LEVEL_SEPARATION, EXACT_TOLERANCES, isThin } from './scan.js';
+import { isolatedDots } from './shape.js';
 
 /** @typedef {import('./scan.js').Scan} Scan */
 /** @typedef {import('./scan.js').Tolerances} Tolerances */
@@ -42,6 +43,11 @@ const FIT_MAX_RMS = 2; // 0–255 units
 export const FIT_C_TOL = 10; // 0–255 units c may fall outside [0, 255] (fitting noise)
 const EXTRA_LEVELS = 12; // geometric levels appended beyond the deepest measured one
 const MAX_MISSING_LEVELS = 1; // overlap counts that may lack a level between measured ones (JPEG lenses)
+// A first level whose color is thin as a whole is lines, not dots' insides (findLevels), unless whole dots show on it:
+// small blurred dots with a ring have more of the fill's color in their soft rims than in their fills (lung-tumor:
+// dots of radius 6.8 with a fill 6 px across; an opening keeps 0.24 of the color, as of microplastics1's border bar,
+// 0.23, which has no whole dot; lung-tumor has 43).
+const THIN_FILL_MIN_DOTS = 10;
 
 /**
  * @typedef {object} ColorLine
@@ -138,9 +144,10 @@ function votesForLevel(t, perp) {
  * @param {Scan|{image: object, flat: Uint8Array, tol?: Tolerances}} scan  its image, flat mask and tolerances
  *   (default EXACT_TOLERANCES)
  * @param {{t: Float32Array, perp: Float32Array}} proj
- * @returns {{levels: Level[], beyond: Level[]}}
+ * @param {boolean} [thinFirst]  keep a first level whose color is thin
+ * @returns {{levels: Level[], beyond: Level[], thin: number}}  thin: the first levels left out as thin
  */
-export function findLevels(scan, proj) {
+export function findLevels(scan, proj, thinFirst = false) {
     const { image, flat, tol = EXACT_TOLERANCES } = scan;
     const { t, perp } = proj;
     const nb = Math.ceil(LEVEL_MAX_T / LEVEL_BIN);
@@ -203,8 +210,11 @@ export function findLevels(scan, proj) {
     // level's dots or other thin ink in their hue (step1 with its bands divided out: their edges, left as they were,
     // and the dots' rims at 206, 222, 246, 94 flat pixels, ahead of the dots' own 149, 185, 233, 374, which the step
     // ratio then put beyond the sequence)
-    while (found.length > 1 && isThin(scan, found[0].color))
+    let thin = 0;
+    while (!thinFirst && found.length > 1 && isThin(scan, found[0].color)) {
         found.shift();
+        thin++;
+    }
     let nSeq = found.length;
     for (let i = 1; i < found.length; i++) {
         const prevStep = found[i - 1].t - (i > 1 ? found[i - 2].t : 0);
@@ -213,7 +223,7 @@ export function findLevels(scan, proj) {
             break;
         }
     }
-    return { levels: found.slice(0, nSeq), beyond: found.slice(nSeq) };
+    return { levels: found.slice(0, nSeq), beyond: found.slice(nSeq), thin };
 }
 
 // box sum over `half` bins either side
@@ -431,7 +441,32 @@ export function familyCandidates(scan) {
 }
 
 /**
- * Levels and the geometric fit along the line from B toward a seed color.
+ * The isolated whole dots under a translucent candidate's levels (shape.js isolatedDots of its count image).
+ *
+ * @param {Scan|{image: object, tol?: Tolerances}} scan
+ * @param {LevelMeasure} c
+ * @returns {{cx: number, cy: number, r: number, aspect: number, box: number[], ringed: boolean}[]}
+ */
+export function lonelyDots(scan, c) {
+    const D = countImage(c.proj, c.line, levelTable(c.line.B, c.levels, c.fit), scan.tol);
+    return isolatedDots(D, scan.image.width, scan.image.height, scan.tol);
+}
+
+/**
+ * Whether a translucent candidate's first level is a fill: its color is not thin as a whole, or whole dots show on it
+ * (THIN_FILL_MIN_DOTS).
+ *
+ * @param {Scan} scan
+ * @param {LevelMeasure} c
+ * @returns {boolean}
+ */
+export function firstLevelFills(scan, c) {
+    return !isThin(scan, c.levels[0].color) || lonelyDots(scan, c).length >= THIN_FILL_MIN_DOTS;
+}
+
+/**
+ * Levels and the geometric fit along the line from B toward a seed color. A first level left out as thin is put
+ * back when the levels with it are a translucent family's and whole dots show on them (firstLevelFills).
  *
  * @param {Scan|{image: object, B: number[], flat: Uint8Array, tol?: Tolerances}} scan  its image, the color the line
  *   starts from (B), the flat mask and the tolerances; a rule measuring without some pixels passes
@@ -444,6 +479,14 @@ export function measureFamily(scan, seed) {
     const line = colorLine(B, seed);
     const proj = projectOnLine(image, line);
     const found = findLevels(scan, proj);
+    const measure = levelMeasure(B, seed, line, proj, found);
+    if (!found.thin)
+        return measure;
+    const whole = levelMeasure(B, seed, line, proj, findLevels(scan, proj, true));
+    return whole.translucent && lonelyDots(scan, whole).length >= THIN_FILL_MIN_DOTS ? whole : measure;
+}
+
+function levelMeasure(B, seed, line, proj, found) {
     let { levels } = found;
     let fit = levels.length ? fitGeometric([B, ...levels.map(L => L.color)]) : null;
     let plausible = isPlausible(fit);

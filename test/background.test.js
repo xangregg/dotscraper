@@ -171,3 +171,83 @@ test('a box under the dots holds its rectangle where a dot as wide as it is tall
     for (const [x, y] of [[150, 41], [150, 79]])
         assert.equal(label[y * W + x], 0, `(${x}, ${y}) outside`);
 });
+
+test('regression: a band over the dots narrower than a dot, a line along it: the dots under it are divided out all the same (lung-tumor)', () => {
+    // a band 8 px across at its waist with a line 4 px wide through it: strips 2 px wide, which are no seeds, so the
+    // dots under them took the page's label and stayed as they were (734 dot pixels off, every one of the 160 under
+    // the waist); and a pixel at the band's edge was left alone though its color says it is under the band
+    const W = 420;
+    const H = 120;
+    const fam = { color: [71, 116, 164], alpha: 0.44, radius: 7 };
+    const band = [179, 58, 45];
+    const bandAlpha = 0.15;
+    const half = x => 4 + 26 * Math.max(0, Math.abs(x - W / 2) - 70) / (W / 2 - 70);
+    const inBand = (x, y) => Math.abs(y + 0.5 - H / 2) <= half(x + 0.5);
+    const onLine = y => Math.abs(y + 0.5 - H / 2) < 2;
+    const centers = [];
+    for (let x = 14; x < W - 10; x += 19) {
+        for (const y of [22, 41, 60, 79, 98])
+            centers.push({ x: x + (y % 3), y: y + (x % 5) - 2 });
+    }
+    const model = createDotModel(solidImage(W, H, WHITE), fam);
+    model.addAll(centers);
+    const clean = quantize(model.image);
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            if (!inBand(x, y))
+                continue;
+            for (let ch = 0; ch < 3; ch++)
+                model.image.data[3 * (y * W + x) + ch] = onLine(y) ? band[ch] : band[ch] * bandAlpha + model.image.data[3 * (y * W + x) + ch] * (1 - bandAlpha);
+        }
+    }
+    const drawn = quantize(model.image);
+    const layers = backgroundRegions(drawn, WHITE, [fam], flatMask(drawn), fam.radius);
+    assert.equal(layers.regions.length, 1);
+    assert.equal(layers.regions[0].mode, 'over');
+    const fixed = removeOverlays(drawn, WHITE, layers);
+    // dot pixels off the line that differ from the dots as drawn on white by more than 6 units
+    let off = 0;
+    let offWaist = 0;
+    for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+            const p = y * W + x;
+            if (clean.data[4 * p] > 250 || onLine(y))
+                continue;
+            if (![0, 1, 2].some(ch => Math.abs(fixed.data[4 * p + ch] - clean.data[4 * p + ch]) > 6))
+                continue;
+            off++;
+            if (Math.abs(x - W / 2) < 60 && inBand(x, y))
+                offWaist++;
+        }
+    }
+    assert.ok(off <= 40 && offWaist <= 20, `${off} dot pixels off, ${offWaist} under the waist`);
+});
+
+test('regression: ink a little off a dark region\'s color is no dot under a layer that lets a twentieth through (crimson)', () => {
+    // crimson: a dark gray of 35 with 28 flat pixels of 23 to 26 in it, read as black dots under a layer with s = 0.04
+    // and divided out
+    const W = 200;
+    const H = 100;
+    const red = { color: [146, 29, 26], alpha: 1, radius: 8 };
+    const dark = [35, 35, 35];
+    const im = solidImage(W, H, WHITE);
+    for (let y = 20; y < 80; y++) {
+        for (let x = 20; x < 120; x++)
+            im.data.set(dark, 3 * (y * W + x));
+    }
+    // patches a twentieth of the way from the region's color along the dots' offset from the page
+    const ink = dark.map((v, ch) => v + 0.05 * (red.color[ch] - WHITE[ch]));
+    for (const [x0, y0] of [[30, 30], [60, 40], [90, 60]]) {
+        for (let y = y0; y < y0 + 6; y++) {
+            for (let x = x0; x < x0 + 6; x++)
+                im.data.set(ink, 3 * (y * W + x));
+        }
+    }
+    const model = createDotModel(im, red);
+    model.addAll([{ x: 150, y: 30 }, { x: 170, y: 70 }]);
+    const drawn = quantize(model.image);
+    const { regions } = backgroundRegions(drawn, WHITE, [red], flatMask(drawn), red.radius);
+    assert.equal(regions.length, 1);
+    assert.ok(regions[0].votes.over >= 20, JSON.stringify(regions[0].votes));
+    assert.equal(regions[0].mode, 'unknown');
+});

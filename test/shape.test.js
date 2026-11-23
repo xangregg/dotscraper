@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { components, isolatedDots, discShare } from '../src/core/shape.js';
-import { pixelCoverage } from '../src/core/render.js';
+import { components, isolatedDots, discShare, measureRing } from '../src/core/shape.js';
+import { pixelCoverage, createDotModel, solidImage } from '../src/core/render.js';
 
 const W = 80;
 const H = 60;
@@ -37,6 +37,38 @@ test('isolatedDots: whole single dots with their centers and radius; touching an
         assert.ok(f, `the dot at ${d.x}, ${d.y}`);
         assert.ok(Math.abs(f.r - d.r) < 0.1, `radius ${f.r}`);
     }
+});
+
+test('regression: a dot two layers deep in a ring inside its rim is one whole dot, ringed; one doubled over its middle is not (lung-tumor)', () => {
+    // matplotlib's edge on a translucent dot, half of it over the fill: here deeper from 0.5 to 0.75 of the radius.
+    // before: the deeper pixels had to lie beyond 0.6 of it, and no dot of lung-tumor's was whole
+    const D = discs([{ x: 20, y: 20, r: 7 }, { x: 20, y: 20, r: 5.25 }, { x: 55, y: 35, r: 7 }, { x: 55, y: 35, r: 2 }]);
+    const hole = discs([{ x: 20, y: 20, r: 3.5 }]);
+    for (let p = 0; p < D.length; p++)
+        D[p] -= hole[p];
+    const found = isolatedDots(D, W, H);
+    assert.equal(found.length, 1);
+    assert.ok(found[0].ringed, 'ringed');
+    assert.ok(Math.hypot(found[0].cx - 20, found[0].cy - 20) < 0.1 && Math.abs(found[0].r - 7) < 0.1, JSON.stringify(found[0]));
+});
+
+test('measureRing: a ring inside the rim of blurred dots, and one at the rim of crisp dots, to 0.02 of the radius and of the opacity', () => {
+    const B = [255, 255, 255];
+    const u = [1, 1, 1].map(v => v / Math.sqrt(3));
+    const tC = 255 * Math.sqrt(3);
+    const dots = [{ cx: 20.3, cy: 20.6 }, { cx: 50.7, cy: 22.2 }, { cx: 34.1, cy: 43.5 }];
+    const read = (ring, blur) => {
+        const model = createDotModel(solidImage(W, H, B), { color: [0, 0, 0], alpha: 0.4, radius: 7, blur, ring, project: { B, u } });
+        model.addAll(dots.map(d => ({ x: d.cx, y: d.cy })));
+        return measureRing(model.image.data, W, H, dots, 7, 0.4, tC, blur);
+    };
+    const close = (found, ring) => ['inner', 'outer', 'alpha'].every(k => Math.abs(found[k] - ring[k]) <= 0.02);
+    const inside = { inner: 0.5, outer: 0.75, alpha: 0.24 };
+    assert.ok(close(read(inside, 0.6), inside), JSON.stringify(read(inside, 0.6)));
+    const rim = { inner: 0.8, outer: 1, alpha: 0.3 };
+    assert.ok(close(read(rim, 0), rim), JSON.stringify(read(rim, 0)));
+    // no ring, none measured
+    assert.equal(read(undefined, 0), null);
 });
 
 test('discShare', () => {

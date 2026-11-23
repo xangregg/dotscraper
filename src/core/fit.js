@@ -1111,7 +1111,8 @@ export function createFit(input) {
     function ringShown(x, y) {
         const { radius: r, ring, alpha } = style;
         const ri = ring.inner * r;
-        const inside = Math.max(0, 2 * ri - r);
+        const ro = (ring.outer ?? 1) * r;
+        const inside = Math.max(0, 2 * ri - ro);
         const tC = colorDistance(B, fitColor);
         const T = model.transmittance;
         const sectors = Array.from({ length: RING_SECTORS }, () => ({ rim: 0, rimW: 0, inner: 0, innerW: 0, expected: 0 }));
@@ -1124,7 +1125,7 @@ export function createFit(input) {
                 if (!(m > 0))
                     continue;
                 const within = pixelCoverage(x, y, ri, i, j);
-                const mRing = m - within;
+                const mRing = (ro < r ? pixelCoverage(x, y, ro, i, j) : m) - within;
                 const mInner = within - pixelCoverage(x, y, inside, i, j);
                 const res = imgT[p] - modelT(p);
                 const s = sectors[Math.min(RING_SECTORS - 1, Math.floor((Math.atan2(j + 0.5 - y, i + 0.5 - x) + Math.PI) / (2 * Math.PI) * RING_SECTORS))];
@@ -1147,7 +1148,7 @@ export function createFit(input) {
      */
     function ringless() {
         const { ring, radius, alpha, blur = 0, layered } = style;
-        if (!ring || layered || !(alpha > 0 && alpha < 1) || (1 - ring.inner) * radius < RING_MIN_WIDTH_BLURS * blur)
+        if (!ring || layered || !(alpha > 0 && alpha < 1) || ((ring.outer ?? 1) - ring.inner) * radius < RING_MIN_WIDTH_BLURS * blur)
             return 0;
         let removed = 0;
         for (;;) {

@@ -317,8 +317,9 @@ export function unmixEstimates(image, estimates, tol = EXACT_TOLERANCES, layers 
         // with what is under them read per pixel, dots over a region can be whole ones: the radius, if it wasn't
         // known (landing1: nearly every dot over a violin of its own hue; there no dot is whole even so, and the
         // radius is the one at which the dots' edges show best)
+        // (no ring is measured here, so a piece deeper in its outer part is no whole dot: style.js estimateStyle)
         if (!e.style.radius) {
-            const isolated = isolatedDots(D, image.width, image.height, tol);
+            const isolated = isolatedDots(D, image.width, image.height, tol).filter(d => !d.ringed);
             if (isolated.length) {
                 const edge = edgeBlur(D, image.width, isolated);
                 const radius = median(isolated.map(d => d.r));

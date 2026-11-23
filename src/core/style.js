@@ -9,7 +9,8 @@ import { LEVEL_SEPARATION, CLUSTER_TOL, BOX_COLOR_TOL, isThin, scanOf, solidRegi
 import { components, isolatedDots, measureRing, edgeBlur, boundaryBlur } from './shape.js';
 import { median } from './stats.js';
 import {
-    FIT_C_TOL, alongLine, colorLine, projectOnLine, levelTable, countImage, familyCandidates, measureFamily,
+    FIT_C_TOL, alongLine, colorLine, projectOnLine, levelTable, countImage, familyCandidates, measureFamily, lonelyDots,
+    firstLevelFills,
 } from './levels.js';
 import {
     CLUSTER_ON_LINE_TOL, DOT_MIN_ISOLATED, STROKE_RING, measureOpaque, isDotFamily, opaqueFamilies, strokedFamily,
@@ -154,28 +155,38 @@ export function estimateStyle(image, opts = {}) {
         return opaqueEstimate(scan, fam, candidates, familyIndex);
     const table = levelTable(B, fam.levels, fam.fit);
     const D = countImage(fam.proj, fam.line, table, tol);
-    const isolated = isolatedDots(D, width, height, tol);
+    let isolated = isolatedDots(D, width, height, tol);
     let radius = null;
     let blur = null;
     let edge = null;
     let ring = null;
-    if (isolated.length) {
-        radius = median(isolated.map(d => d.r));
-        edge = edgeBlur(D, width, isolated);
+    const shape = () => {
+        radius = isolated.length ? median(isolated.map(d => d.r)) : null;
+        edge = isolated.length ? edgeBlur(D, width, isolated) : null;
         // the profile's σ includes the pixel box, which the renderer's exact coverage already supplies
-        blur = Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12));
+        blur = edge ? Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12)) : null;
+    };
+    shape();
+    if (isolated.length) {
         const ringed = isolated.filter(d => d.ringed);
         if (ringed.length >= RINGED_MIN_SHARE * isolated.length) {
             const { B: lb, u } = fam.line;
             const tC = (lb[0] - fam.fit.c[0]) * u[0] + (lb[1] - fam.fit.c[1]) * u[1] + (lb[2] - fam.fit.c[2]) * u[2];
-            ring = measureRing(fam.proj.t, width, ringed, radius, fam.fit.alpha, tC);
+            ring = measureRing(fam.proj.t, width, height, ringed, radius, fam.fit.alpha, tC, blur);
             if (ring)
-                notes.push(`Outlined dots: a ring from ${(ring.inner * radius).toFixed(1)} to ${radius.toFixed(1)} px, ${Math.round(100 * (fam.fit.alpha + ring.alpha))}% opaque against ${Math.round(100 * fam.fit.alpha)}% inside, drawn in the fill's color line (an approximation where outlines cross other dots).`);
+                notes.push(`Outlined dots: a ring from ${(ring.inner * radius).toFixed(1)} to ${(ring.outer * radius).toFixed(1)} px of a radius of ${radius.toFixed(1)}, ${Math.round(100 * (fam.fit.alpha + ring.alpha))}% opaque against ${Math.round(100 * fam.fit.alpha)}% inside, drawn in the fill's color line (an approximation where outlines cross other dots).`);
+            // Deeper in its outer part with no ring there to measure, a piece is not a whole dot (expression with noisy
+            // matching: opaque red dots read at α 0.96, the outer half of each a level deeper by JPEG noise, which
+            // left a ring 0.04 of opacity; two such gave the family a radius, a gray one took it as a sibling's, and
+            // the noisy scan won with two families: 1033 dots for 46)
+            if (!ring) {
+                isolated = isolated.filter(d => !d.ringed);
+                shape();
+            }
         }
     }
-    else {
+    if (!isolated.length)
         notes.push(NO_ISOLATED_NOTE);
-    }
     const inferredLevels = fam.levels.flatMap((L, i) => L.inferred ? [i + 1] : []);
     if (inferredLevels.length)
         notes.push(`Too few flat pixels show ${inferredLevels.length > 1 ? 'levels' : 'level'} ${inferredLevels.join(', ')} (overlap count), so its color was inferred from the levels around it.`);
@@ -233,7 +244,8 @@ function translucentFamilies(scan) {
 
 // The color lines whose levels can be a translucent family's (`measured`), and the level colors of those that
 // can't (`ink`).
-// A translucent family's first level fills the insides of single dots, so it is thick. A first level that is
+// A translucent family's first level fills the insides of single dots, so it is thick, or whole dots show on it
+// (levels.js firstLevelFills). A first level that is
 // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
 // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
 // dots as an opaque family).
@@ -242,7 +254,7 @@ function translucentFamilies(scan) {
 // them the blues' fit gave 55 dots for 49, P 0.873)
 function levelCandidates(scan) {
     const nesting = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c)
-        .filter(c => c.translucent && !isThin(scan, c.levels[0].color))
+        .filter(c => c.translucent && firstLevelFills(scan, c))
         .map(c => withoutBand(scan, c));
     const measured = nesting.filter(c => levelsNest(scan, c));
     const ink = nesting.filter(c => !measured.includes(c)).flatMap(c => c.levels.filter(L => !L.inferred).map(L => L.color));
@@ -399,12 +411,6 @@ function measureWithout(scan, seed, color) {
             rest[p] = 0;
     }
     return measureFamily({ ...scan, flat: rest }, seed);
-}
-
-// isolated whole dots under a translucent candidate's levels
-function lonelyDots(scan, c) {
-    const D = countImage(c.proj, c.line, levelTable(c.line.B, c.levels, c.fit), scan.tol);
-    return isolatedDots(D, scan.image.width, scan.image.height, scan.tol);
 }
 
 // Removes, in place, translucent candidates whose every measured level is a stack of up to BLEND_DEPTH dots of two
