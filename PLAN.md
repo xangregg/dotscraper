@@ -4006,3 +4006,47 @@ ringed translucent dots that doesn't start from flat pixels.
 
 314 tests before these, 317 with: a cluster in a 4.4 Mpx image, `isDotFamily` with whole dots for arcs, and corneal's
 black dots; each fails with its fix taken out.
+
+**corneal: open circles beside filled dots of one color** (2026-11-22)
+
+The 58 hollow rings (121 dots in all: 66 found → 128, R 1.000, P 0.945). They are open circles as GraphPad Prism
+draws them beside filled ones: the same black, walls 5 px thick of a radius of 9.5, soft-edged. Two paths existed
+for rings and neither takes them:
+
+- **The search for hollow rings** (`outline.js findHollowRings`) leaves a found family's color alone, since the
+  rims of its dots read as rings. With black let in, it finds 14 isolated "rings", ten of them glyphs of the bold
+  labels, and reads the real ones badly: against the fill around each pixel (a closing 5 px long, for outlines
+  1.5 to 3 px wide) a 5 px wall is uneven, darker at the top and bottom than on the diagonals; pieces at 0.8 of
+  black or more are masked as text; rms 0.109 against a limit of 0.06, and as opaque black rings, unmasked, 0.142
+  against 0.1. With a 9 px closing the walls read evenly, but then the filled dots' rims are the "rings" (every
+  isolated one in the plot is a filled dot), and a ring with ink over half its box (0.61 for these) isn't taken as isolated.
+- **Fills in the page's color inside an outline** (`pageFilledFamily`, tumour1's kind): it finds 53 centers, but
+  reads the outline's color 2 px beyond the 3.9 px hole, where the soft wall is still gray (184), and wants an
+  outline at most 0.4 of the fill's radius (here 1.0). With the color read farther out and darker and the width
+  let through, the family is found (46 to 48 centers), and the fit then keeps 10: the holes, 8 px across, are thin
+  marks in the "dots' color" (the page's) to the mask, and the walls are other ink.
+
+So a reading of its own (`thickRings`), tried for a direction of darkening that is a plain opaque family's:
+
+- each pixel is read against the page along that direction, not against the fill around it;
+- the family's solid ink (what an opening by 0.45 of its dots' radius keeps: dots, not walls or strokes) is
+  unknown, with 3 px around it for the dots' soft edges;
+- isolated rings may have ink over up to 0.7 of their box (a disc: 0.79), and count only inside the plot, when
+  the axes bound it (`opts.inside`, from the scan's bounds): glyphs of corneal's x labels are rings of 13 to 19 px
+  to it, and took the median radius from the three real isolated ones (10 px);
+- the rings' darkness is fitted with nothing masked, and they must fit the annulus to 0.25 of it (corneal: 0.148
+  at 0.66, ragged rings from a small figure enlarged);
+- and the rings found must be thick-walled, inner radius at most 0.7 of the outer: without that the reading finds
+  thin rings again along a solid family's direction (song-cents's 46 gray rings as a second family of 42, P 0.978
+  → 0.871; the o's of viability's red legend text as red rings).
+
+Corneal: a ring from 5.5 to 8.9 px at 0.66 of black, from 3 isolated rings; fitted by rings in drawing order as
+other hollow rings are: all 58, and no ring on a filled dot. The 7 extras are 3 second dots in filled dots and 4 on
+the two zeros of "574.500", a label inside the plot that the text mask doesn't take. Full benchmark: corneal's row
+alone (184 the same). 319 tests pass, with a synthetic scene of 30 open circles and 30 filled dots in one black
+(all found, none more), corneal itself, and viability's legend text; each of the five parts above fails a test when
+taken out. In the app: 128 dots in two families ("opaque" and "hollow rings"), no console errors.
+
+Limits: three isolated rings are needed, inside the plot; the walls must be 0.3 of the radius or more (thinner
+open circles in a solid family's color are still left to that family); and a label's zeros inside the plot are
+rings to it, as viability's are to the search by thin ink.

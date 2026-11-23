@@ -221,9 +221,11 @@ function ringEstimate(image, est, others, backgrounds) {
 
 // Hollow-ring families (outline.findHollowRings), fitted by their rings in drawing order as outlined dots are, with
 // nothing inside. `colors`: the found families' colors (fills, outlines, strokes), whose own thin ink is no ring.
-function hollowEstimates(image, background, colors) {
+// `opts`: findHollowRings' (the plain opaque families, in whose colors thick-walled rings are looked for, and the
+// plot's inside).
+function hollowEstimates(image, background, colors, opts = {}) {
     const B = background.color;
-    return findHollowRings(image, B, colors).map(found => {
+    return findHollowRings(image, B, colors, opts).map(found => {
         const est = outlinedEstimate(image, background, found);
         const { ring, hollow } = found;
         est.style.color = hollow.color;
@@ -231,7 +233,9 @@ function hollowEstimates(image, background, colors) {
         // (the fit sees the ring ink in gray, as for other outlined dots)
         est.style.fitColor = [0, 0, 0];
         est.notes = [
-            `Hollow rings (${hollow.color.join(', ')} at their darkest on the page): each pixel is read as how much darker it is than what is around it, in the rings' own color, so other ink drops out, and the rings are fitted in drawing order, nothing inside them.`,
+            hollow.thick
+                ? `Hollow rings with thick walls, in the color of the solid dots (${hollow.color.join(', ')} at their darkest on the page): each pixel is read as how dark it is against the page, the solid dots left out, and the rings are fitted in drawing order, nothing inside them.`
+                : `Hollow rings (${hollow.color.join(', ')} at their darkest on the page): each pixel is read as how much darker it is than what is around it, in the rings' own color, so other ink drops out, and the rings are fitted in drawing order, nothing inside them.`,
             `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, darker than what is under it by ${Math.round(100 * ring.alpha)}% of white's distance from black (the median of ${found.isolated.length} isolated rings).`,
         ];
         return est;
@@ -317,6 +321,8 @@ function familiesExplainInk(image, candidates) {
  * @param {import('./image.js').RgbaImage} image  as analyzed (a JPEG's chroma already restored)
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]
+ * @param {{left: number|null, right: number|null, top: number|null, bottom: number|null}} [opts.bounds]  px, the
+ *   plot's sides (axes.js plotBounds): rings are measured from those inside it
  * @param {(label: string, fraction: number) => void} [opts.onProgress]  what is being done and the share of the
  *   whole done (0–1, by SCAN_STAGES; stages that don't run are skipped over)
  * @returns {{image: import('./image.js').RgbaImage, layers: object|null, estimates: import('./style.js').Estimate[]}}
@@ -362,7 +368,12 @@ export function estimateFamilies(image, opts = {}) {
     const ringed = withRingFits(work, workScan, withoutSpeckLevels(withSiblingRadii(work, separated)), ring);
     // hollow rings of a color no family found has (its fill, outline or stroke)
     const known = ringed.filter(e => e.style).flatMap(e => [e.style.color, e.familyMeasure?.outline, e.familyMeasure?.stroke].filter(Boolean));
-    const hollow = hollowEstimates(work, first.background, known);
+    // … and thick-walled ones in a plain opaque family's own color (open circles beside filled ones)
+    const solids = ringed.filter(e => e.style?.radius && e.familyMeasure?.kind === 'opaque' && !e.style.layered && !e.familyMeasure.outline && !e.familyMeasure.stroke)
+        .map(e => ({ color: e.style.color, radius: e.style.radius }));
+    const b = opts.bounds;
+    const inside = b ? c => (b.left === null || c.x > b.left) && (b.right === null || c.x < b.right) && (b.top === null || c.y > b.top) && (b.bottom === null || c.y < b.bottom) : undefined;
+    const hollow = hollowEstimates(work, first.background, known, { solids, inside });
     stage('done');
     return { image: work, layers, estimates: [...ringed, ...hollow] };
 }

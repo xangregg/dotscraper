@@ -89,12 +89,13 @@ export function scanFamilies(source, opts = {}) {
     // the noisy pass takes about as long as the first (beeswarm-boxplot: 19 s and 33 s), so each gets half the bar
     const share = tryNoisy ? 0.5 : 1;
     const work = jpeg ? restoreChroma(source) : source;
-    const prepared = insidePlot(estimateFamilies(work, { jpeg, onProgress: (label, f) => report(label, share * f) }), opts.bounds);
+    const prepared = insidePlot(estimateFamilies(work, { jpeg, bounds: opts.bounds, onProgress: (label, f) => report(label, share * f) }), opts.bounds);
     if (!tryNoisy)
         return { work, prepared, switched: false };
     const restored = restoreChroma(source);
     const noisy = insidePlot(estimateFamilies(restored, {
         jpeg: true,
+        bounds: opts.bounds,
         onProgress: (label, f) => report(`Trying noisy color matching: ${label.charAt(0).toLowerCase()}${label.slice(1)}`, 0.5 + 0.5 * f),
     }), opts.bounds);
     const exact = fittable(prepared);

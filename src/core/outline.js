@@ -16,7 +16,7 @@
 import { pixelCoverage, gaussianKernel, blurRect, createDotModel, createDotStore, unionRect, solidImage } from './render.js';
 import { ringCenters } from './fit.js';
 import { colorDistance } from './image.js';
-import { components8, dilate } from './layers.js';
+import { components8, dilate, opening } from './layers.js';
 import { upperMedian } from './stats.js';
 
 const RING_EDGE_MARGIN = 1; // px around a dot's rectangle for antialiasing
@@ -77,6 +77,12 @@ const ISO_RADIUS_TOL = 0.2; // × the median radius, for the rings used for the 
 const STYLE_HALF = 4; // px beyond the radius in each style patch
 const MIN_RING_ALPHA = 0.1; // a ring fainter than this in P isn't an outline
 const MAX_RING_RMS = 0.06; // P units: the isolated rings must fit the annulus this well (pathogen: 0.024)
+// Thick-walled rings (outlinesInP's `thick`: open circles drawn with a heavy stroke, corneal's 5 px of 9.5): their ink
+// is up to this share of their box (a ring from 0.47 r to r: 0.61; a disc: 0.79), their darkness is fitted with
+// nothing masked (a thick dark ring's core is as dark as text, and soft: 0.71 of black at its peak), and they fit
+// the annulus to this × their darkness (corneal: 0.148 at αk 0.66, its rings ragged from a small figure enlarged)
+const THICK_ISO_FILL = 0.7;
+const THICK_RING_MAX_RMS = 0.25; // × αk
 // αf from pairs of strong candidates (ringCenters at PAIR_MIN_ARC) 0.8–1.5 r apart: a ring's ink inside the other's
 // fill over its ink outside is 1 where the other is under it and 1 − αf where on top (pathogen: modes near 1 and
 // 0.2); the median of the ratios under PAIR_LOW_MODE is 1 − αf
@@ -640,12 +646,13 @@ export function underRings(P, width, height, radius) {
     return out;
 }
 
-// Isolated rings: square, hollow components of P of a plausible size, their box centers
-function isolatedRings(P, width, height) {
+// Isolated rings: square, hollow components of P of a plausible size (their ink at most `maxFill` of their box),
+// their box centers
+function isolatedRings(P, width, height, maxFill = ISO_FILL) {
     return components8(P.map(v => (v >= ISO_LEVEL ? 1 : 0)), width, height).filter(c => {
         const w = c.x1 - c.x0 + 1;
         const h = c.y1 - c.y0 + 1;
-        if (Math.abs(w - h) > ISO_SQUARE || w < ISO_SIZE[0] || w > ISO_SIZE[1] || c.pixels.length > ISO_FILL * w * h)
+        if (Math.abs(w - h) > ISO_SQUARE || w < ISO_SIZE[0] || w > ISO_SIZE[1] || c.pixels.length > maxFill * w * h)
             return false;
         const mid = Math.floor((c.y0 + c.y1) / 2) * width + Math.floor((c.x0 + c.x1) / 2);
         return P[mid] < ISO_LEVEL;
@@ -875,6 +882,15 @@ const HOLLOW_OFF_REL = 0.3; // … this × the darkening along it, and the pixel
 const HOLLOW_INSIDE_TOL = 12; // 0–255 units
 const HOLLOW_INSIDE_MARGIN = 1.5; // px clear of the ring, inside and out
 const HOLLOW_OUTSIDE_WIDTH = 2; // px of surroundings
+// thickRings: a solid family's ink is at least this far from the page toward its color, and solid where an opening by
+// this × its dots' radius keeps it; unknown out to this many px from there
+const THICK_SOLID_LEVEL = 0.5;
+const THICK_SOLID_RADII = 0.45;
+const THICK_SOLID_REACH = 3; // px
+// … and the rings it finds are thick-walled: thinner ones are the search by thin ink's, which this reading finds
+// again along a solid family's direction (song-cents: its 46 gray rings, inner 0.79, as a second family of 42; the
+// o's of viability's red legend text, 0.73)
+const THICK_MAX_INNER = 0.7; // × the radius
 
 const RING_SAMPLES_PAIR = 45; // × 4 samples along a ring
 const PAIR_MARGIN = 1.5; // px clear of the other dots' rims
@@ -924,11 +940,16 @@ export function findOutlines(image, B) {
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B  the page, 0–255
  * @param {number[][]} known  0–255, colors already some family's (fills, outlines, strokes): a direction of
- *   darkening one of them has is left out when the thin ink in it is that family's own (HOLLOW_OWN_SHARE)
- * @returns {(RingReading & {plane: null, hollow: {dir: number[], color: number[]}})[]}  one per ring color; hollow:
- *   the unit direction of its darkening from the page, and the color its rings show, 0–255
+ *   darkening one of them has is left out when the thin ink in it is that family's own (HOLLOW_OWN_SHARE), or, for
+ *   one of `opts.solids`, read for thick-walled rings of that color (thickRings)
+ * @param {object} [opts]
+ * @param {{color: number[], radius: number}[]} [opts.solids]  the plain opaque families: color 0–255, radius px
+ * @param {function({x: number, y: number}): boolean} [opts.inside]  whether a point is inside the plot
+ * @returns {(RingReading & {plane: null, hollow: {dir: number[], color: number[], thick?: boolean}})[]}  one per ring
+ *   color; hollow: the unit direction of its darkening from the page, the color its rings show, 0–255, and whether
+ *   they are thick-walled rings in a solid family's color
  */
-export function findHollowRings(image, B, known = []) {
+export function findHollowRings(image, B, known = [], opts = {}) {
     const { width, height, data } = image;
     const n = width * height;
     const F = localFill(image);
@@ -940,7 +961,8 @@ export function findHollowRings(image, B, known = []) {
         for (let p = 0; p < n; p++)
             mask[p] = Math.hypot(data[4 * p] - k[0], data[4 * p + 1] - k[1], data[4 * p + 2] - k[2]) <= HOLLOW_OWN_TOL ? 1 : 0;
         const l = Math.hypot(...d);
-        return { dir: d.map(x => x / l), near: dilate(mask, width, height, HOLLOW_OWN_REACH) };
+        const solid = opts.solids?.find(s => Math.hypot(...s.color.map((x, ch) => x - k[ch])) <= HOLLOW_OWN_TOL) ?? null;
+        return { dir: d.map(x => x / l), near: dilate(mask, width, height, HOLLOW_OWN_REACH), solid };
     });
     for (let p = 0; p < n; p++) {
         const a = F[0][p] - data[4 * p];
@@ -964,14 +986,17 @@ export function findHollowRings(image, B, known = []) {
         bins.set(key, bin);
     }
     const dirs = [];
+    const thick = []; // directions that are a solid family's own, with that family
     const cos = (u, w) => u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
     for (const bin of [...bins.values()].sort((x, y) => y.count - x.count)) {
         if (bin.count < HOLLOW_MIN_PIXELS || dirs.length >= HOLLOW_MAX_DIRS)
             break;
         const l = Math.hypot(...bin.sum);
         const u = bin.sum.map(x => x / l);
-        const taken = families.some((f, i) => cos(u, f.dir) > HOLLOW_SAME_DIR && bin.own[i] >= HOLLOW_OWN_SHARE * bin.count);
-        if (!taken && !dirs.some(w => cos(u, w) > HOLLOW_SAME_DIR))
+        const owner = families.find((f, i) => cos(u, f.dir) > HOLLOW_SAME_DIR && bin.own[i] >= HOLLOW_OWN_SHARE * bin.count);
+        if (owner?.solid && !thick.some(t => t.solid === owner.solid))
+            thick.push({ u, solid: owner.solid });
+        if (!owner && !dirs.some(w => cos(u, w) > HOLLOW_SAME_DIR))
             dirs.push(u);
     }
     const out = [];
@@ -994,7 +1019,48 @@ export function findHollowRings(image, B, known = []) {
         const color = B.map((x, ch) => Math.round(Math.min(255, Math.max(0, x - u[ch] * found.ring.alpha * WHITE_LENGTH))));
         out.push({ ...found, plane: null, fillAlpha: 0, fillAlphaMeasured: false, hollow: { dir: u, color } });
     }
+    for (const { u, solid } of thick) {
+        const found = thickRings(image, B, u, solid, opts.inside);
+        if (!found)
+            continue;
+        const color = B.map((x, ch) => Math.round(Math.min(255, Math.max(0, x - u[ch] * found.ring.alpha * WHITE_LENGTH))));
+        out.push({ ...found, plane: null, fillAlpha: 0, fillAlphaMeasured: false, hollow: { dir: u, color, thick: true } });
+    }
     return out;
+}
+
+/**
+ * Thick-walled hollow rings in a solid family's own color: open circles beside filled ones, drawn with a heavy stroke
+ * (corneal: 58 rings and 63 dots in one black, the rings' walls 5 px of their 9.5). The search by thin ink leaves a
+ * found family's color alone, since the rims of its dots read as rings, and a wall this thick is no thin ink: against
+ * the fill around it (localFill's 5 px) it reads unevenly, and half of it is as dark as text. Here each pixel is read
+ * against the page, along the family's direction of darkening; the family's solid ink (what an opening by
+ * THICK_SOLID_RADII of its radius keeps: its dots, not a wall or a stroke) is unknown with THICK_SOLID_REACH px around
+ * it, where its dots' soft edges are; and the rings are measured as thick ones (outlinesInP's `thick`).
+ *
+ * @returns {RingReading|null}
+ */
+function thickRings(image, B, u, solid, inside) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const P = new Float32Array(n);
+    const unknown = new Uint8Array(n);
+    const dark = new Uint8Array(n);
+    const full = Math.hypot(...B.map((x, ch) => x - solid.color[ch]));
+    for (let p = 0; p < n; p++) {
+        const e = [B[0] - data[4 * p], B[1] - data[4 * p + 1], B[2] - data[4 * p + 2]];
+        const t = e[0] * u[0] + e[1] * u[1] + e[2] * u[2];
+        if (Math.hypot(e[0] - t * u[0], e[1] - t * u[1], e[2] - t * u[2]) > Math.max(HOLLOW_OFF_ABS, HOLLOW_OFF_REL * Math.abs(t)))
+            unknown[p] = 1;
+        else
+            P[p] = Math.max(0, t) / WHITE_LENGTH;
+        dark[p] = t >= THICK_SOLID_LEVEL * full ? 1 : 0;
+    }
+    const dots = dilate(opening(dark, width, height, THICK_SOLID_RADII * solid.radius), width, height, THICK_SOLID_REACH);
+    for (let p = 0; p < n; p++)
+        unknown[p] ||= dots[p];
+    const found = outlinesInP(P, width, height, unknown, { hollow: (isolated, ring) => hollowInside(image, isolated, ring), thick: true, inside });
+    return found && found.ring.inner <= THICK_MAX_INNER ? found : null;
 }
 
 // whether the isolated rings' insides match their surroundings (HOLLOW_INSIDE_TOL)
@@ -1101,10 +1167,13 @@ export function localFill(image) {
  * @param {boolean} [opts.blackRings]  when no ring shows with dark ink masked, try opaque black rings (MASK_INK)
  * @param {function(object[], object): boolean} [opts.hollow]  hollow rings: a test of the isolated rings and the
  *   ring's style that must pass, made before the work that follows; no αf is measured (fillAlpha 0, pairs 0)
+ * @param {boolean} [opts.thick]  thick-walled rings (THICK_ISO_FILL): read with nothing masked, their darkness fitted
+ * @param {function({x: number, y: number}): boolean} [opts.inside]  the isolated rings that count: those inside the
+ *   plot (a label's 0 or O is a ring too)
  * @returns {RingReading|null}
  */
 export function outlinesInP(P, width, height, unknown = null, opts = {}) {
-    const rings = isolatedRings(P, width, height);
+    const rings = isolatedRings(P, width, height, opts.thick ? THICK_ISO_FILL : ISO_FILL).filter(c => !opts.inside || opts.inside(c));
     if (rings.length < ISO_MIN)
         return null;
     const r0 = upperMedian(rings.map(c => c.r));
@@ -1113,7 +1182,7 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     // 9.75–10.5)
     const used = rings.slice().sort((a, b) => Math.abs(a.r - r0) - Math.abs(b.r - r0)).slice(0, ISO_MAX)
         .filter(c => Math.abs(c.r - r0) <= ISO_RADIUS_TOL * r0);
-    const read = maskInk => {
+    const read = (maskInk, darkness = maskInk ? null : 1) => {
         const ink = new Uint8Array(P.length);
         for (let y = 0; y < height && maskInk; y++) {
             for (let x = 0; x < width; x++) {
@@ -1130,11 +1199,11 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
             A[p] = under[p] > MASK_BG || ink[p] || unknown?.[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
         // (unmasked, the rings are opaque black: αk fitted freely went to 1.26, a thin blurred annulus standing in
         // for a sharp one, and the fit stacked dots to make up the difference)
-        const ring = measureRing(A, width, height, used, maskInk ? null : 1);
-        const fits = ring.rms <= (maskInk ? MAX_RING_RMS : BLACK_RING_MAX_RMS);
+        const ring = measureRing(A, width, height, used, darkness);
+        const fits = ring.rms <= (opts.thick ? THICK_RING_MAX_RMS * ring.alpha : maskInk ? MAX_RING_RMS : BLACK_RING_MAX_RMS);
         return ring.alpha >= MIN_RING_ALPHA && fits && ring.rings >= ISO_MIN ? { A, ring } : null;
     };
-    const found = read(true) ?? (opts.blackRings && ringPeak(P, width, height, used) >= MASK_INK ? read(false) : null);
+    const found = opts.thick ? read(false, null) : read(true) ?? (opts.blackRings && ringPeak(P, width, height, used) >= MASK_INK ? read(false) : null);
     if (!found)
         return null;
     const { A, ring } = found;

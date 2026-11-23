@@ -1368,10 +1368,10 @@ test('isDotFamily: many whole isolated dots stand in for strong arcs, with a ten
 
 const CORNEAL = 'corneal-10.1371-journal.pone.0362558';
 
-test('regression: corneal, blurred black dots beside bold black labels are a family', { skip: !existsSync(`${PLOS}${CORNEAL}.png`) && 'bench-plos absent' }, () => {
-    // before: "No dot family found". (Its 58 hollow rings in the same black are still not found.)
+test('regression: corneal, blurred black dots and thick open circles of the same black, beside bold black labels', { skip: !existsSync(`${PLOS}${CORNEAL}.png`) && 'bench-plos absent' }, () => {
+    // before: "No dot family found"; then the dots alone
     const results = extractAll(readImage(`${PLOS}${CORNEAL}.png`));
-    assert.equal(results.length, 1);
+    assert.equal(results.length, 2);
     assert.ok(results[0].est.style.color.every(v => v < 10), `color ${results[0].est.style.color}`);
     const truth = readTruthJson(`${PLOS}truth/${CORNEAL}.json`);
     const black = truth.dots.filter(d => d.family === truth.families.find(f => f.color[0] < 10).family);
@@ -1379,4 +1379,11 @@ test('regression: corneal, blurred black dots beside bold black labels are a fam
     const m = matchDots(black, results[0].fit.dots, 0.5 * results[0].fit.radius);
     assert.equal(m.pairs.length, 63, `${m.pairs.length} of 63 found`);
     assert.ok(results[0].fit.dots.length <= 67, `${results[0].fit.dots.length} dots in all`);
+    // the open circles: every one, and no more than the zeros of a label inside the plot besides
+    assert.ok(results[1].est.candidates[0].hollow, 'hollow rings');
+    const open = truth.dots.filter(d => !black.includes(d));
+    assert.equal(open.length, 58);
+    const rings = matchDots(open, results[1].fit.dots, 0.5 * results[1].fit.radius);
+    assert.equal(rings.pairs.length, 58, `${rings.pairs.length} of 58 circles found`);
+    assert.ok(results[1].fit.dots.length <= 62, `${results[1].fit.dots.length} circles in all`);
 });

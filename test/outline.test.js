@@ -512,3 +512,81 @@ test('lineOpening is the minimum, then the maximum, over the rounded segment, to
     assert.equal(o[4 * width + 12], 1);
     assert.equal(o[1 * width + 3], 0);
 });
+
+// Filled dots and open circles in one black, the circles' walls thick, all blurred: drawn at 4× and averaged down, then
+// a Gaussian of sd `sigma` px. A circle's hole is the page's color, over whatever was drawn before it.
+function openAndFilled(width, height, dots, { r, rIn, rOut, sigma }) {
+    const S = 4;
+    const sum = new Float32Array(width * height);
+    for (let y = 0; y < height * S; y++) {
+        for (let x = 0; x < width * S; x++) {
+            let v = 255;
+            for (const d of dots) {
+                const q = Math.hypot((x + 0.5) / S - d.x, (y + 0.5) / S - d.y);
+                if (d.open ? q <= rOut : q <= r)
+                    v = d.open && q < rIn ? 255 : 0;
+            }
+            sum[Math.floor(y / S) * width + Math.floor(x / S)] += v / (S * S);
+        }
+    }
+    const half = Math.ceil(3 * sigma);
+    const kernel = Array.from({ length: 2 * half + 1 }, (_, i) => Math.exp(-((i - half) ** 2) / (2 * sigma * sigma)));
+    const norm = kernel.reduce((a, b) => a + b, 0);
+    const pass = (src, dx, dy) => {
+        const dst = new Float32Array(src.length);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                for (let k = -half; k <= half; k++) {
+                    const xx = Math.min(width - 1, Math.max(0, x + k * dx));
+                    const yy = Math.min(height - 1, Math.max(0, y + k * dy));
+                    dst[y * width + x] += kernel[k + half] / norm * src[yy * width + xx];
+                }
+            }
+        }
+        return dst;
+    };
+    const out = pass(pass(sum, 1, 0), 0, 1);
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let p = 0; p < width * height; p++)
+        data.set([out[p], out[p], out[p], 255], 4 * p);
+    return { width, height, data };
+}
+
+test('regression: open circles with thick walls beside filled dots of the same black are two families (corneal)', () => {
+    // before: the filled dots alone. The search for hollow rings left the dots' color to them, and walls this thick
+    // (4.8 px of 9.5) are no thin ink for it: against the fill around them they read unevenly, half as dark as text
+    const rng = createRng(6);
+    const dots = [];
+    // two swarms: open circles at the left, filled dots at the right, some touching
+    for (const [cx, open] of [[150, true], [400, false]]) {
+        for (let n = 0; n < 30;) {
+            const d = { x: cx + 110 * (rng.uniform() - 0.5), y: 50 + 300 * rng.uniform(), open };
+            if (dots.every(e => Math.hypot(e.x - d.x, e.y - d.y) > 19)) {
+                dots.push(d);
+                n++;
+            }
+        }
+    }
+    const results = extractAll(openAndFilled(550, 400, dots, { r: 8.3, rIn: 4.7, rOut: 9.5, sigma: 1 }));
+    assert.equal(results.length, 2);
+    for (const r of results) {
+        const hollow = !!r.est.candidates[0].hollow;
+        const m = matchDots(dots.filter(d => d.open === hollow), r.fit.dots, 4.5);
+        assert.equal(m.pairs.length, 30, `${hollow ? 'circles' : 'dots'}: ${m.pairs.length} of 30 found`);
+        assert.equal(r.fit.dots.length, 30, `${hollow ? 'circles' : 'dots'}: ${r.fit.dots.length} in all`);
+    }
+    const rings = results.find(r => r.est.candidates[0].hollow).est.style;
+    assert.ok(Math.abs(rings.radius - 9.5) < 0.8 && rings.ring.inner < 0.7, `ring from ${rings.ring.inner * rings.radius} to ${rings.radius}`);
+});
+
+const VIABILITY = new URL('../bench-plos/viability-10.1371-journal.pone.0361912.png', import.meta.url).pathname;
+
+test('thick-walled rings in a solid family\'s color: not the o\'s of text in that color (viability)', { skip: !existsSync(VIABILITY) && 'bench-plos absent' }, () => {
+    // the reading for open circles beside filled ones finds thin rings too, along a solid family's direction: the o's
+    // of the legend's red text (inner 0.73 of their radius) were a family of red rings, and song-cents's 46 gray rings
+    // a second family of 42. Its rings must be thick-walled
+    const { estimates } = estimateFamilies(readImage(VIABILITY));
+    const rings = estimates.filter(e => e.candidates?.[0]?.hollow);
+    assert.ok(rings.every(e => Math.max(...e.style.color) - Math.min(...e.style.color) < 30), `ring families: ${rings.map(e => e.style.color).join('; ')}`);
+    assert.equal(estimates.filter(e => e.familyMeasure?.kind === 'opaque').length, 2);
+});
