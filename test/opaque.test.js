@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createRng } from '../src/core/rng.js';
 import { scanOf } from '../src/core/scan.js';
-import { measureOpaque } from '../src/core/opaque.js';
+import { measureOpaque, familyRings, colorClusters, isDotFamily } from '../src/core/opaque.js';
 import { estimateStyle, opaqueFamilyEstimate } from '../src/core/style.js';
 import { buildMask } from '../src/core/layers.js';
 import { fitDots } from '../src/core/fit.js';
@@ -17,6 +17,7 @@ import { readTruthJson, truthFromExport, isDotsExport } from '../tools/truth-jso
 import { extractAll } from '../src/core/extract.js';
 import { groupRow, laneRow } from '../tools/bench.mjs';
 import { detectAxes } from '../src/core/axes.js';
+import { outlinesInP } from '../src/core/outline.js';
 import { restoreChroma } from '../src/core/jpeg.js';
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b} (±${tol})`);
@@ -1227,4 +1228,155 @@ test('regression: blurred black dots in a gray frame are whole dots at their rad
     assert.ok(black, 'the black dots are a family');
     assert.ok(black.isolated.length >= 20, `${black.isolated.length} whole dots`);
     assert.ok(Math.abs(black.style.radius - 6) < 0.25, `radius ${black.style.radius}`);
+});
+
+// Opaque dots with a thin dark outline, drawn in order and then blurred, as a small figure enlarged is: discs at 4× and
+// averaged down, then a Gaussian of sd `sigma` px. The outline is too thin to show its own color anywhere.
+function blurredOutlined(width, height, dots, { fill, outline, rFill, rOut, sigma }) {
+    const S = 4;
+    const sum = new Float32Array(3 * width * height);
+    for (let y = 0; y < height * S; y++) {
+        for (let x = 0; x < width * S; x++) {
+            let c = [255, 255, 255];
+            for (const d of dots) {
+                const r = Math.hypot((x + 0.5) / S - d.x, (y + 0.5) / S - d.y);
+                if (r <= rOut)
+                    c = r <= rFill ? fill : outline;
+            }
+            const p = 3 * (Math.floor(y / S) * width + Math.floor(x / S));
+            for (let ch = 0; ch < 3; ch++)
+                sum[p + ch] += c[ch] / (S * S);
+        }
+    }
+    const half = Math.ceil(3 * sigma);
+    const kernel = Array.from({ length: 2 * half + 1 }, (_, i) => Math.exp(-((i - half) ** 2) / (2 * sigma * sigma)));
+    const norm = kernel.reduce((a, b) => a + b, 0);
+    const pass = (src, dx, dy) => {
+        const dst = new Float32Array(src.length);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                for (let k = -half; k <= half; k++) {
+                    const xx = Math.min(width - 1, Math.max(0, x + k * dx));
+                    const yy = Math.min(height - 1, Math.max(0, y + k * dy));
+                    for (let ch = 0; ch < 3; ch++)
+                        dst[3 * (y * width + x) + ch] += kernel[k + half] / norm * src[3 * (yy * width + xx) + ch];
+                }
+            }
+        }
+        return dst;
+    };
+    const out = pass(pass(sum, 1, 0), 0, 1);
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let p = 0; p < width * height; p++)
+        data.set([out[3 * p], out[3 * p + 1], out[3 * p + 2], 255], 4 * p);
+    return { width, height, data };
+}
+
+test('regression: a thin black outline, blurred, is read by its own color, out to the end of its soft edge (stiffness)', () => {
+    // before: the outline's color was its darkest pixels', a mix of black and the fill (navy, for a blue fill). The
+    // outer side of every ring, black mixed with the page, is gray: off the triangle of page, fill and navy, so
+    // unknown, as was everything more than 4 px from the fill, and the mask took the rings whole
+    const rng = createRng(11);
+    const dots = [];
+    for (let i = 0; i < 30; i++)
+        dots.push({ x: 50 + 60 * (i % 6) + 14 * rng.uniform(), y: 50 + 56 * Math.floor(i / 6) + 14 * rng.uniform() });
+    const fill = [49, 179, 253];
+    const image = blurredOutlined(430, 340, dots, { fill, outline: [0, 0, 0], rFill: 6.4, rOut: 8.9, sigma: 1 });
+    // the outline's color as the scan has it: the darkest of the rings' inner side, a third fill (stiffness's 16, 57,
+    // 83 around this fill)
+    const seen = fill.map(v => 0.32 * v);
+    const { P, unknown } = familyRings(image, fill, seen, [[255, 255, 255]], []);
+    let ring = 0;
+    let unread = 0;
+    let most = 0;
+    for (const d of dots) {
+        for (let y = Math.floor(d.y - 12); y <= d.y + 12; y++) {
+            for (let x = Math.floor(d.x - 12); x <= d.x + 12; x++) {
+                const r = Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y);
+                if (r < 6.4 || r > 11)
+                    continue;
+                ring++;
+                unread += unknown[y * image.width + x];
+                most = Math.max(most, P[y * image.width + x]);
+            }
+        }
+    }
+    assert.ok(unread <= 0.02 * ring, `${unread} of ${ring} ring pixels unknown`);
+    // (a full outline reads 0.45: these, never more than 0.8 black, less)
+    assert.ok(most > 0.25 && most < 0.4, `the rings' darkest reads ${most}`);
+});
+
+const STIFFNESS = 'stiffness-10.1371-journal.pone.0359831';
+
+test('regression: stiffness, thin dark outlines around blue fills are read as rings', { skip: !existsSync(`${PLOS}${STIFFNESS}.png`) && 'bench-plos absent' }, () => {
+    // before: 39 dots found of 305. The outline's color as the scan has it, 16, 57, 83, is its darkest pixels', black
+    // mixed with the fill; the rings' outer sides are gray, off the triangle of page, fill and that navy, and their
+    // soft ends lie more than 4 px from the fill: unknown both, so the mask took the rings whole
+    const image = readImage(`${PLOS}${STIFFNESS}.png`);
+    const { P, unknown } = familyRings(image, [49.4, 178.7, 252.8], [16, 57, 83], [[255, 255, 255]], []);
+    // the dots with no other within three radii: their rings, from the fill's edge to the end of the soft edge
+    const dots = readTruthJson(`${PLOS}truth/${STIFFNESS}.json`).dots;
+    const alone = dots.filter(d => dots.every(e => e === d || Math.hypot(e.x - d.x, e.y - d.y) > 26));
+    assert.ok(alone.length >= 20, `${alone.length} dots alone`);
+    let ring = 0;
+    let unread = 0;
+    for (const d of alone) {
+        for (let y = Math.floor(d.y - 12); y <= d.y + 12; y++) {
+            for (let x = Math.floor(d.x - 12); x <= d.x + 12; x++) {
+                const r = Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y);
+                if (r < 6.5 || r > 11)
+                    continue;
+                ring++;
+                unread += unknown[y * image.width + x];
+            }
+        }
+    }
+    assert.ok(unread <= 0.05 * ring, `${unread} of ${ring} ring pixels unknown`);
+    const found = outlinesInP(P, image.width, image.height, unknown);
+    assert.ok(found, 'a ring model');
+    assert.ok(Math.abs(found.ring.radius - 8.8) <= 0.4 && found.ring.rms < 0.035, `radius ${found.ring.radius}, rms ${found.ring.rms}`);
+    assert.ok(found.isolated.length >= 10, `${found.isolated.length} whole rings`);
+});
+
+test('regression: a small family\'s color is a cluster in a large image too (cattle)', () => {
+    // before: a cluster needed a thousandth of the image, 4339 px of cattle's 2174 × 1996: its 25 red dots of 7.6 px
+    // have 3074 at their color, and red was never tried. The floor stops growing at 1500 px
+    const width = 2200;
+    const height = 2000;
+    const data = new Uint8ClampedArray(4 * width * height).fill(255);
+    const blob = (x0, y0, w, h, color) => {
+        for (let y = y0; y < y0 + h; y++) {
+            for (let x = x0; x < x0 + w; x++)
+                data.set(color, 4 * (y * width + x));
+        }
+    };
+    blob(100, 100, 200, 100, [3, 3, 255]); // 20 000 px
+    blob(900, 900, 60, 50, [255, 3, 3]); // 3000 px
+    blob(1500, 300, 40, 30, [3, 160, 3]); // 1200 px: under the floor
+    const clusters = colorClusters({ width, height, data }, [[255, 255, 255]]).map(c => c.color.map(Math.round).join(','));
+    assert.deepEqual(clusters, ['3,3,255', '255,3,3']);
+});
+
+test('isDotFamily: many whole isolated dots stand in for strong arcs, with a tenth of the color in them', () => {
+    // corneal's black: blurred dots, no arc at 0.75 of the edge, 25 whole dots, beside bold labels
+    const corneal = { radius: 8.3, isolated: Array.from({ length: 25 }, () => ({ r: 8.3 })), strongDots: 0, coverage: 0.28 };
+    assert.equal(isDotFamily(corneal), true);
+    assert.equal(isDotFamily({ ...corneal, isolated: corneal.isolated.slice(0, 9) }), false, 'nine whole dots');
+    assert.equal(isDotFamily({ ...corneal, coverage: 0.05 }), false, 'a color that is nearly all text');
+    assert.equal(isDotFamily({ ...corneal, isolated: [], strongDots: 3, coverage: 0.4 }), true, 'as before: three strong arcs');
+});
+
+const CORNEAL = 'corneal-10.1371-journal.pone.0362558';
+
+test('regression: corneal, blurred black dots beside bold black labels are a family', { skip: !existsSync(`${PLOS}${CORNEAL}.png`) && 'bench-plos absent' }, () => {
+    // before: "No dot family found". (Its 58 hollow rings in the same black are still not found.)
+    const results = extractAll(readImage(`${PLOS}${CORNEAL}.png`));
+    assert.equal(results.length, 1);
+    assert.ok(results[0].est.style.color.every(v => v < 10), `color ${results[0].est.style.color}`);
+    const truth = readTruthJson(`${PLOS}truth/${CORNEAL}.json`);
+    const black = truth.dots.filter(d => d.family === truth.families.find(f => f.color[0] < 10).family);
+    assert.equal(black.length, 63);
+    const m = matchDots(black, results[0].fit.dots, 0.5 * results[0].fit.radius);
+    assert.equal(m.pairs.length, 63, `${m.pairs.length} of 63 found`);
+    assert.ok(results[0].fit.dots.length <= 67, `${results[0].fit.dots.length} dots in all`);
 });

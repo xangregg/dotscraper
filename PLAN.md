@@ -3860,3 +3860,149 @@ out. Limit: at a blur of 2 px on dots of 6 the same synthetic scene finds no fam
    expression (labels with no ticks).
 5. **tsne**: the white edge around translucent dots (the stroke reading is for opaque families).
 6. **viability**: tick labels' zeros as rings.
+
+**stiffness: outlines in the mask** (2026-11-22)
+
+305 blue dots in thin dark outlines, a dense cloud with a regression line: 39 found, P 0.846, R 0.108. The family
+was found and set up to be fitted by its rings, but every ring was in the mask (the user's observation): only the
+fills' middles were left, and a ring fit has nothing to go by there. Two causes, both in the ring reading
+(`opaque.js familyRings`), which reads each pixel as a mix of page, fill and outline and leaves it unknown otherwise:
+
+1. **The outline's color was not the outline's.** The stroke is a pixel or two wide and blurred, so no pixel shows
+   it alone; the scan takes its darkest pixels, 16, 57, 83: black mixed with a third of the fill (49, 179, 253).
+   A ring's inner side lies on the line from the fill to that navy. Its outer side is black mixed with the page,
+   which is gray (134, 134, 133 halfway), not the blue-gray a mix of navy and page would be: it reads as navy
+   less some fill, a negative weight, off the triangle. Now the reading works out the color beyond the one seen
+   (`outlineItself`): over the ring pixels that are part page and no fill, the share of fill they lack, at its
+   ninth decile (0.32 here, which puts the color at black to within 4 units; the median, 0.24, because most outer
+   pixels of a blurred ring have some fill in them too, left the ring model at rms 0.057 where black gives 0.019).
+   Only from a share of 0.1 (with black given as the outline the same measure is 0.05). Too far is the safe
+   side: any mix of page, fill and outline stays inside the triangle of a color beyond the outline's. With this
+   alone, 242 found.
+2. **The rings reach farther than 4 px from the fill** (`OUTLINE_REACH`, which keeps other ink in the outline's
+   color, text and axes, from being read as rings): here 6 px from the fill's color to the page. The reach now goes
+   on down a ring's falling tail to its faint end (`downhill`, the growth biomarker's soft edges use), but only
+   where the reach's edge runs through the rings, so that the tails add as many pixels as that edge has, or more
+   (stiffness 2.55 times; degradation1 0.16 and 0.38). Grown always, the edges of degradation1's gray error bars
+   joined its gray rings and no ring was whole. With the faint end left out, the last pixels of each tail were
+   unknown, the mask (dilated by a pixel) took the rims, and the rings' radius read 9.6 for 8.8.
+
+Now 264 found, P 0.996, R 0.862, radius 8.8 (ring from 6.6 to 8.9 px, 12 whole rings); in the app the same, no
+console errors. Of the 42 missed, 32 have another dot within 9 px, about a radius: they show a crescent of
+outline at most, and an outline farther than the reach from any fill's color is still unknown. 10 lie on the
+regression line, which is masked (4 are both). The full benchmark changes in stiffness's row alone (182 rows the
+same), and the scan takes as long as before (39.8 s for 38.0). 309 tests pass: a ring reading on a synthetic scene
+(a thin black outline drawn and blurred, given its darkest color), and the reading and ring model on the image
+itself; each fails with the color correction or the tails taken out, and degradation1's test fails with the tails
+grown always.
+
+Found on the way, not fixed:
+
+- **A crop of the image is no family.** Three crops (380 × 300 below the line with 11 dots alone; two with the line)
+  scan as "No dot family found": the blue's plain measure has no dot (radius 10 to 12 from the distance transform),
+  and nothing reads the outline. The whole image's blue is found only through its outline (its plain measure:
+  27 dots, coverage 0.11). What the whole image has that a crop lacks isn't diagnosed. A synthetic scene drawn like
+  it (discs with a black ring, blurred) is no family either, which is why the fit of such a scene isn't tested
+  end to end.
+- Stiffness's axes: none found, not looked at. Ticks can be placed by hand.
+- The user's other outline notes (gait: the outline not noticed, and Find working badly with it set by hand;
+  corneal) aren't tested against this change. A color picked by hand as the outline is a darkest pixel too, so the
+  correction may help there.
+
+**richness and mpo: a band and boxes in the dots' own colors** (2026-11-22)
+
+*richness* (48 dots: 170 found, P 0.282 → 57 found, P 0.842, R 1.000). Translucent blue dots with outlines over a
+regression line and its confidence band. The band is exactly one dot's color (216, 222, 245: the line's blue at the
+dots' α), and the line is the dots' full color, so both read as the family's own levels and the fit filled them
+with dots. Color can't tell them apart. Shape was considered and dropped: the band is narrower than a dot in its
+middle (21 px on either side of the line, dots 26 px across), dots sit across its edges in its own color, and dots
+on it cut it into pieces shorter than any run long enough to tell it from a dot.
+
+The user's suggestion decides it: these dots have outlines and a band has none. After the fit, each dot of a
+translucent outlined family is checked for its ring (`fit.js ringless`): the step in the residual from just inside
+the ring to the rim, in 12 sectors round the dot, each as a share of the ring the model draws (1 as drawn, 0 none),
+and the median over sectors. Whatever lies under the whole dot (the band) is in both terms and drops out; marks
+crossing a rim (the line, another dot's ring) spoil a few sectors, which the median passes over. On richness's first
+fit the 48 dots read 0.43 to 2.29 (median 1.02) and the 122 others −2.1 to 1.4 (median −0.19). Dots under 0.5 go, and
+the rest are read again until none does. Measured there:
+
+| Variant | Found | Of the 48 |
+|---|---|---|
+| as it is (threshold 0.5, median, ties spared) | 57 | 48 |
+| threshold 0.35 | 108 | 48 |
+| threshold 0.65 | 53 | 47 |
+| mean over sectors instead of the median | 59 | 45 |
+| dots almost at a dot whose ring shows judged too | 54 | 47 |
+
+- Tried first: the ring's share by all rim pixels at once (the 122 others up to 3.8: the line under a rim is far
+  darker than any ring), and the share of rim pixels that show the ring (a dot on the band has the band under its
+  rim too, and none shows). The step from inside to rim is the one that doesn't see what is under the whole dot.
+- A dot within 0.35 r of one whose ring shows stays: it may be a second dot under the same ring. bench2
+  stroked-dots lost one of three dots within 4 px of each other without that (204 → 203, its ring 0.18).
+- Not for rings narrower than two blurs (the step is predicted without the blur), nor dots placed by hand.
+- Nothing is born after the check, so what the removed dots explained stays in the residual: the Residual view
+  shows the band and the line.
+- The fit still spends its time on the band (27 s, 275 candidates) before the check removes them.
+- The 9 extras are each within 9 px of a real dot, 6 of them within 2.5 px and flagged as close pairs.
+
+*mpo* (45 black dots over gray-filled box plots: "radius unknown" → 49 found, P 0.918, R 1.000). Three causes:
+
+1. **Black was a page color for the axes.** `backgroundColors` takes any color over 5% of the image as a
+   background (a panel); mpo's black (dots, lines 7 px thick, bold labels) is 5.6%, so the black axis lines were no
+   ink: the y axis showed one tick and the top bracket, with two stars for labels, was the x axis, with the plot
+   "above" it. Now, for the axes, a background differs from the page by less than 128 in luminance
+   (`PANEL_MAX_CONTRAST`): a panel is a tint of the page. Both axes are found, the y axis read 1000 to 300. Of the
+   160 local images only mpo's axes change. The scan's own list of backgrounds is as it was (31 images have a
+   second one, many of them dot colors, and the fits were tuned with them).
+2. **Black was never tried as a family.** The page and the boxes' grays, 160 and 127, are the levels 0 to 2 of a
+   gray of 107 at α 0.64, a translucent "family" with no dot; a cluster on a translucent family's color line is
+   taken for one of its levels, and black is on that line. But levels approach the family's full color and never
+   pass it, and black is 185 units beyond that gray: the line now ends at the full color plus a quarter of its
+   distance from the background (`LEVEL_LINE_BEYOND`). Black is then an opaque family, radius 16.7.
+3. **The grays stayed a family**, with the black dots' radius as a sibling's. A translucent family with no dot
+   alone whose first level is a solid area at the opaque dots' radius is what those dots lie on: dropped
+   (`style.js findCandidates`), as `withoutSolidBands` does with the translucent families' own radii. The boxes
+   are then regions under the dots.
+
+The whiskers, box outlines, medians and brackets are thin marks in the dots' color and masked; the stars aren't
+found as dots. The 4 extras are each within 6 px of a real dot, 3 of them flagged as close pairs.
+
+Full benchmark: richness's and mpo's rows alone change (183 others the same, 184 rows, 2 failures: corneal and
+lung-tumor). 314 tests pass. New: the band scene (synthetic, 36 dots over a band of one dot's color and a line),
+richness and mpo themselves, bench2 stroked-dots' ties, and black axes under black marks; each fails with its fix
+taken out. In the app: richness 57 dots, mpo 49, no console errors.
+
+**Families the scan missed: cattle, corneal, lung-tumor** (2026-11-22)
+
+*cattle* (325 dots: 300 found → 326, R 1.000). The red family, 25 dots, was never tried: a color cluster needed a
+thousandth of the image (`CLUSTER_MIN_FRACTION`), 4339 px of cattle's 2174 × 1996, and red has 3074 at its color.
+The plain measure of red is a family at once (24 centers, 18 whole dots, coverage 0.88). The floor now stops
+growing at 1500 px (`CLUSTER_MAX_MIN_PIXELS`): a family's size goes with its dots, not with the picture. Full
+benchmark: cattle's row alone, and the time in all is the same (2073 s and 2029 s over the rows; cattle itself 50 s
+→ 59 s, with a third family to fit).
+
+*corneal* (63 black dots and 58 hollow black rings: no family → 66 found, the 63 dots among them).
+
+- The black dots were no family for want of strong arcs: a blurred dot's edge, 3 or 4 px wide, votes for its center
+  from every radius across it, and none of the 62 centers had 0.75 of its edge at one radius (at radius 7.5, four).
+  It has 25 whole isolated dots of radius 8.22 to 8.31, which the test of a whole dot (aspect, second moments) is
+  stricter about than an arc: ten or more now stand in for the strong arcs (`DOT_MANY_ISOLATED`), with a tenth of
+  the color's pixels in the dots as before (the labels are bold: coverage 0.28).
+- The rings are not found, for two reasons. The hollow-ring search leaves a found family's color alone (its own
+  edges read as rings). And with black allowed, the rings fit neither reading it has: as thin translucent rings,
+  with ink over 0.8 masked as text, pieces of them are masked and the rest fits at rms 0.109 (limit 0.06); as
+  opaque black rings, unmasked, at 0.142 (limit 0.1), their cores only 0.71 of black. They are dark gray rings 3 px
+  thick with soft edges. Open: a third reading (unmasked, the ring's darkness fitted), and two families of one
+  color, solid and hollow, in one fit.
+
+*lung-tumor* (473 small dots: no family). Diagnosed, not fixed. The dots are 13 px across and blurred: a light blue
+fill (173, 193, 214) about 5 px across inside a darker ring of its hue (132, 162, 194), fading to white. With
+exact colors there is nothing flat to read levels from. With noisy matching a family is read at 80, 122, 169 and
+α 0.92, whose first level is the ring's color: the fills are then half a level, no dot is whole, and there is no
+radius (counting blurred discs as whole ones, as for biomarker, finds none either). It needs a reading of small
+ringed translucent dots that doesn't start from flat pixels.
+
+*synthetic*'s two families of 2 dots each are not looked at: a family needs three dot centers by every rule.
+
+314 tests before these, 317 with: a cluster in a 4.4 Mpx image, `isDotFamily` with whole dots for arcs, and corneal's
+black dots; each fails with its fix taken out.

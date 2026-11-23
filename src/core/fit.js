@@ -14,7 +14,7 @@
 // objective, and a global radius refit. Everything is incremental: a change re-renders and re-scores only the
 // patch it touches.
 
-import { createDotModel, renderDots, solidImage, gaussianKernel } from './render.js';
+import { createDotModel, renderDots, solidImage, gaussianKernel, pixelCoverage } from './render.js';
 import { createOutlineModel } from './outline.js';
 import { colorDistance } from './image.js';
 import { upperMedian } from './stats.js';
@@ -110,6 +110,22 @@ const COINCIDENT_MIN_PAIRS = 3;
 // dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
 // of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
 export const FLAG_CLOSE_RADII = MERGE_RADII;
+// Translucent dots with an outline: a dot whose ring the image doesn't show is no dot (ringless). Richness: a
+// confidence band in the color of one dot, exactly, and a line of the full color through it, were filled with dots,
+// 170 found for 48; a band has no ring. A dot's ring shows as a step in the residual from just inside it to the rim:
+// none where the image has the ring the model draws, minus the ring's own contribution where it has none. The step
+// is read in RING_SECTORS sectors round the dot, each as the share of the ring shown (1: as modeled, 0: none), and
+// the dot's is their median: other marks crossing a rim (the line, another dot's ring) spoil a few sectors, and
+// whatever lies under the whole dot (the band itself) is in both terms and drops out. Measured on richness's first
+// fit: the 48 dots 0.43 to 2.29 (median 1.02), the 122 others −2.1 to 1.4 (median −0.19, ninth decile 0.45).
+// Dots under RING_MIN_SHOWN go, and the rest are read again until none does (richness: 57 left, the 48 among them;
+// at 0.35, 108 left; at 0.65, 53 with 47 of the 48; by the sectors' mean, 59 with 45).
+const RING_SECTORS = 12;
+const RING_MIN_SECTORS = 6; // sectors needed with RING_SECTOR_MIN_PIXELS of rim and of inside unmasked
+const RING_SECTOR_MIN_PIXELS = 2; // px (summed coverage)
+const RING_MIN_SHOWN = 0.5;
+// (the step is predicted without the blur: not for rings narrower than this many blurs)
+const RING_MIN_WIDTH_BLURS = 2;
 const PROGRESS_INTERVAL = 150; // ms between progress reports
 
 function huber(r) {
@@ -441,7 +457,7 @@ function blurPlane(src, width, height, sigma) {
  *
  * @param {FitInput} input
  * @returns {object}  the fit's state and steps: style (live: the radius is refitted), lambda, weight and imgT (per
- *   pixel); add, remove, refineAll, refineDot, pin, births, splits, deaths, merges, fitFills, refitRadius, bestZ;
+ *   pixel); add, remove, refineAll, refineDot, pin, births, splits, deaths, merges, fitFills, refitRadius, ringless, bestZ;
  *   totalLoss, assess, birthFailures, modelImage, dots, ids, position, near. Each is documented where it is defined.
  */
 export function createFit(input) {
@@ -1088,6 +1104,66 @@ export function createFit(input) {
         return loss([0, 0, width, height]);
     }
 
+    // The share of a dot's ring that the image shows (RING_SECTORS): per sector, 1 + (the mean residual on the ring −
+    // that on the band of the ring's width just inside it) / the ring's contribution there, which is the fill's
+    // color through what the rest of the model lets through, tC · T · a / (1 − α·m − a·m_ring) per unit of ring;
+    // the median over sectors, NaN with too few unmasked.
+    function ringShown(x, y) {
+        const { radius: r, ring, alpha } = style;
+        const ri = ring.inner * r;
+        const inside = Math.max(0, 2 * ri - r);
+        const tC = colorDistance(B, fitColor);
+        const T = model.transmittance;
+        const sectors = Array.from({ length: RING_SECTORS }, () => ({ rim: 0, rimW: 0, inner: 0, innerW: 0, expected: 0 }));
+        for (let j = Math.max(0, Math.floor(y - r - 1)); j <= Math.min(height - 1, y + r + 1); j++) {
+            for (let i = Math.max(0, Math.floor(x - r - 1)); i <= Math.min(width - 1, x + r + 1); i++) {
+                const p = j * width + i;
+                if (!weight[p])
+                    continue;
+                const m = pixelCoverage(x, y, r, i, j);
+                if (!(m > 0))
+                    continue;
+                const within = pixelCoverage(x, y, ri, i, j);
+                const mRing = m - within;
+                const mInner = within - pixelCoverage(x, y, inside, i, j);
+                const res = imgT[p] - modelT(p);
+                const s = sectors[Math.min(RING_SECTORS - 1, Math.floor((Math.atan2(j + 0.5 - y, i + 0.5 - x) + Math.PI) / (2 * Math.PI) * RING_SECTORS))];
+                s.rim += mRing * res;
+                s.rimW += mRing;
+                s.expected += mRing * tC * T[p] * ring.alpha / (1 - alpha * m - ring.alpha * mRing);
+                s.inner += mInner * res;
+                s.innerW += mInner;
+            }
+        }
+        const shown = sectors.filter(s => s.rimW >= RING_SECTOR_MIN_PIXELS && s.innerW >= RING_SECTOR_MIN_PIXELS && s.expected > 0)
+            .map(s => 1 + (s.rim / s.rimW - s.inner / s.innerW) / (s.expected / s.rimW)).sort((a, b) => a - b);
+        return shown.length >= RING_MIN_SECTORS ? shown[Math.floor(shown.length / 2)] : NaN;
+    }
+
+    /**
+     * Removes the dots of a translucent, outlined family whose rings the image doesn't show (RING_MIN_SHOWN); dots
+     * placed by hand stay, and dots within FLAG_CLOSE_RADII × r of one whose ring shows. Returns how many went. Nothing is born afterwards: what such a dot
+     * explained (a band in the dots' color) is left to the residual. O(rounds · dots · r²).
+     */
+    function ringless() {
+        const { ring, radius, alpha, blur = 0, layered } = style;
+        if (!ring || layered || !(alpha > 0 && alpha < 1) || (1 - ring.inner) * radius < RING_MIN_WIDTH_BLURS * blur)
+            return 0;
+        let removed = 0;
+        for (;;) {
+            const shown = [...pos].filter(([id]) => !pinned.has(id)).map(([id, p]) => ({ id, s: ringShown(p.x, p.y) })).filter(q => !Number.isNaN(q.s));
+            // (a dot almost at a dot whose ring shows may be a second one under that ring, a tie: it stays. bench2
+            // stroked-dots: of three dots within 4 px, two of them 1 px apart, one read 0.18)
+            const tied = q => shown.some(o => o !== q && o.s >= RING_MIN_SHOWN && Math.hypot(pos.get(o.id).x - pos.get(q.id).x, pos.get(o.id).y - pos.get(q.id).y) <= FLAG_CLOSE_RADII * radius);
+            const out = shown.filter(q => q.s < RING_MIN_SHOWN && !tied(q));
+            if (!out.length)
+                return removed;
+            for (const q of out)
+                remove(q.id);
+            removed += out.length;
+        }
+    }
+
     // robust residual sd over unmasked pixels the model covers (inside dots)
     function noiseSigma() {
         const res = [];
@@ -1159,7 +1235,7 @@ export function createFit(input) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, pin: id => pinned.add(id), births, splits, deaths, merges, fitFills, refitRadius, totalLoss, assess, bestZ,
+        add, remove, refineAll, refineDot, pin: id => pinned.add(id), births, splits, deaths, merges, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
         get birthFailures() {
             return birthFailures;
         },
@@ -1299,6 +1375,9 @@ function fitOnce(input, opts, onProgress) {
         log.push({ stage: 'radius', radius: r, born, died, dots: fit.ids().length, ms: Date.now() - tr });
         report('radius', rounds, true);
     }
+    const ringless = fit.ringless();
+    if (ringless)
+        log.push({ stage: 'rings', removed: ringless, dots: fit.ids().length });
     const ta = Date.now();
     const { dots, sigma } = fit.assess();
     log.push({ stage: 'assess', ms: Date.now() - ta });

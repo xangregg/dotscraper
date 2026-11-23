@@ -11,7 +11,8 @@ import { buildMask } from '../src/core/layers.js';
 import { fitDots } from '../src/core/fit.js';
 import { matchDots } from '../src/core/metrics.js';
 import { restoreChroma } from '../src/core/jpeg.js';
-import { solidImage } from '../src/core/render.js';
+import { solidImage, createDotModel } from '../src/core/render.js';
+import { createRng } from '../src/core/rng.js';
 
 const sparse = synthGraph(SYNTH_PRESETS.sparse(1));
 const swarm = synthGraph(SYNTH_PRESETS.beeswarm(1));
@@ -158,4 +159,55 @@ test('regression: bench-r gg-gray-hi, the tick labels and tick marks are no tran
     assert.equal(results.length, 1);
     assert.deepEqual(results[0].est.style.color.map(Math.round), [202, 16, 31]);
     assert.equal(results[0].fit.dots.length, 40);
+});
+
+// Translucent dots with a ring over a band of one dot's color (the dots' color at their α) with a line of the full
+// color along its middle, as a regression line and its confidence band are drawn in the points' color (richness)
+function bandScene() {
+    const W = 520;
+    const H = 380;
+    const color = [58, 94, 204];
+    const alpha = 0.22;
+    const page = solidImage(W, H, [255, 255, 255]);
+    const mid = x => 300 - 0.42 * (x - 40); // the line's y at x
+    const half = x => 16 + 0.0012 * (x - 260) ** 2; // the band's half-height there
+    for (let y = 0; y < H; y++) {
+        for (let x = 30; x < 490; x++) {
+            if (Math.abs(y + 0.5 - mid(x + 0.5)) <= half(x + 0.5)) {
+                for (let ch = 0; ch < 3; ch++)
+                    page.data[3 * (y * W + x) + ch] = 255 + alpha * (color[ch] - 255);
+            }
+        }
+    }
+    const rng = createRng(3);
+    const dots = [];
+    // dots off the band, on it and across its edges
+    while (dots.length < 36) {
+        const d = { x: 50 + 420 * rng.uniform(), y: 40 + 300 * rng.uniform() };
+        if (dots.every(e => Math.hypot(e.x - d.x, e.y - d.y) > 16))
+            dots.push(d);
+    }
+    const model = createDotModel(page, { color, alpha, radius: 12.5, ring: { inner: 0.79, alpha: 0.1 } });
+    model.addAll(dots);
+    const image = toRgba(model.image);
+    for (let y = 0; y < H; y++) {
+        for (let x = 30; x < 490; x++) {
+            if (Math.abs(y + 0.5 - mid(x + 0.5)) <= 4)
+                image.data.set([...color, 255], 4 * (y * W + x));
+        }
+    }
+    return { image, dots };
+}
+
+test('regression: outlined translucent dots over a band of one dot\'s color: a dot whose ring doesn\'t show is none (richness)', () => {
+    // before: the band, exactly a dot's color, and the line were filled with dots: 100 found here for 36 (richness:
+    // 170 for 48). A band has no ring
+    const { image, dots } = bandScene();
+    const [res] = extractAll(image);
+    assert.ok(res.est.style.ring && res.est.style.alpha < 0.3, 'a translucent family with a ring');
+    const m = matchDots(dots, res.fit.dots, 6);
+    assert.equal(m.pairs.length, 36, `${m.pairs.length} of 36 found`);
+    assert.ok(res.fit.dots.length <= 38, `${res.fit.dots.length} dots in all`);
+    const rings = res.fit.log.find(l => l.stage === 'rings');
+    assert.ok(rings?.removed >= 40, `removed for their rings: ${rings?.removed}`);
 });

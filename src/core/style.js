@@ -203,7 +203,13 @@ export function findCandidates(scan, onProgress = null) {
     // gray outlines and the gray line as two levels, no isolated dot, no radius)
     const rims = opaque.flatMap(f => [f.outline, f.stroke].filter(Boolean));
     const real = translucent.filter(t => !t.levels.some(L => rims.some(c => colorDistance(c, L.color) <= CLUSTER_TOL)));
-    return [...real, ...opaque];
+    // … and one with no dot alone whose first level is a solid area at the opaque dots' radius is what those dots lie
+    // on (mpo: black dots over gray boxes of 160 and 127, whose colors with the page fit a gray of 107 at α 0.64; it
+    // had no radius of its own and took the black dots' as a sibling's). As withoutSolidBands, which has only the
+    // translucent families' radii to go by.
+    const radius = Math.max(0, ...opaque.map(f => f.radius ?? 0));
+    const dots = radius ? real.filter(t => lonelyDots(scan, t).length || !solidRegion(scan, t.levels[0].color, radius)) : real;
+    return [...dots, ...opaque];
 }
 
 // The translucent families, and `ink`: the level colors of the candidates that weren't families, other ink for the

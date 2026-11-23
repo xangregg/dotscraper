@@ -57,7 +57,9 @@ import { alongLine, colorLine } from './levels.js';
 const CLUSTER_BIN = 8; // 0–255 units per channel, color histogram bins
 const CLUSTER_MIN_FRACTION = 0.001; // a cluster holds at least this share of the image …
 const CLUSTER_MIN_PIXELS = 100; // … and at least this many pixels
+const CLUSTER_MAX_MIN_PIXELS = 1500;
 export const CLUSTER_ON_LINE_TOL = 8; // 0–255 units: a cluster this close to a translucent family's line is one of its levels
+const LEVEL_LINE_BEYOND = 0.25; // × the family's full color's distance from its background (the fitted color can be short)
 const MIX_SHARE = [0.05, 0.95]; // of the way from one color to another: a mix of the two lies between these
 const INK_TOL = 15; // 0–255 units from every background color for a pixel to be ink
 const RING = 3; // px: the ring around a family's pixels whose most common color is its background
@@ -84,6 +86,10 @@ const DOT_MIN_COVERAGE_ANY = 0.1;
 // no dot is isolated (beeswarm-boxplot's gray: 30 strong, coverage 0.27; round glyphs are hollow and fail the fill)
 const DOT_MANY_STRONG = 10;
 export const DOT_MIN_ISOLATED = 3;
+// … and this many whole isolated dots stand in for the strong centers: a blurred dot's edge, 3 or 4 px wide, votes
+// for its center from every radius across it, and no arc reaches DOT_STRONG_ARC (corneal's black: 62 centers, none
+// strong, 25 whole dots of radius 8.22 to 8.31, coverage 0.28 beside bold labels)
+const DOT_MANY_ISOLATED = 10;
 // A color whose filled centers lie at the radius of a family already found needs no strong arc: figures draw every
 // group with one marker size, and a small group can be all touching dots crossed by lines (myeloid1's teal: 9 dots
 // in pairs and a stack, gray pair lines reaching each, arcs at most 0.72; 5 filled centers at its radius, coverage
@@ -197,6 +203,7 @@ const OUTLINE_SLACK = 0.1; // a pixel this far beyond either end of the fill–o
 // An outline is the family's only next to its fill: farther out, the outline's color is other ink (phase1: black
 // outlines around gray fills, and black text, axes and a black family, which counted as dots everywhere)
 const OUTLINE_REACH = 4; // px from the family's fill
+const RING_TAIL_MIN_GROWTH = 1; // × the pixels at the reach's edge (familyRings; stiffness: 2.55, degradation1: 0.16 and 0.38)
 // an outlined family's coverage counts its fill's color where a disc of this × the fill radius fits
 const THICK_FILL_RADII = 0.5;
 // Fills in the page's color (white dots in black outlines on a white page) are the page regions their outlines
@@ -235,6 +242,17 @@ const PAGE_RING_MAX_WIDTH = 0.4; // × the fill radius
 // near-black ink as text: the reach already masks text here, and black outlines are exactly text's color
 const FAMILY_RING_P = 0.45;
 const COLLINEAR_SIN2 = 0.01; // sin² of the angle between page→fill and page→outline below which they're one line
+// an outline's own color beyond the darkest seen (outlineItself): read from the pixels with this much of the color
+// seen, no more fill than this and no more of the two together (the rest the page's) …
+const OUTLINE_MIX_MIN_OUTLINE = 0.2;
+const OUTLINE_MIX_MAX_FILL = 0.05;
+const OUTLINE_MIX_MAX_COVER = 0.9;
+// … this many of them or more, when the share of fill they lack, at this quantile, is this or more (stiffness: 0.32;
+// with black given as its outline: 0.05), and taken as no more than this
+const OUTLINE_MIX_QUANTILE = 0.9;
+const OUTLINE_MIX_MIN_PIXELS = 50;
+const OUTLINE_MIX_MIN_SHARE = 0.1;
+const OUTLINE_MIX_MAX_SHARE = 0.6;
 // Stroked fills (PLAN.md open question 10): a fill inside a stroke so thin and blurred that it never shows its own
 // color (bench-nature engagement1: on lavender 188, 186, 234 its darkest pixel is about 80, 80, 105). Its edge
 // pixels mix three colors, background, stroke and fill, where the opaque test accepts two, so the edge read as
@@ -307,7 +325,7 @@ export function colorClusters(image, backgrounds) {
             }
         }
     }
-    const min = Math.max(CLUSTER_MIN_PIXELS, CLUSTER_MIN_FRACTION * n);
+    const min = Math.max(CLUSTER_MIN_PIXELS, Math.min(CLUSTER_MAX_MIN_PIXELS, CLUSTER_MIN_FRACTION * n));
     const out = [];
     for (let i = 0; i < nb; i++) {
         for (let j = 0; j < nb; j++) {
@@ -519,16 +537,24 @@ function softGround(scan, ground) {
 // The near zone of a family's pixels, grown outward along blurred dots' edges (SOFT_EDGE_MIN_STEP), in place; returns
 // the pixels added. O(pixels · SOFT_EDGE_MAX_REACH).
 function alongSoftEdges(image, near, B, color) {
-    const { width, height, data } = image;
-    const n = width * height;
+    const { data } = image;
     const w = color.map((v, ch) => v - B[ch]);
     const ww = w[0] * w[0] + w[1] * w[1] + w[2] * w[2];
     // a pixel's share of the family's color against its usual background, or -1 off the line between them
-    const share = p => {
+    return downhill(near, image.width, p => {
         const v = [data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]];
         const m = (v[0] * w[0] + v[1] * w[1] + v[2] * w[2]) / ww;
         return Math.hypot(v[0] - m * w[0], v[1] - m * w[1], v[2] - m * w[2]) <= OFF_MIX_ABS ? m : -1;
-    };
+    });
+}
+
+// A zone grown outward, in place, down the slope of a color's share (0–1 per pixel; below 0: not readable as one):
+// through pixels with SOFT_EDGE_MIN_SHARE of it or more and less than a neighbor in the zone by SOFT_EDGE_MIN_STEP,
+// for SOFT_EDGE_MAX_REACH layers. With `toEnd`, on through the slope's faint end too (less than
+// SOFT_EDGE_MIN_SHARE, and no more than the neighbor's). Returns the pixels added.
+function downhill(zone, width, share, toEnd = false) {
+    const n = zone.length;
+    const near = zone;
     let front = [];
     for (let p = 0; p < n; p++) {
         if (near[p])
@@ -544,7 +570,7 @@ function alongSoftEdges(image, near, B, color) {
                 if (q < 0 || q >= n || near[q])
                     continue;
                 const m = share(q);
-                if (m >= SOFT_EDGE_MIN_SHARE && from - m >= SOFT_EDGE_MIN_STEP) {
+                if (m >= SOFT_EDGE_MIN_SHARE ? from - m >= SOFT_EDGE_MIN_STEP : toEnd && m >= 0 && m <= from) {
                     near[q] = 1;
                     next.push(q);
                 }
@@ -663,62 +689,133 @@ export function familyRings(image, fill, outline, backgrounds, others) {
     const { width, height, data } = image;
     const n = width * height;
     const own = colorMask(image, fill, CLUSTER_TOL);
-    const reach = dilate(opening(own, width, height, THICK_OPENING), width, height, OUTLINE_REACH);
+    let reach = dilate(opening(own, width, height, THICK_OPENING), width, height, OUTLINE_REACH);
     const theirs = ringOwners(image, own, others.map(c => ({ fill: c, reach: STROKE_RING })));
     const otherFill = others.length ? thickMembers(image, others) : null;
     const B = backgrounds[0];
+    const isPage = p => backgrounds.some(Q => Math.hypot(data[4 * p] - Q[0], data[4 * p + 1] - Q[1], data[4 * p + 2] - Q[2]) <= INK_TOL);
+    const notOurs = p => (otherFill && !own[p] && otherFill[p]) || (theirs && theirs[p]);
     const a1 = fill.map((v, ch) => v - B[ch]);
-    const a2 = outline.map((v, ch) => v - B[ch]);
     const m11 = a1[0] * a1[0] + a1[1] * a1[1] + a1[2] * a1[2];
-    const m12 = a1[0] * a2[0] + a1[1] * a2[1] + a1[2] * a2[2];
-    const m22 = a2[0] * a2[0] + a2[1] * a2[1] + a2[2] * a2[2];
-    const det = m11 * m22 - m12 * m12;
+    // A pixel's weights of the fill and of an outline color in the triangle with the page, and whether it lies in
+    // the triangle (`on`).
+    const weightsFor = edge => {
+        const a2 = edge.map((v, ch) => v - B[ch]);
+        const m12 = a1[0] * a2[0] + a1[1] * a2[1] + a1[2] * a2[2];
+        const m22 = a2[0] * a2[0] + a2[1] * a2[1] + a2[2] * a2[2];
+        const det = m11 * m22 - m12 * m12;
+        const planar = det > COLLINEAR_SIN2 * m11 * m22;
+        const fo = fill.map((c, ch) => c - edge[ch]);
+        const weights = p => {
+            const r = data[4 * p];
+            const g = data[4 * p + 1];
+            const b = data[4 * p + 2];
+            const v = [r - B[0], g - B[1], b - B[2]];
+            let wf;
+            let ws;
+            if (planar) {
+                const r1 = v[0] * a1[0] + v[1] * a1[1] + v[2] * a1[2];
+                const r2 = v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2];
+                wf = (m22 * r1 - m12 * r2) / det;
+                ws = (m11 * r2 - m12 * r1) / det;
+            }
+            else {
+                // page, fill and outline on one line (gray fills in black outlines): the position on the outline–fill
+                // segment, or beyond the fill on the page–outline one (an outline's rim on the page passes through the
+                // fill's color too, and reads as fill: unavoidable on one line)
+                const e = [r - edge[0], g - edge[1], b - edge[2]];
+                const k = (e[0] * fo[0] + e[1] * fo[1] + e[2] * fo[2]) / (fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2]);
+                if (k <= 1) {
+                    wf = Math.max(0, k);
+                    ws = 1 - Math.max(0, k);
+                }
+                else {
+                    wf = 0;
+                    ws = (v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2]) / m22;
+                }
+            }
+            const off = Math.hypot(v[0] - wf * a1[0] - ws * a2[0], v[1] - wf * a1[1] - ws * a2[1], v[2] - wf * a1[2] - ws * a2[2]);
+            const span = Math.hypot(wf * a1[0] + ws * a2[0], wf * a1[1] + ws * a2[1], wf * a1[2] + ws * a2[2]);
+            return { wf, ws, on: off <= Math.max(OFF_MIX_ABS, OFF_MIX_REL * span) && wf >= -STROKE_SLACK && ws >= -STROKE_SLACK && wf + ws <= MAX_MIX };
+        };
+        return { planar, weights };
+    };
+    const seen = weightsFor(outline);
+    // (on one line there is no telling a darker outline from more of this one)
+    const { weights } = seen.planar ? weightsFor(outlineItself(seen.weights, reach, own, isPage, notOurs, fill, outline)) : seen;
+    // A blurred ring's tail runs on beyond the reach, falling: the outline's still, and not other ink, which is flat
+    // (stiffness: rings 6 px from the fill's color to the page). To its faint end: a last pixel left unknown is
+    // masked with its neighbors, and with the rings' rims in the mask their radius read 9.6 for 8.7. Only where the
+    // reach's edge runs through the rings, so that the tails add RING_TAIL_MIN_GROWTH × that edge's pixels or more:
+    // around crisp rings the edge is on the page, and what lies beyond it is other ink in the outline's color
+    // touching a ring (degradation1: gray error bars' edges joined the gray rings, and none was whole).
+    const tails = reach.slice();
+    const grown = downhill(tails, width, p => {
+        if (isPage(p) || notOurs(p))
+            return -1;
+        const w = weights(p);
+        return w.on ? Math.max(0, w.ws) : -1;
+    }, true);
+    let edge = 0;
+    for (let p = width; p < n - width; p++)
+        edge += reach[p] && !(reach[p - 1] && reach[p + 1] && reach[p - width] && reach[p + width]) ? 1 : 0;
+    if (grown >= RING_TAIL_MIN_GROWTH * edge)
+        reach = tails;
     const P = new Float32Array(n);
     const unknown = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
-        const r = data[4 * p];
-        const g = data[4 * p + 1];
-        const b = data[4 * p + 2];
-        if (backgrounds.some(Q => Math.hypot(r - Q[0], g - Q[1], b - Q[2]) <= INK_TOL))
+        if (isPage(p))
             continue;
-        if ((otherFill && !own[p] && otherFill[p]) || (theirs && theirs[p]) || !reach[p]) {
+        if (notOurs(p) || !reach[p]) {
             unknown[p] = 1;
             continue;
         }
-        const v = [r - B[0], g - B[1], b - B[2]];
-        let wf;
-        let ws;
-        if (det > COLLINEAR_SIN2 * m11 * m22) {
-            const r1 = v[0] * a1[0] + v[1] * a1[1] + v[2] * a1[2];
-            const r2 = v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2];
-            wf = (m22 * r1 - m12 * r2) / det;
-            ws = (m11 * r2 - m12 * r1) / det;
-        }
-        else {
-            // page, fill and outline on one line (gray fills in black outlines): the position on the outline–fill
-            // segment, or beyond the fill on the page–outline one (an outline's rim on the page passes through the
-            // fill's color too, and reads as fill: unavoidable on one line)
-            const e = outline.map((c, ch) => [r, g, b][ch] - c);
-            const fo = fill.map((c, ch) => c - outline[ch]);
-            const k = (e[0] * fo[0] + e[1] * fo[1] + e[2] * fo[2]) / (fo[0] * fo[0] + fo[1] * fo[1] + fo[2] * fo[2]);
-            if (k <= 1) {
-                wf = Math.max(0, k);
-                ws = 1 - Math.max(0, k);
-            }
-            else {
-                wf = 0;
-                ws = (v[0] * a2[0] + v[1] * a2[1] + v[2] * a2[2]) / m22;
-            }
-        }
-        const off = Math.hypot(v[0] - wf * a1[0] - ws * a2[0], v[1] - wf * a1[1] - ws * a2[1], v[2] - wf * a1[2] - ws * a2[2]);
-        const span = Math.hypot(wf * a1[0] + ws * a2[0], wf * a1[1] + ws * a2[1], wf * a1[2] + ws * a2[2]);
-        if (off > Math.max(OFF_MIX_ABS, OFF_MIX_REL * span) || wf < -STROKE_SLACK || ws < -STROKE_SLACK || wf + ws > MAX_MIX) {
+        const w = weights(p);
+        if (!w.on) {
             unknown[p] = 1;
             continue;
         }
-        P[p] = FAMILY_RING_P * Math.min(1, Math.max(0, ws));
+        P[p] = FAMILY_RING_P * Math.min(1, Math.max(0, w.ws));
     }
     return { P, unknown };
+}
+
+// An outline's own color, where the darkest color seen in it is a mix: a stroke a pixel or two wide, blurred, is its
+// own color nowhere, and its core is mixed with the fill (stiffness: black around a blue of 49, 179, 253, seen as 16,
+// 57, 83 at its darkest). Its inner side then lies on the line from the fill to the color seen, but its outer side,
+// mixed with the page, doesn't lie on the line from the page to it: it reads as the color seen less some fill (gray,
+// for stiffness, where that line is blue), every ring pixel on the page's side was off the triangle and unknown, and
+// the mask took the rings whole (39 dots found of 305). The color itself lies beyond the one seen, away from the
+// fill, by the share of fill the outer side lacks: -wf / ws, over the pixels within reach that are part page and no
+// fill, at their OUTLINE_MIX_QUANTILE, when that is OUTLINE_MIX_MIN_SHARE or more over OUTLINE_MIX_MIN_PIXELS
+// pixels; kept within 0–255. Otherwise the color seen. The upper end, since most of a blurred ring's outer pixels
+// have some fill in them too and lack less (stiffness: 0.24 at the median, 0.32 at the ninth decile, which is black;
+// with the median's color the rings fitted their model at rms 0.057, with black at 0.019). Too far is the safer
+// side: every mix of the page, the fill and the outline stays within the triangle of a color beyond the outline's.
+function outlineItself(weights, reach, own, isPage, notOurs, fill, outline) {
+    const lacks = [];
+    for (let p = 0; p < reach.length; p++) {
+        if (!reach[p] || own[p] || isPage(p) || notOurs(p))
+            continue;
+        const { wf, ws } = weights(p);
+        if (ws >= OUTLINE_MIX_MIN_OUTLINE && wf <= OUTLINE_MIX_MAX_FILL && wf + ws <= OUTLINE_MIX_MAX_COVER)
+            lacks.push(-wf / ws);
+    }
+    if (lacks.length < OUTLINE_MIX_MIN_PIXELS)
+        return outline;
+    const share = Math.min(OUTLINE_MIX_MAX_SHARE, quantile(lacks, OUTLINE_MIX_QUANTILE));
+    if (share < OUTLINE_MIX_MIN_SHARE)
+        return outline;
+    // the color seen is (1 - k) × the outline's + k × the fill's with k = share / (1 + share)… as far as 0–255 allows
+    let t = share / (1 - share);
+    for (let ch = 0; ch < 3; ch++) {
+        const d = outline[ch] - fill[ch];
+        if (d < 0)
+            t = Math.min(t, outline[ch] / -d);
+        else if (d > 0)
+            t = Math.min(t, (255 - outline[ch]) / d);
+    }
+    return outline.map((v, ch) => v + t * (v - fill[ch]));
 }
 
 // 1 on the thick parts (an opening) of the pixels within CLUSTER_TOL of any of `colors`
@@ -1698,7 +1795,7 @@ function radiusPlausible(radius, isolatedCount) {
  * @returns {boolean}
  */
 export function isDotFamily(f) {
-    return radiusPlausible(f.radius, f.isolated.length) && f.strongDots >= DOT_MIN_STRONG && f.coverage >= DOT_MIN_COVERAGE_ANY
+    return radiusPlausible(f.radius, f.isolated.length) && (f.strongDots >= DOT_MIN_STRONG || f.isolated.length >= DOT_MANY_ISOLATED) && f.coverage >= DOT_MIN_COVERAGE_ANY
         && (f.coverage >= DOT_MIN_COVERAGE || f.isolated.length >= DOT_MIN_ISOLATED || f.strongDots >= DOT_MANY_STRONG);
 }
 
@@ -1762,13 +1859,18 @@ function otherInk(search, seed) {
     return search.ink.filter(c => colorDistance(c, seed) > CLUSTER_TOL);
 }
 
-// whether a color lies on a translucent family's color line
+// Whether a color lies on a translucent family's color line, no farther along it than the family's full color and
+// LEVEL_LINE_BEYOND more: its levels approach that color and never pass it. mpo: black dots over gray boxes of 160
+// and 127, which with the page fit the levels of a gray of 107 at α 0.64; black, 185 units beyond that gray on the
+// same line, was taken for the grays' and never tried as a family.
 function onLevelLine(translucent, c) {
     return translucent.some(f => {
         const { B, u } = f.line;
         const e = B.map((v, ch) => v - c[ch]);
         const t = e[0] * u[0] + e[1] * u[1] + e[2] * u[2];
-        return Math.hypot(e[0] - t * u[0], e[1] - t * u[1], e[2] - t * u[2]) <= CLUSTER_ON_LINE_TOL;
+        const full = colorDistance(B, f.fit.c);
+        return Math.hypot(e[0] - t * u[0], e[1] - t * u[1], e[2] - t * u[2]) <= CLUSTER_ON_LINE_TOL
+            && t <= full + Math.max(CLUSTER_TOL, LEVEL_LINE_BEYOND * full);
     });
 }
 

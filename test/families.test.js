@@ -12,6 +12,8 @@ import { detectAxes } from '../src/core/axes.js';
 import { findColormap } from '../src/core/colormap.js';
 import { backgroundColor, flatMask, EXACT_TOLERANCES } from '../src/core/scan.js';
 import { estimateFamilies } from '../src/core/families.js';
+import { matchDots } from '../src/core/metrics.js';
+import { readTruthJson } from '../tools/truth-json.mjs';
 
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
 const absent = set => !existsSync(dir(set) + 'data.csv') && `${set} absent`;
@@ -125,4 +127,42 @@ test('regression: protrusion1, four hues on whiskers are no color scale, and eac
         assert.ok(e.familyMeasure.box, `${e.style.color.map(Math.round)} has its box`);
         assert.ok(e.style.radius > 17.5 && e.style.radius < 21, `radius ${e.style.radius}`);
     }
+});
+
+test('regression: outlined dots in ties (bench2 stroked-dots): none goes for a ring that doesn\'t show', { skip: absent('bench2') }, () => {
+    // the check of each dot's ring (fit.js ringless) took one of three dots within 4 px of each other, two of them
+    // 1 px apart: its ring read 0.18 of what the model draws. A dot almost at one whose ring shows stays
+    const { results, r } = row('bench2', 'stroked-dots.png');
+    assert.ok(results[0].est.style.ring, 'ring measured');
+    assert.equal(r.found, 204);
+    assert.equal(r.recall, 1);
+});
+
+const RICHNESS = new URL('../bench-plos/richness-10.1371-journal.pone.0359333.png', import.meta.url).pathname;
+
+test('regression: richness, a confidence band in the color of one dot is not filled with dots', { skip: !existsSync(RICHNESS) && 'bench-plos absent' }, () => {
+    // before: 170 found for 48, the band and the regression line through it (the dots' full color) covered with
+    // dots. The dots have rings and the band has none: 113 go for theirs. Left over: 9, on or beside real dots
+    const results = extractAll(readImage(RICHNESS));
+    assert.equal(results.length, 1);
+    const truth = readTruthJson(RICHNESS.replace('bench-plos/', 'bench-plos/truth/').replace('.png', '.json')).dots;
+    const m = matchDots(truth, results[0].fit.dots, 0.5 * results[0].fit.radius);
+    assert.equal(m.pairs.length, 48, `${m.pairs.length} of 48 found`);
+    assert.ok(results[0].fit.dots.length <= 60, `${results[0].fit.dots.length} dots in all`);
+});
+
+const MPO = new URL('../bench-plos/mpo-10.1371-journal.pone.0359318.png', import.meta.url).pathname;
+
+test('regression: mpo, black dots over gray boxes are an opaque family, and the boxes none', { skip: !existsSync(MPO) && 'bench-plos absent' }, () => {
+    // before: "The dot radius is unknown". The page and the boxes' grays, 160 and 127, are the levels 0 to 2 of a gray
+    // of 107 at α 0.64: a translucent "family" with no dot. Black lies on its line, 185 units beyond that gray, and was
+    // never tried as a family of its own; found, it left the grays a family at its radius, as a sibling's
+    const results = extractAll(readImage(MPO));
+    assert.equal(results.length, 1, results.map(r => r.est.style.color.map(Math.round).join(',')).join('; '));
+    assert.equal(results[0].est.familyMeasure.kind, 'opaque');
+    assert.ok(results[0].est.style.color.every(v => v < 10), `color ${results[0].est.style.color}`);
+    const truth = readTruthJson(MPO.replace('bench-plos/', 'bench-plos/truth/').replace('.png', '.json')).dots;
+    const m = matchDots(truth, results[0].fit.dots, 0.5 * results[0].fit.radius);
+    assert.equal(m.pairs.length, 45, `${m.pairs.length} of 45 found`);
+    assert.ok(results[0].fit.dots.length <= 50, `${results[0].fit.dots.length} dots in all`);
 });
