@@ -4090,9 +4090,7 @@ Four things fixed, on six images; the rest of the notes on axes are listed at th
 
 Still open from the notes on axes:
 
-- **crimson**: the x axis isn't a log axis (10² lies 316 px from 10³, the decades above 271: a flow cytometer's
-  scale), so 10², read as "10?", gets 70 from the scale of the other three; read right, it would fit no scale.
-  The y labels are cut off at the image's left edge.
+- **crimson**: read now (see "crimson: labels set by hand", 2026-11-23). The ticks of 10² fit neither axis's scale.
 - **alloys**: the top y label (12.5) isn't attached to its tick; the scale gives its value. Not looked at.
 - **expression**: two y labels with no ticks, not level with the gridlines: by hand (Add tick).
 - **biomarker**: the y axis misses four of its ticks (blurred); its scale is right from the three labels read.
@@ -4274,3 +4272,42 @@ double rings, axes read, no console errors.
 
 Open: at α 0.45 one synthetic seed in ten still loses a dot to the
 ring check, read among the band's dots; the fit still fills the band with dots first (88 born) and removes them.
+
+**crimson: labels set by hand** (2026-11-23)
+
+The labels and tick marks of crimson's axes were placed by hand (the user's reading, and the pixels agree): the y
+axis's marks are 42, 30, 25 and 42 px long, each label 6 px from its own mark, and the x axis's "10²" stands 5 px
+lower than the other three. Read before: x "10?", 10³, 10⁴, 10⁵ (a log scale through three, 70 at the first); y
+10⁵, "10^?", "10^?", 10² (no scale). The note that the y labels were cut off at the image's left edge was wrong:
+they were cut by the search.
+
+1. **Labels cut at the longest mark's reach.** `axes.js findLabels` looks for labels beyond the longest tick mark,
+   and `labels.js labelOptions` kept the reader from going nearer the axis than that. The exponents of the labels
+   at the two short marks were cut through at x = 278 (13 and 9 of their 20 px left). Now a label at a mark shorter
+   than the longest has its box searched again as far as its own mark (`uncutLabel`), taking in the words that reach
+   into the box, and the reader's limit is the longest mark's reach or the box's end, whichever is nearer the axis.
+   - Tried first, and dropped: searching each stretch of the axis beyond the nearest tick's own mark from the start.
+     On delta1 an error bar's caps on the y axis line are two "ticks" of 11 px; the dot between them, beyond their
+     reach, became the nearest "label", and the axis's own labels were left out as too far: no y axis.
+2. **A label off the shared line.** The reader finds each label twice, the second time on the line the axis's
+   labels share. On the others' line (5 px higher) the 2 of "10²", an exponent set low (to 0.52 of the digits'
+   height below their top), ended below an exponent's rows (0.6) and was a glyph of the number: "10?". Now a label
+   found cleanly on its own, its digits within a pixel of the shared height, keeps its own line
+   (`OWN_LINE_TOL`). That also solves bench-r's small-e-r72 y axis: the shared line of a y axis is placed by each
+   tick's position, a row off at two of six ticks, and the labels' point, one pixel square in the last row, was
+   left out ("000025").
+
+Crimson now reads all eight labels. Both scales are log through 10³, 10⁴ and 10⁵; the ticks of 10² fit neither (316
+px from 10³ on the x axis where a decade is 271, 248 on the y axis where it is 285), so each gets its scale's value,
+70 and 140, with "label: 10^2" beside it in the app. Tick placement is the figure's own and left alone.
+
+Of the 160 local images the axes and readings change on these and no other: crimson; small-e-r72's y axis (solved);
+delta1, where "150", boxed at a false tick (an error bar's cap), now reads and is contradicted by the scale (the
+values are the same); hair2 and tumour1, whose x labels are "+" and "−": a "+" alone now reads "1" (score 0.73) where
+it read "?". Two alike give no scale, so nothing is offered, but a lone "+" should read as a sign: open.
+Label benchmark: 1374 of 1479 labels read right (92.9%, from 92.8%), 215 of 235 axes solved (from 214), none wrong.
+Crimson's row in the benchmark is the same (189 found for 180); no other image's label boxes moved.
+338 tests pass (335 before): a synthetic y axis with marks of two lengths and labels 4 px from their own, a
+synthetic x axis with low exponents and one label 2 px down, crimson itself, and small-e-r72's y axis. Each fails
+with its fix taken out: the box searched again, the reader's limit, the own line. In the app: crimson "x log,
+read · y log, read", no console errors.

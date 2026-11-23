@@ -815,6 +815,54 @@ test('readAxisLabels: a neighbor\'s glyphs are told from the label\'s by the axi
     assert.deepEqual(y.scale.values, [90, 80, 70, 60, 50, 40, 30]);
 });
 
+// A graph whose labels are set by hand: synth's axes, the y axis's first and last tick marks drawn `longer` px
+// longer than the others (8 px), each y label `gap` px from its own mark, and the x labels' exponents set low
+// (`lift`), the first x label `lower` px below its row.
+function handSet({ longer = 0, gap = 4, lift = EXPONENT_RISE, lower = 0 }) {
+    const spec = {
+        width: 520, height: 400, background: [255, 255, 255], blur: 0.5, families: [],
+        axes: { x: { pos: 330.5, from: 79, to: 500, ticks: [100, 230, 360, 490] }, y: { pos: 80.5, from: 20, to: 331.5, ticks: [40, 130, 220, 310] }, label: [0, 0] },
+    };
+    const { image } = synthGraph(spec);
+    const markEnd = 71; // px, where synth's marks end
+    spec.axes.y.ticks.forEach((t, i) => {
+        const long = i === 0 || i === 3 ? longer : 0;
+        for (let y = t - 1; y < t + 1; y++) {
+            for (let x = markEnd - long; x < markEnd + 2; x++)
+                image.data.fill(0, 4 * (y * image.width + x), 4 * (y * image.width + x) + 3);
+        }
+        drawText(image, `10^${5 - i}`, markEnd - long - gap, t - 8, 16, { right: true });
+    });
+    spec.axes.x.ticks.forEach((t, i) => {
+        const probe = drawText(blank(200, 60), `10^${i + 2}`, 0, 20, 20, { lift });
+        drawText(image, `10^${i + 2}`, t - (probe[2] - probe[0]) / 2, 352 + (i === 0 ? lower : 0), 20, { lift });
+    });
+    return image;
+}
+
+test('regression: a label beside a tick mark shorter than the others is boxed and read whole (crimson)', () => {
+    // crimson's y axis: marks of 42, 30, 25 and 42 px, each label 6 px from its own. The labels were looked for
+    // beyond the longest mark, and the exponents of the two at the short marks were cut through: "10^?"
+    const image = handSet({ longer: 14 });
+    const axes = detectAxes(image);
+    assert.deepEqual(axes.y.ticks.map(t => t.length >= 20), [true, false, false, true]);
+    // (the labels end 4 px before their marks: at 53 and 67)
+    for (const [i, end] of [[0, 53], [1, 67], [2, 67], [3, 53]])
+        assert.ok(Math.abs(axes.y.ticks[i].label[2] - end) <= 1, `label ${i} ends at ${axes.y.ticks[i].label[2]}`);
+    const y = axisValues(image, 'y');
+    assert.deepEqual(y.texts, ['10^5', '10^4', '10^3', '10^2']);
+    assert.deepEqual(y.scale.values, [100000, 10000, 1000, 100]);
+});
+
+test('regression: a label set lower than its row is read on its own line (crimson)', () => {
+    // crimson's x axis: exponents 0.52 of the digits' height below their top, and "10²" 5 px (a tenth of that
+    // height) lower than the other labels: on their line its 2 ended below an exponent's rows, and it read "10?"
+    const image = handSet({ lift: 0.1, lower: 2 });
+    const x = axisValues(image, 'x');
+    assert.deepEqual(x.texts, ['10^2', '10^3', '10^4', '10^5']);
+    assert.deepEqual(x.scale.values, [100, 1000, 10000, 100000]);
+});
+
 test('readAxisLabels: category names give no scale', () => {
     const { image } = labeled({ xLabels: ['$-$', '$$', '$-$$'], yLabels: ['0', '5', '10'] });
     assert.equal(axisValues(image, 'x').scale, null);
@@ -838,6 +886,20 @@ test('bench-plos: step1\'s decimals, score2\'s thousands and droplet1\'s percent
     // bold digits (landing1), and names under the other axis
     assert.deepEqual(values('landing1', 'y'), [7.5, 5, 2.5]);
     assert.equal(values('landing1', 'x'), undefined);
+});
+
+test('regression: crimson\'s labels, set by hand, are read on both axes', { skip: !plos('crimson') && 'bench-plos absent' }, () => {
+    const image = readImage(PLOS + plos('crimson'));
+    const x = axisValues(image, 'x');
+    const y = axisValues(image, 'y');
+    assert.deepEqual(x.texts, ['10^2', '10^3', '10^4', '10^5']);
+    assert.deepEqual(y.texts, ['10^5', '10^4', '10^3', '10^2']);
+    // the ticks of 10² stand off the scale of the other three on both axes (316 px from 10³ where a decade is 271,
+    // and 248 where it is 285): each scale is the three's, and says so
+    assert.deepEqual(x.scale.agree, [false, true, true, true]);
+    assert.deepEqual(y.scale.agree, [true, true, true, false]);
+    assert.deepEqual(x.scale.values.slice(1), [1000, 10000, 100000]);
+    assert.deepEqual(y.scale.values.slice(0, 3), [100000, 10000, 1000]);
 });
 
 const BENCH1 = new URL('../bench1/', import.meta.url).pathname;
@@ -883,6 +945,10 @@ test('bench-r: R\'s labels in scientific notation, with "e" and with "×", down 
     assert.deepEqual(read('times-log', 'x').scale.values, [300, 1000, 3000, 10000]);
     // … and the typed "³" is under an exponent's height, so the labels stay unread: no scale, no wrong value
     assert.equal(read('times-r72', 'y').scale, null);
+    // a point one pixel square in the digits' last row: the line the labels share, placed by each tick's position,
+    // was a row higher at two of the six ticks and left it out ("000025")
+    assert.deepEqual(read('small-e-r72', 'y').texts, ['0.00025', '0.00020', '0.00015', '0.00010', '0.00005', '0.00000']);
+    assert.deepEqual(read('small-e-r72', 'y').scale.values, [0.00025, 0.0002, 0.00015, 0.0001, 0.00005, 0]);
 });
 
 const NATURE = new URL('../bench-nature/', import.meta.url).pathname;

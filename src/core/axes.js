@@ -671,10 +671,48 @@ export function findLabels(image, backgrounds, axis, ticks) {
     // rims, between the panel's color and their own, made a "label" beside every tick)
     const other = axis.edge ? new Map() : labelsOnSide(image, backgrounds, axis, ticks, tickSide === 'after' ? 'before' : 'after', 0, OTHER_SIDE_MAX_WIDTH);
     const far = other.size >= OTHER_SIDE_MIN_LABELS && other.size > own.size;
+    for (const [t, label] of own) {
+        if (t.side === tickSide && t.length && t.length < tickLen)
+            label.box = uncutLabel(image, backgrounds, axis, label.box, tickSide, t.length);
+    }
     for (const [t, { box, path }] of far ? other : own) {
         t.label = box;
         t.labelPath = path;
     }
+}
+
+/**
+ * A label's box with what the search cut off it. The labels are looked for beyond the longest tick mark, where no
+ * mark is taken for one; a label at a shorter mark may begin nearer the axis, and its box ended at the search's edge.
+ * Hand-set labels do (crimson: marks of 42, 30, 25 and 42 px, each label 6 px from its own, and the exponents of the
+ * two at the short marks cut through). The box is searched again as far as the tick's own mark, and takes in the
+ * words that reach into it: its glyphs whole, and an exponent that lay beyond the edge altogether.
+ *
+ * Not searched to each tick's own mark in the first place: beside a short mark there is other ink than labels
+ * (delta1: an error bar's caps on the y axis line are two "ticks" of 11 px, and the dot between them, beyond their
+ * reach, was the nearest "label", which left the axis's own labels out as too far).
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[][]} backgrounds
+ * @param {Line} axis
+ * @param {number[]} box  [x0, y0, x1, y1), px: the label as found beyond the longest mark
+ * @param {'before'|'after'} side  the side of the axis the marks and the label are on
+ * @param {number} length  px, the tick's own mark
+ * @returns {number[]}  the box, grown toward the axis or as it was
+ */
+function uncutLabel(image, backgrounds, axis, box, side, length) {
+    const h = axis.dir === 'h';
+    const rect = [...box];
+    if (side === 'after')
+        rect[h ? 1 : 0] = Math.floor(axis.pos + axis.thickness / 2 + length + 1);
+    else
+        rect[h ? 3 : 2] = Math.ceil(axis.pos - axis.thickness / 2 - length - 1);
+    let out = box;
+    for (const w of mergeWords(inkComponents(image, backgrounds, rect).map(c => c.box))) {
+        if (w[0] < box[2] && w[2] > box[0] && w[1] < box[3] && w[3] > box[1])
+            out = union(out, w);
+    }
+    return out;
 }
 
 // how far a word's box is from an axis's edge, px, on the side it lies

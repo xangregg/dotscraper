@@ -81,6 +81,8 @@ const SIGN_MIN_HEIGHT = 0.45;
 const TIMES_MAX_GAP = 0.9;
 const SIGN_READ = { x: '×' }; // a template's character to the sign it is read as, where they differ
 const SIGN_LIKENESS = 0.85; // correlation of two labels' glyphs at which they are one unit sign
+// A label found cleanly on its own, its digits within this of the shared line's height, is read where it was found
+const OWN_LINE_TOL = 1; // px
 const SHARED_LINE_MIN = 2; // labels read cleanly, of one axis, for their line to be taken for all of its labels
 // consistentValues: a read value agrees with a scale when the scale puts it within SCALE_TOL of the least gap
 // between ticks, or SCALE_POS_TOL if that is more (a tick's position is known to about a pixel), of its tick
@@ -917,6 +919,12 @@ export function consistentValues(ticks) {
  * against its tick beside a y axis), which tells a neighbor's glyphs from the label's where the first finding takes
  * them in.
  *
+ * A label found cleanly at the shared height keeps its own line: it has no neighbor's glyphs to tell, and the shared
+ * line may not be where it is. A label set by hand stands a few pixels off its row (crimson's "10²", 5 px lower than
+ * the other three: on their line its exponent ended below an exponent's rows, and it read "10?"), and a y axis's
+ * line, placed by each tick's position, is a row off at some ticks (small-e-r72: a point one pixel square in the
+ * digits' last row was left out of two labels of six, "000025").
+ *
  * @param {RgbaImage} image
  * @param {number[][]} backgrounds  0–255, the page's colors
  * @param {import('./axes.js').Axis} axis
@@ -925,7 +933,8 @@ export function consistentValues(ticks) {
  */
 export function labelOptions(image, backgrounds, axis, which) {
     const vertical = which === 'y';
-    // (a y axis's label is not to be followed across the axis or into its tick marks)
+    // (a y axis's label is not to be followed across the axis or into its tick marks: no farther than the longest
+    // mark's end, or than its box where that reaches nearer the axis, beside a shorter mark: axes.js uncutLabel)
     const reach = (axis.line?.thickness ?? 0) / 2 + Math.max(0, ...axis.ticks.map(t => t.length));
     const options = t => {
         if (!vertical)
@@ -933,7 +942,7 @@ export function labelOptions(image, backgrounds, axis, which) {
         if (!axis.line)
             return { anchor: t.pos };
         const left = t.label[2] <= axis.line.pos;
-        const limits = left ? [0, Math.floor(axis.line.pos - reach)] : [Math.ceil(axis.line.pos + reach), image.width];
+        const limits = left ? [0, Math.max(Math.floor(axis.line.pos - reach), Math.ceil(t.label[2]))] : [Math.min(Math.ceil(axis.line.pos + reach), Math.floor(t.label[0])), image.width];
         return { anchor: t.pos, limits, near: left ? limits[1] : limits[0] };
     };
     const clean = [];
@@ -954,10 +963,13 @@ export function labelOptions(image, backgrounds, axis, which) {
             lineOf = () => [top, top + H];
         }
     }
+    const own = new Map(clean.map(({ found, t }) => [t, found]));
     return axis.ticks.map(t => {
         if (!t.label)
             return null;
-        return lineOf ? { ...options(t), line: lineOf(t) } : options(t);
+        if (!lineOf || (own.has(t) && Math.abs(own.get(t).height - (lineOf(t)[1] - lineOf(t)[0])) <= OWN_LINE_TOL))
+            return options(t);
+        return { ...options(t), line: lineOf(t) };
     });
 }
 
