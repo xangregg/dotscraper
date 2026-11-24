@@ -1,7 +1,7 @@
 # bench-plos: figures from PLOS ONE
 
 Real published scatterplots and dot plots, used to benchmark and test dotscraper
-(`npm run bench -- --set bench-plos`). Unlike the figures in `testgraphs/` and `bench-nature/`, which stay off the
+(`npm run bench -- --set bench-plos`). Unlike the figures in `bench-local/` and `bench-nature/`, which stay off the
 repository, these come from open-access articles published under the
 [Creative Commons Attribution 4.0 license](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0), which permits
 copying and redistribution with credit (one, funnel, under the CC0 1.0 public domain dedication). Each image is

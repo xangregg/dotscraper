@@ -3,7 +3,7 @@
 ## Project
 
 **dotscraper**: a browser app (to be served from GitHub Pages) that extracts dot locations from images of
-graphs, especially scatterplots whose dots overlap and are drawn with alpha transparency (`testgraphs/dog-ages.png`
+graphs, especially scatterplots whose dots overlap and are drawn with alpha transparency (`bench-local/dog-ages.png`
 is the main target), where ordinary circle or blob detection fails. The approach is analysis by synthesis: estimate
 the dots' style (color, size, alpha, edge blur), mask the non-dot layers, then iterate on a set of dot locations
 whose rendering reproduces the image, ignoring the masked pixels. Pixel locations become data values through the
@@ -49,7 +49,7 @@ src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, 
                         axes-panel.js (tick values, read from the labels or typed, ticks added or removed by hand, scales, data coordinates), input.js
 src/fit-worker.js       module worker running fitDots, posting progress
 src/scan-worker.js      module Web Worker running the scan for dot families (extract.js scanFamilies), posting progress
-testgraphs/             test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data
+bench-local/            test images, index.json, ground truth in truth/<name>.json (px) or <name>.csv (data
                         cells, ticks in the header): LOCAL ONLY, git ignores all
                         but the README (third-party figures, not cleared for redistribution). Never commit them,
                         and never let a test fail just because they're absent (skip instead).
@@ -64,7 +64,7 @@ tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
 tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
 tools/measure-dots.mjs  phase 0 measurement of a translucent dot family (levels, alpha, radius, blur)
 tools/truth-csv.mjs     truth sets in data units (benchN/data.csv) and their pixel positions through the plot area
-tools/truth-json.mjs    truth placed by hand (Save truth JSON, px, in testgraphs/truth/ and bench-nature/truth/); run
+tools/truth-json.mjs    truth placed by hand (Save truth JSON, px, in bench-local/truth/ and bench-nature/truth/); run
                         directly, it converts an old Save CSV export to one
 tools/label-bench.mjs   benchmark of the tick-label reader against the tick values the truth files list
 tools/make-digit-templates.mjs  writes src/core/digit-templates.js from tools/digit-fonts.html (digits and signs drawn by Chrome)
@@ -81,17 +81,17 @@ test/*.test.js          node:test + node:assert/strict
   Pages from the branch root); `?dev` turns it on anywhere, `?dev=0` off.
 - Page check (server must be running): `npm run check:page -- http://localhost:8003/ --until '<js expr>'
   --eval '<js expr>' --screenshot out.png [--dark] [--width px]` (`--width` for narrow layouts; default 1280). Exits 1 on any console error, exception, or failed load.
-- Test image list: after adding an image to `testgraphs/`, `npm run images:index` (the test suite fails if
-  `testgraphs/index.json` is stale). Servers that don't list directories (WebStorm's built-in one) need it.
+- Test image list: after adding an image to `bench-local/`, `npm run images:index` (the test suite fails if
+  `bench-local/index.json` is stale). Servers that don't list directories (WebStorm's built-in one) need it.
 - Consistency check without ground truth: `node tools/compare-fits.mjs a.png b.png` fits two renderings of one
   graph, estimates the scale and offset between them, and reports how well the dots agree.
 - Model vs Chrome canvas (server running): `npm run check:page -- http://localhost:8003/tools/render-check.html
   --until 'window.renderCheckResult' --eval 'JSON.stringify(window.renderCheckResult)' --screenshot out.png`.
-- Measure a dot family: `npm run measure -- testgraphs/<image> [--seed r,g,b] [--out dir]` (writes the overlap
+- Measure a dot family: `npm run measure -- bench-local/<image> [--seed r,g,b] [--out dir]` (writes the overlap
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose --jobs n]` runs style, mask and
-  fit on the synthetic presets, every local image with `testgraphs/truth/<name>.json`, and every image of the truth
-  sets (bench1–3; `--set` picks one, `--set testgraphs` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  fit on the synthetic presets, every local image with `bench-local/truth/<name>.json`, and every image of the truth
+  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. It fits 10 images at a time in worker threads (`--jobs n`
   for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
   (14% in all at 10), so compare times only between runs at one job count.

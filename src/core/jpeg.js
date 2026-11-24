@@ -159,7 +159,7 @@ export function restoreChroma(image) {
  * underneath, and its marks fail the exact-color tests (bench-nature primates1: an isolated dot's edge runs 207, 233,
  * 243 then 128, 182, 213, off the line from white to its 33, 118, 183, so no dot was found). A rendered graph is
  * piecewise constant: a few px from any mark, the background is exactly the background color (the bench
- * renders: none of those pixels differ; the testgraphs: at most 0.013%). JPEG's ringing reaches across its 8 px
+ * renders: none of those pixels differ; bench-local's PNGs: at most 0.013%). JPEG's ringing reaches across its 8 px
  * blocks, so there many are slightly off (the bench JPEGs 19–51%; the Nature PNGs 4.8–51%). Other noise reads the
  * same (synth.js presets with noise: 29–40%). O(pixels).
  *

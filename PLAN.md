@@ -4,7 +4,7 @@
 
 Given an image of a graph, recover the location of every dot, in pixels and in data units, as faithfully as the
 visible pixels allow, and say where they don't. The main target is scatterplots whose dots overlap and are drawn
-with alpha transparency (`testgraphs/dog-ages.png`), where Hough circles, Laplacian-of-Gaussian blobs and
+with alpha transparency (`bench-local/dog-ages.png`), where Hough circles, Laplacian-of-Gaussian blobs and
 watershed on a thresholded mask all fail: overlapping dots merge into blobs, and coincident dots vanish.
 
 The core idea is **analysis by synthesis**. With a forward model of how the plotting library drew the dots, any
@@ -183,7 +183,7 @@ as poorly determined rather than silently placed or dropped.
   model error, so phase 1 checks it against images rendered by Chrome's canvas (and, if convenient, matplotlib
   and R) with the same dots.
 - **Real images:** ground truth hand-annotated in the app's edit mode and saved to
-  `testgraphs/truth/<name>.json`, local like the images (pixel positions, with a note on how confident the annotator was in dense
+  `bench-local/truth/<name>.json`, local like the images (pixel positions, with a note on how confident the annotator was in dense
   clusters). For dog-ages, also look for the published data (open question 4).
 - **Truth sets in data units** (`tools/truth-csv.mjs`, bench1–3): `data.csv` with `# x scale: linear, min=…,
   max=…`, `# x ticks: …` and `# plot area: left=…, top=…, width=…, height=…` header lines, then x, y and an
@@ -199,7 +199,7 @@ as poorly determined rather than silently placed or dropped.
 
 ## 3. App
 
-- **Image input:** choose a test image (from `testgraphs/index.json`), upload a file, paste from the clipboard
+- **Image input:** choose a test image (from `bench-local/index.json`), upload a file, paste from the clipboard
   (Cmd-V anywhere on the page), or drag and drop. Very large images are processed at full resolution but displayed
   scaled.
 - **Steps panel** following the pipeline, each with its findings and a way to correct them: Axes → Layers →
@@ -231,7 +231,7 @@ as poorly determined rather than silently placed or dropped.
 
 ## 5. Open questions
 
-1. ~~Test image licensing.~~ **Decided:** `testgraphs/` stays local and git-ignored (all but its README), with
+1. ~~Test image licensing.~~ **Decided:** `bench-local/` stays local and git-ignored (all but its README), with
    everything derived from the images (ground truth, crops, `index.json`). The deployed site will offer synthetic
    examples instead, and a benchmark on the real images runs only on machines that have them.
 2. **OCR for tick labels.** Still open after phase 4: label crops beside the value boxes make typing quick.
@@ -292,7 +292,7 @@ as poorly determined rather than silently placed or dropped.
    P 0.841 R 0.804; lavender 10 of 10, no extra, r 7.58, and the navy family takes none of them (it took 7 of the
    mid-blue before and 6 now). hair3 is now found without the JPEG fallback, its pink fill inside a black stroke:
    recall 0.735 → 0.824 (28 of 34; the 6 gray dots are no family). Every other bench row is unchanged (synthetic,
-   bench1–3, testgraphs, bench-nature; diffed without times). Tests: synthetic light and dark fills in a 0.8 px
+   bench1–3, bench-local, bench-nature; diffed without times). Tests: synthetic light and dark fills in a 0.8 px
    stroke (light 14+ of 15, dark 15, none across, radius within 0.3 px; before, the light dots were never found)
    and engagement1 (skipped without bench-nature). Still open: engagement1's mid-blue and cyan (mid-blue has 3
    isolated fills and no strong arc; cyan's six dots never make a color cluster), hair2 and tumour1 (white fills:
@@ -336,7 +336,7 @@ src/core/metrics.js     assignment, precision/recall, RMSE
 src/core/rng.js         seeded random numbers
 src/ui/                 main.js, view.js (canvas, zoom), overlays.js, input.js; later steps.js, export.js, urlstate.js
 src/fit-worker.js
-testgraphs/             images, index.json, truth/*.json (local only: git ignores all but the README)
+bench-local/            images, index.json, truth/*.json (local only: git ignores all but the README)
 tools/                  check-page.mjs, png.mjs, images-index.mjs, measure-dots.mjs, bench.mjs, render-canvas page
 test/                   *.test.js; PNG decoding in tests via tools/png.mjs (pngjs dev dependency)
 ```
@@ -352,7 +352,7 @@ with a screenshot, and a stop for review.
       local, open question 1), `index.html` and `styles.css` (light and dark), `tools/check-page.mjs` and
       `src/core/rng.js` copied from lafspline (port changed to 8003), `tools/png.mjs` (PNG read/write for tools and
       tests), `tools/images-index.mjs`, LICENSE (0BSD); the placeholder `index.js` is gone.
-- [x] Image input in the app: test image list (Python's directory listing, else `testgraphs/index.json`), file
+- [x] Image input in the app: test image list (Python's directory listing, else `bench-local/index.json`), file
       picker, paste, drag and drop; canvas view with zoom at the pointer, pan, Fit and 1:1, pixel readout.
       Decoding uses `createImageBitmap(…, { colorSpaceConversion: 'none' })`, so the values are the file's: the
       browser's pixel hash equals pngjs's for all nine test images. Checked headless: key and wheel zoom, the
@@ -494,7 +494,7 @@ What the real images taught:
       unassessed); Dots panel (count, flags, fitted radius, residual sd, Copy CSV, Save truth JSON); Model and
       Residual overlays with a legend; Edit mode (click to add or remove, then `refitNear`); dot readout on hover.
 - [x] Ground truth for dog-ages: **needs a person**. The app's Edit mode and Save truth write
-      `testgraphs/truth/dog-ages.json`, which `npm run bench` then scores. The fit's own output must not be used
+      `bench-local/truth/dog-ages.json`, which `npm run bench` then scores. The fit's own output must not be used
       as truth without review. Done by the user (2026-11-12, 95 dots, reviewed in the app). Its positions are the
       fit's (they agree to 0.004 px), so the row checks the count and which dots, not sub-pixel accuracy; bench1–3's
       exact truth and the dog-ages-actual-size cross-check cover positions.
@@ -515,8 +515,8 @@ Real images, no ground truth yet:
   is white. What remains is rim fringes from the nearest-neighbor enlargement: mean |residual| 3.8 units over
   unmasked ink pixels, 12% of them beyond 10.
 - **dog-ages-actual-size** (288 × 372, added during phase 3): the native rendering. α 0.332 from only 2 levels,
-  r 7.99, blur 0.35. **Cross-check** (`node tools/compare-fits.mjs testgraphs/dog-ages-actual-size.png
-  testgraphs/dog-ages.png`): dog-ages is this image enlarged exactly 3.000× (x 3.0002, y 3.0007) and cropped by
+  r 7.99, blur 0.35. **Cross-check** (`node tools/compare-fits.mjs bench-local/dog-ages-actual-size.png
+  bench-local/dog-ages.png`): dog-ages is this image enlarged exactly 3.000× (x 3.0002, y 3.0007) and cropped by
   (8.1, 4.7) px. Fitted independently, both give 95 dots, and all 95 match one to one, none extra on either side.
   The 41 dots unflagged in both agree within 0.072 px RMSE (native px; max 0.149), and all 95 within 0.163. Both
   fits could share a systematic error (the deep pile's count above all), so this doesn't replace ground truth, but
@@ -901,7 +901,7 @@ Measured (found / truth, recall, RMSE px): bench1 plain 100/100, 1.00, 0.035; JP
 101/100, 1.00, 0.116; outlined JPEG 104/100, 1.00, 0.154. bench2 plain 200/204, 0.98, 0.247 (median error 0.040 px;
 the 4 misses and the two worst positions, 2.6 and 1.9 px, are in clusters of 4–6 mixed-color dots); JPEG 196,
 0.956, 0.522; outlined 207, 0.971, 0.532; outlined JPEG 221, 0.951, 1.031. Every other bench row is unchanged, and
-the detector stays off on all ten testgraphs images.
+the detector stays off on all ten bench-local images.
 
 Tried and dropped: a ring less opaque than the fill (JMP's outlined markers are an outline-colored disc under a
 smaller fill, both α 0.5: fill radius 9.6, outline 11.3 px, measured correctly). It made bench2 outlined worse
@@ -931,7 +931,7 @@ Measured: bench1 98/100, recall 0.98, RMSE 0.041 (plain solid-opaque: 98, 0.035)
 rendering, the outlined one misses 15 dots that are at least 60% visible (plain: 7), in packed clusters, where the
 union of the discs is one blob and only the inner outlines show where each dot is. Using them needs a renderer that
 respects drawing order (a later outline paints over an earlier fill); not done. Every other bench row and all ten
-testgraphs images' families are unchanged. In the browser: bench2 165 dots, no console errors.
+bench-local images' families are unchanged. In the browser: bench2 165 dots, no console errors.
 
 **Splits: opaque clusters covered by too few dots** (bench2 solid-opaque, 180 of 204 found). Of the 24 misses,
 about 10 can't be recovered: coincident pairs (rows 120, 140, 144, 200; 198/201 0.7 px apart) and dots under 10%
@@ -955,7 +955,7 @@ Measured: bench1 solid-opaque 98 → 100 (recall 1.00, RMSE 0.056); bench1 solid
 1.00; median error 0.021 px, but one true dot is fitted as two, one of them 4.7 px off, RMSE 0.551); bench2
 solid-opaque 180 → 196 (recall 0.863 → 0.926, RMSE 0.625 → 0.357, 8 extra flagged dots); bench2 solid-opaque-stroke
 165 → 179 (0.760 → 0.848). Times: bench2 1.9 → 3.9 s, 2.5 → 4.3 s. The synthetic presets, every other truth-set row
-(bench3's opaque beeswarms included) and all ten testgraphs fits are unchanged, at the same times.
+(bench3's opaque beeswarms included) and all ten bench-local fits are unchanged, at the same times.
 
 **Opaque dots colored by a scale** (bench1–2 gradient-opaque and gradient-opaque-stroke: the same "Muted Yellow
 to Red" at α 1, plain and with JMP's outlined markers). Before: bench1 114 found (recall 0.82) and 46 (0.33), as
@@ -963,7 +963,7 @@ an opaque family of the commonest fill; bench2 "The dot radius is unknown" and "
 `findColormap` already found the curve (spread 0.54–0.60) but required a second level, which opaque dots never show.
 
 - *Detection:* a curve with no second level is an opaque scale when it spans at least 0.4. Across all bench and
-  testgraphs images the only other such curve is bench1 smoother-ci.jpg's band edges, at 0.215.
+  bench-local images the only other such curve is bench1 smoother-ci.jpg's band edges, at 0.215.
 - *Model* (`opaqueImage`): the image becomes one virtual opaque family, each dot pixel B + a·(P − B), so the opaque
   pipeline (radius, Hough, fit, splits) runs unchanged on the union of the discs. The ray trick of the translucent
   path doesn't give a here: JMP's outline of a light fill points the way the fill does but lies farther out (yellow
@@ -990,7 +990,7 @@ Measured (found / truth, recall, RMSE px):
 
 bench1's RMSEs come from one dot, (179.5, 355.3), almost hidden by three neighbors 7.6–9.6 px away: the fit
 merges it with a visible neighbor (3.8 px off; 7.6 outlined). Median errors are 0.020 px. The synthetic
-presets, every other truth-set row and all ten testgraphs images are unchanged, at the same times (gradient-opaque:
+presets, every other truth-set row and all ten bench-local images are unchanged, at the same times (gradient-opaque:
 1.0–3.4 s). In the browser (the app's pane; headless Chrome can't start in this sandbox): bench2 192 and 177
 dots, as in the bench, no console errors.
 
@@ -1002,7 +1002,7 @@ chain for it (not investigated further).
 **Outlined dots whose fills vary: the rings** (pathogen: 583 dots, ggplot's shape 21 colored by a scale from
 near-white to crimson, under a thin dark gray ring; gridlines under them, a translucent purple band and a black line
 over them; log(y + 1) with zero at its own place; jittered by about ±1 year in x and ±25 px in y; the image noisy,
-as if resampled from a JPEG). Truth: `testgraphs/pathogen-trade-time-scatter.csv` (data cells, ticks in the header,
+as if resampled from a JPEG). Truth: `bench-local/pathogen-trade-time-scatter.csv` (data cells, ticks in the header,
 mapped through the detected ticks: `truth-csv.mjs` `truthPixelsByTicks`). With the jitter only cells are known, so
 the bench matches within a box of ±14 × ±27 px and reports no RMSE. Rows 0–2 are over 50 px apart, so per-row counts
 are exact checks (286, 86 and 38 dots).
@@ -1268,7 +1268,7 @@ No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
 **Milestone 4.**
 
 - [ ] Ground truth and benchmark rows for each test image. (bench1–3 have exact truth for their 59 renderings.)
-      Status 2026-11-14: every testgraphs image has truth but dog-ages-actual-size (derivable from dog-ages.json
+      Status 2026-11-14: every bench-local image has truth but dog-ages-actual-size (derivable from dog-ages.json
       through the measured 3× scale and offset); every bench-nature image has truth, but four lane CSVs (cells1,
       hair1, protrusion3, tumour1) can't be scored until the bench pairs category ticks with lanes.
 
@@ -1443,8 +1443,8 @@ pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
   edges. It doesn't separate: clean PNGs with outlines score high (three colors meet at a ring: bench1
   solid-graystroke p90 37.7 units) and JPEGs of gray dots score 0 (no chroma to bleed). Kept: of the background
   pixels 3–6 px from any mark, the share that isn't exactly the background color. A render leaves them exact; JPEG
-  ringing reaches across its 8 px blocks. Over 98 images: the bench renders 0%, the testgraphs PNGs at most 0.013%
-  (dog-ages), the bench JPEGs 19–51%, the Nature PNGs 4.8–51%, and four testgraphs PNGs 27–37% (pathogen,
+  ringing reaches across its 8 px blocks. Over 98 images: the bench renders 0%, the bench-local PNGs at most 0.013%
+  (dog-ages), the bench JPEGs 19–51%, the Nature PNGs 4.8–51%, and four bench-local PNGs 27–37% (pathogen,
   beeswarm-boxplot, fibers-distance, violin-beeswarm). Threshold 1%. Noisy synth.js presets read 29–40%: noise of
   any kind looks the same, so the app calls it "JPEG-like".
 - **When it acts:** only when the exact analysis finds no family. Always on would cost: pathogen in JPEG mode found
@@ -1452,8 +1452,8 @@ pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
   off their plane beside the rings. The app measures the noise on loading, shows it under Image ("Noise near
   marks"), and if no family shows, turns JPEG mode on and says so in the status and the family notes; the box stays
   the user's. The bench's extractAll does the same and marks the row "(J)". Every existing bench row is unchanged
-  (synthetic, bench1–3, testgraphs: diffed against HEAD without times).
-- **bench-nature in the bench:** the CSV sets are testgraphs and bench-nature; lane data paired through ticks is
+  (synthetic, bench1–3, bench-local: diffed against HEAD without times).
+- **bench-nature in the bench:** the CSV sets are bench-local and bench-nature; lane data paired through ticks is
   scored by lane (laneRow; truthPixelsByTicks now returns lane centers). Baseline:
 
 | case | truth | found | precision | recall | rmse px | note |
@@ -1493,10 +1493,10 @@ pane throttles (bench2 group-graystroke 57 s there against 6 s in Node).
   if dots are missed".
 
 **Hand-made truth** (2026-11-13). Truth placed by hand is the app's Save truth JSON (image px, family and fill per
-dot, the image's pixel hash), in `testgraphs/truth/` and `bench-nature/truth/`; `<name>.csv` stays for published
+dot, the image's pixel hash), in `bench-local/truth/` and `bench-nature/truth/`; `<name>.csv` stays for published
 data in data units. A Save CSV export under that name isn't truth (fit-dependent columns, labels from the fit's
 colors): the bench skips it with a note, and `node tools/truth-json.mjs <export.csv> <image>` converts one (done for
-engagement1). The bench used to fit only the first family for the JSON truth and read only testgraphs PNGs; it now
+engagement1). The bench used to fit only the first family for the JSON truth and read only bench-local PNGs; it now
 fits every family, scores them by group (each truth family, and fill) like the CSV group rows, reads both sets and
 JPEGs, and skips a PNG whose pixel hash isn't the truth's. The old rows understated the multi-family images:
 
@@ -1543,7 +1543,7 @@ after its ticks, which made them names; it is now `1, 2` with the names in a not
   `.params input` at equal specificity; they are ink now, and disabled ones muted and dashed.
 
 bench-nature (old code → now, the new captures): comment1 2923 → 102 for 94; crystal1 0 → 397 for 391; every other
-row the same but its flag count. bench1–3, the presets and testgraphs: counts, precision, recall and rmse identical to
+row the same but its flag count. bench1–3, the presets and bench-local: counts, precision, recall and rmse identical to
 HEAD; only flags rise (the `close` pairs). Still wrong on the new captures, not yet looked at: fanc2 1143 for 52,
 wave1 931 for 43, hair3 722 for 34, primates2 97 for 15, hair2 170 for 18 (overcounts at r 4.5–12, probably
 another small family over text or lines); autocor1 R 0.833; cells1 (no x ticks found for its two lanes), delta1,
@@ -1572,7 +1572,7 @@ dots are now exactly the 10 `close` pairs. wave1's legend has three dots, counte
   the gray line from white), so the regression tests use fanc2 and wave1 themselves.
 
 bench-nature: fanc2 1143 → 50 for 52 (P 1.000 R 0.962, 136 s → 4 s); wave1 931 → 44 for 43; primates2 97 → 15 for 15
-(the same small-family rule); every other row unchanged. Synthetic presets, bench1–3 and testgraphs: every row
+(the same small-family rule); every other row unchanged. Synthetic presets, bench1–3 and bench-local: every row
 identical to the last commit's, flags included. Still overcounting: hair2 (170 for 18) and hair3 (722 for 34) at r
 4.5–4.8.
 
@@ -1594,7 +1594,7 @@ hair3: 722 → 29 for 34, P 0.966 R 0.824, one outlined pink family at r 28.25 (
 not found: phase1's case). hair2: 170 → "No dot family found": its 9 pink dots sit in two heavy clusters (one
 strong arc) and its 9 white fills are the page's color. comment1: 102 → 103 (one more extra, flagged weak, by its
 thick x axis: the speck family's black, excluded from the orange family's final measure until now, kept the axis
-out). Everything else, synthetic, bench1–3, testgraphs and the other bench-nature rows, unchanged.
+out). Everything else, synthetic, bench1–3, bench-local and the other bench-nature rows, unchanged.
 
 **Hand edits and the refit** (2026-11-14). An add or remove refines the family's dots within NEIGHBOR_RADII (2.2 r)
 of it, since neighbors drift into a missing dot's place and spread into a removed one's. That refit used to treat a
@@ -2207,7 +2207,7 @@ before), dots over a gray bar (D read 0.36 on the bar before), and the hair2 and
 Results (full bench, diffed against 4e7bba6): phase1 as above; every other row identical but for run times. Tests in
 test/opaque.test.js: the synthetic copy, and phase1's regression (all five families, P ≥ 0.55, R ≥ 0.8).
 
-**testgraphs wages2025: a categorical palette, and navy axes** (2026-11-18)
+**bench-local wages2025: a categorical palette, and navy axes** (2026-11-18)
 
 A 4000 × 4000 scatterplot of 766 occupations (772 rows with both values) in 22 group colors, translucent (α 0.58)
 with white rims, log axes, a legend, a dashed median line and annotations. The scan made one family "colored by a
@@ -2272,7 +2272,7 @@ as analyzed, and buildMask masks their boxes (`opts.exclude`) for every family, 
     beside dots of 13) made a "line" and lost 18 dots; bench2 medium-dots lost 40 in a box of translucent clusters.
     So the dots' radius: wages2025's bold title, as thick as its dots, stays unmasked (670 found against 664, P 0.978
     against 0.986).
-  - testgraphs violin-beeswarm: its frame, thin for its height, made the whole plot "text" (0 found). Fill 0.02.
+  - bench-local violin-beeswarm: its frame, thin for its height, made the whole plot "text" (0 found). Fill 0.02.
   - bench3 dots-swarm-violin and -box (51 and 7 lost): the dots' own gray covers 5% of the image, a "background"
     color, so only their rims were ink, thin arcs in rows. Text is now read against the page alone.
 - A line: glyphs overlapping by half the shorter's height, apart by at most 0.6 × the taller's, heights within 2.5×,
@@ -2321,7 +2321,7 @@ ends, x 1287, masking the colorbar beyond; 228 and 187 at the x axis line, recal
 identical but for run times. Test in test/layers.test.js: a synthetic plot clipping its dots at the y axis and the x
 axis line's end (cut dots found whole; without the clip, one at the end is misplaced).
 
-**The remaining "not yet investigated" testgraphs; bars cut by the dots on them** (2026-11-20)
+**The remaining "not yet investigated" bench-local; bars cut by the dots on them** (2026-11-20)
 
 - Laser-Asyllable-Maturity (80 found for 70, all matched, 10 extras): opaque dots and brackets drawn in the dots'
   colors, bars about 5 px thick against dots 11 px across. The dots sitting on a bracket's bottom bar cut it into
@@ -2966,7 +2966,7 @@ Measured with `npm run bench:labels` on the 93 images whose truth lists tick val
 | bench1 | 32 | 64 | 448 of 480 | 64 | 0 | 0 | 0 |
 | bench2 | 32 | 64 | 448 of 480 | 64 | 0 | 0 | 0 |
 | bench3 | 9 | 18 | 72 of 81 | 9 | 0 | 9 (9) | 0 |
-| testgraphs | 2 | 3 | 19 of 19 | 2 | 0 | 1 (1) | 0 |
+| bench-local | 2 | 3 | 19 of 19 | 2 | 0 | 1 (1) | 0 |
 | bench-nature | 14 | 24 | 98 of 121 | 18 | 0 | 2 (1) | 4 |
 | bench-plos | 4 | 8 | 29 of 37 | 5 | 0 | 0 | 3 |
 | all | 93 | 181 | 1,114 of 1,218 (91.5%) | 162 (89.5%) | 0 | 12 (11) | 7 |
@@ -3430,14 +3430,14 @@ the rest: the truth goes through the ticks' positions and the header's values, n
 
 RESULTS.md has the new table, with a note per plot: 170 rows from 144, no failures, the other sets' rows as they
 were apart from times. It was built from the benchmark run set by set and merged, because a truth file being
-written in testgraphs (song-cents.csv, of 2026-11-21, with pixel positions and a y tick header that doesn't parse)
-stops a whole run; that file is left as it is, and has no row. testgraphs' ten images were fitted one at a time
+written in bench-local (song-cents.csv, of 2026-11-21, with pixel positions and a y tick header that doesn't parse)
+stops a whole run; that file is left as it is, and has no row. bench-local' ten images were fitted one at a time
 for the same reason, so their times in this table are each image's own, shorter than the header's "10 at a time"
 says. `npm run results` writes the same table in one run once that file reads.
 
 **song-cents, looked into** (2026-11-22)
 
-A local test image (testgraphs/song-cents.png, 2360 × 1010, a screenshot of an SVG chart): 325 opaque dots of
+A local test image (bench-local/song-cents.png, 2360 × 1010, a screenshot of an SVG chart): 325 opaque dots of
 radius 11.8 px in six fills with white strokes (mid blue 92, dark blue 65, orange 74, light blue 30, navy 18, and 46
 hollow rings in gray), under a solid and a dotted black line; light horizontal gridlines with gray labels at their
 left ends and no tick marks, year labels under the bottom gridline, and a dashed orange reference line at 7 with
@@ -3455,7 +3455,7 @@ What was found, in the order asked:
    for the scan too.
 2. **Truth.** The CSV's SVG coordinates map to image px by one scale and a shift: px = 2.35596 × svg − 2.98 in x,
    2.35599 × svg − 4.01 in y, found by voting over scales (every truth and found dot of one fill votes for a shift)
-   and refined by least squares on 270 matched dots, rms 0.05 px. testgraphs/truth/song-cents.json has the 325 dots
+   and refined by least squares on 270 matched dots, rms 0.05 px. bench-local/truth/song-cents.json has the 325 dots
    in px by fill, so the image is scored as hand truth is. The CSV itself is no data-unit truth; the benchmark
    reports it as an error row.
 3. **Families missed by the scan: two of six.**
@@ -3575,7 +3575,7 @@ Results.
   box 5 px wider). The dashed orange line at 7 on song-cents is no gridline, as intended.
   27 images' line lists change (296 lines to 324): gridlines that had a partial run now span their pieces, and a
   few new light lines, none of which changes an axis.
-- Label benchmark: testgraphs 26 of 26 labels and 3 of 4 axes (19 of 19, 2 of 3: song-cents's x axis is new and
+- Label benchmark: bench-local 26 of 26 labels and 3 of 4 axes (19 of 19, 2 of 3: song-cents's x axis is new and
   solved; its y axis is not paired with the CSV's header, which lists 8 ticks with the reference line's 7);
   bench-plos 37 of 39 labels and 7 of 8 axes (29 of 37, 5 of 8: grader1's two axes); all sets 1,357 of 1,472 labels,
   212 of 234 axes, 0 wrong (1,342 of 1,463, 209 of 233).
@@ -3600,11 +3600,11 @@ Not done, and known:
 
 **song-cents: the CSV truth in data units** (2026-11-22)
 
-testgraphs/song-cents.csv (local) held the chart's SVG coordinates, so the dot benchmark gave an error row for it
+bench-local/song-cents.csv (local) held the chart's SVG coordinates, so the dot benchmark gave an error row for it
 and only the by-hand JSON scored the image. It is now a truth file like the others: x and cents in data units, the
 fill as the group, linear scales, and the table's year and the SVG coordinates kept as extra columns.
 
-- The user's export of the page's table (testgraphs/song-cents-source.csv, 325 rows of year and cents) pairs with
+- The user's export of the page's table (bench-local/song-cents-source.csv, 325 rows of year and cents) pairs with
   the 325 SVG circles one to one: svgy = 386.002 − 12.067 × cents to the 0.1 the SVG is written in (residual at most
   0.05 svg units), so y is the table's cents.
 - x is not the year. The page dodges the dots of one year sideways into lanes 0.189 years apart (2.60 svg units,
@@ -3617,7 +3617,7 @@ Results. Dot benchmark, the data row, placed through the detected ticks: 297 fou
 0.889, the same dots as the by-hand row, RMSE 0.49 px against its 0.04. The difference is the x axis: its ticks are
 the middles of the year labels, which lie 0.08 to 0.76 px left of the years' positions by the SVG map (the y
 gridlines are within 0.12 px). That is 0.02 years at most, and it is what an axis of labels alone can give.
-Label benchmark: both axes of song-cents solved, 7 of 7 labels each (testgraphs 33 of 33 labels, 4 of 5 axes; the y
+Label benchmark: both axes of song-cents solved, 7 of 7 labels each (bench-local 33 of 33 labels, 4 of 5 axes; the y
 axis was not paired before, when the header listed the reference line's 7). RESULTS.md has the new row, its time
 from a run of this image alone.
 
@@ -4376,3 +4376,10 @@ engagement1 (no gray family). Each fails with its part of the rule taken out: th
 cluster guard.
 342 tests pass (340 before). In the app: synthetic "Found 15 dots, 2 flagged", both teal dots marked, the purple double as a
 double ring, olive unmarked, no console errors.
+
+**testgraphs renamed bench-local** (2026-11-23)
+
+The local test images' folder is `bench-local/`, named like the other sets and saying what git does with it (all
+ignored but its README). The name was replaced throughout, in this file's earlier entries too, so their paths still
+lead somewhere; commits before this one say `testgraphs`. The benchmark's set is `--set bench-local`, and the section
+of RESULTS.md has the new name, which keeps its notes (they are matched by set).

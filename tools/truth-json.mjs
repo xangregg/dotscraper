@@ -1,4 +1,4 @@
-// Ground truth placed by hand, in image px: the app's Save truth JSON (testgraphs/truth/, bench-nature/truth/).
+// Ground truth placed by hand, in image px: the app's Save truth JSON (bench-local/truth/, bench-nature/truth/).
 //
 //   { "image": "kite1-….png", "hash": "53f2db19", "note": "…",
 //     "families": [{ "family": 0, "color": [r, g, b], "radius": 7.5 }, …],

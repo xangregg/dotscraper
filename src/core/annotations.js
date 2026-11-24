@@ -1,4 +1,4 @@
-// Text and legends, to mask (PLAN.md: testgraphs wages2025). A graph's titles, notes, labels and legend sit on the
+// Text and legends, to mask (PLAN.md: bench-local wages2025). A graph's titles, notes, labels and legend sit on the
 // page beside or among the dots; the fit put dots on them wherever their ink reads as a family's (wages2025: the
 // title, subtitle, the median line's label and the legend's markers, 105 extras of 767).
 //
@@ -32,7 +32,7 @@ const TEXT_MAX_STROKE_RADII = 0.6; // × the dots' radius (adults1's tick labels
 const TEXT_MAX_STROKE_DOTS = 0.9;
 const WHOLE_DOT_RADIUS = [1, 1.5, 2];
 const WHOLE_DOTS_MIN = 3;
-// … filling this share of its box at least (a plot's frame is thin for its height: testgraphs violin-beeswarm's, 0.02,
+// … filling this share of its box at least (a plot's frame is thin for its height: bench-local violin-beeswarm's, 0.02,
 // made a "line" of the whole plot; letters fill 0.15 or more), and no wider than GLYPH_MAX_ASPECT × its height
 const GLYPH_MIN_FILL = 0.08;
 const GLYPH_MAX_ASPECT = 4;

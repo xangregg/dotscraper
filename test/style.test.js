@@ -84,11 +84,11 @@ test('gray text with two shades is not taken for a translucent family', () => {
     assert.ok(est.candidates.every(c => !c.translucent));
 });
 
-const TESTGRAPHS = new URL('../testgraphs/', import.meta.url).pathname;
-const has = name => existsSync(TESTGRAPHS + name);
+const BENCH_LOCAL = new URL('../bench-local/', import.meta.url).pathname;
+const has = name => existsSync(BENCH_LOCAL + name);
 
 test('dog-ages matches the phase 0 measurements', { skip: !has('dog-ages.png') && 'local test image absent' }, () => {
-    const est = estimateStyle(readPng(TESTGRAPHS + 'dog-ages.png'));
+    const est = estimateStyle(readPng(BENCH_LOCAL + 'dog-ages.png'));
     const s = est.style;
     near(s.alpha, 0.310, 0.003, 'α');
     near(s.radius, 24.04, 0.1, 'radius');
@@ -98,7 +98,7 @@ test('dog-ages matches the phase 0 measurements', { skip: !has('dog-ages.png') &
 });
 
 test('economist: red and blue families, red first, its trend line beyond its levels', { skip: !has('economist-canada-unfriendly-chart.png') && 'local test image absent' }, () => {
-    const est = estimateStyle(readPng(TESTGRAPHS + 'economist-canada-unfriendly-chart.png'));
+    const est = estimateStyle(readPng(BENCH_LOCAL + 'economist-canada-unfriendly-chart.png'));
     const translucent = est.candidates.filter(c => c.translucent);
     assert.equal(translucent.length, 2);
     near(translucent[0].fit.alpha, 0.302, 0.005, 'red α');

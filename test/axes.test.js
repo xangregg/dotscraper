@@ -105,11 +105,11 @@ test('guessValues fills the other ticks at the typed precision', () => {
     assert.deepEqual(guessValues(log, 'log'), [null, null, 8]);
 });
 
-const TESTGRAPHS = new URL('../testgraphs/', import.meta.url).pathname;
-const has = name => existsSync(TESTGRAPHS + name);
+const BENCH_LOCAL = new URL('../bench-local/', import.meta.url).pathname;
+const has = name => existsSync(BENCH_LOCAL + name);
 
 test('dog-ages: 6 regular ticks per axis, with labels', { skip: !has('dog-ages.png') && 'local test image absent' }, () => {
-    const ax = detectAxes(readPng(TESTGRAPHS + 'dog-ages.png'));
+    const ax = detectAxes(readPng(BENCH_LOCAL + 'dog-ages.png'));
     assert.equal(ax.x.ticks.length, 6);
     assert.equal(ax.y.ticks.length, 6);
     assert.ok(ax.x.regular && ax.y.regular);
@@ -125,14 +125,14 @@ test('dog-ages: 6 regular ticks per axis, with labels', { skip: !has('dog-ages.p
 
 test('regressions on the other test images', { skip: !has('pathogen-trade-time-scatter.png') && 'local test images absent' }, () => {
     // light gridline stubs inside pathogen's frame are not ticks; its x labels are separate words
-    const p = detectAxes(readPng(TESTGRAPHS + 'pathogen-trade-time-scatter.png'));
+    const p = detectAxes(readPng(BENCH_LOCAL + 'pathogen-trade-time-scatter.png'));
     assert.equal(p.x.ticks.length, 5);
     assert.ok(p.x.ticks.every(t => t.label && t.label[2] - t.label[0] < 60));
     // Laser's zero line crosses its y axis and is the 0 tick
-    const l = detectAxes(readPng(TESTGRAPHS + 'Laser-Asyllable-Maturity.png'));
+    const l = detectAxes(readPng(BENCH_LOCAL + 'Laser-Asyllable-Maturity.png'));
     assert.equal(l.y.ticks.length, 6);
     // economist: no y axis line; three gridlines and the zero baseline, each labeled
-    const e = detectAxes(readPng(TESTGRAPHS + 'economist-canada-unfriendly-chart.png'));
+    const e = detectAxes(readPng(BENCH_LOCAL + 'economist-canada-unfriendly-chart.png'));
     assert.equal(e.y.ticks.length, 4);
     assert.ok(e.y.ticks.every(t => t.source === 'grid' && t.label));
     // all four labels are the right-aligned numbers, not a dot rim at the zero line's left end
@@ -141,8 +141,8 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
     // made it the plot's top and masked every dot
     assert.deepEqual(plotBounds(e), { left: null, right: null, top: null, bottom: e.x.line.pos });
     // thin antialiased axes count as dark (cantons, beeswarm-boxplot)
-    assert.equal(detectAxes(readPng(TESTGRAPHS + 'cantons-haemocytes-dotplot.png')).y.ticks.length, 5);
-    const bb = detectAxes(readPng(TESTGRAPHS + 'beeswarm-boxplot.png'));
+    assert.equal(detectAxes(readPng(BENCH_LOCAL + 'cantons-haemocytes-dotplot.png')).y.ticks.length, 5);
+    const bb = detectAxes(readPng(BENCH_LOCAL + 'beeswarm-boxplot.png'));
     assert.equal(bb.y.ticks.length, 9);
     // its gray significance bracket (luminance 160) has three unlabeled "ticks" but is not an x axis
     assert.equal(bb.x, null);
@@ -154,7 +154,7 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
 test('regression: wages2025, navy ticks on gray axis lines, and the x axis\'s corner label isn\'t a y label', { skip: !has('wages2025.png') && 'local test image absent' }, () => {
     // before: no tick on either axis (navy, chroma 26); then the y axis's labels were all dropped: the x label "100",
     // under the corner, reached into their search beside the corner tick at gap 0, and they lay 19 px out
-    const ax = detectAxes(readPng(new URL('../testgraphs/wages2025.png', import.meta.url).pathname));
+    const ax = detectAxes(readPng(new URL('../bench-local/wages2025.png', import.meta.url).pathname));
     for (const k of ['x', 'y']) {
         assert.ok(ax[k]?.line, `${k} axis line`);
         assert.equal(ax[k].ticks.filter(t => t.label).length, 6, `${k}: ${ax[k].ticks.map(t => t.pos.toFixed(0))}`);
@@ -163,7 +163,7 @@ test('regression: wages2025, navy ticks on gray axis lines, and the x axis\'s co
 });
 
 test('regression: the native-size dog-ages "100" label keeps its "1"', { skip: !has('dog-ages-actual-size.png') && 'local test image absent' }, () => {
-    const ax = detectAxes(readPng(TESTGRAPHS + 'dog-ages-actual-size.png'));
+    const ax = detectAxes(readPng(BENCH_LOCAL + 'dog-ages-actual-size.png'));
     const top = ax.y.ticks[0].label;
     const zero = ax.y.ticks[ax.y.ticks.length - 1].label;
     // three digits against one, in the same font
@@ -764,7 +764,7 @@ test('regression: grader1, gridlines both ways with their labels off their ends 
 test('regression: song-cents, seven gridlines under 325 dots, labels off their ends, years under the last', { skip: !has('song-cents.png') && 'local test image absent' }, () => {
     // before: no x axis; five of the seven gridlines (the 20 and 10 lines have no run of 30% of the width), labeled
     // with the title, a dot's rim and scraps
-    const ax = detectAxes(readImage(TESTGRAPHS + 'song-cents.png'));
+    const ax = detectAxes(readImage(BENCH_LOCAL + 'song-cents.png'));
     assert.equal(ax.y.ticks.length, 7);
     assert.ok(ax.y.regular, 'evenly spaced');
     near(ax.y.spacing, 142.15, 0.1, 'gridline spacing');

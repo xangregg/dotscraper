@@ -171,7 +171,7 @@ test('regression: a line darker than the full color the levels give is past any 
     assert.equal(mask[Math.floor(far.y) * 400 + Math.floor(far.x)], 0);
 });
 
-const DOG = new URL('../testgraphs/dog-ages.png', import.meta.url).pathname;
+const DOG = new URL('../bench-local/dog-ages.png', import.meta.url).pathname;
 test('dog-ages: curve, dashes and text masked; dots and background not', { skip: !existsSync(DOG) && 'local test image absent' }, () => {
     const image = readPng(DOG);
     const est = estimateStyle(image);
@@ -293,7 +293,7 @@ test('clipped dots: where the plot cuts the dots at the axis and the x axis line
 });
 
 test('a bar in the dots\' color, cut into short pieces by the dots on it, is masked as a line', () => {
-    // before (testgraphs Laser-Asyllable-Maturity): the bar's pieces between the dots, 5–10 px each, were too short
+    // before (bench-local Laser-Asyllable-Maturity): the bar's pieces between the dots, 5–10 px each, were too short
     // for the length test and stayed unmasked
     const color = [58, 152, 176];
     const R = 5.7;
@@ -326,10 +326,10 @@ test('a bar in the dots\' color, cut into short pieces by the dots on it, is mas
     assert.equal(dots.length, loose.length + onBar.length, JSON.stringify(dots.map(d => [+d.x.toFixed(1), +d.y.toFixed(1)])));
 });
 
-const LASER = new URL('../testgraphs/Laser-Asyllable-Maturity.png', import.meta.url).pathname;
-const LASER_TRUTH = new URL('../testgraphs/truth/Laser-Asyllable-Maturity.json', import.meta.url).pathname;
+const LASER = new URL('../bench-local/Laser-Asyllable-Maturity.png', import.meta.url).pathname;
+const LASER_TRUTH = new URL('../bench-local/truth/Laser-Asyllable-Maturity.json', import.meta.url).pathname;
 
-test('regression: Laser, no dots fitted on the brackets\' bars between the dots on them', { skip: !(existsSync(LASER) && existsSync(LASER_TRUTH)) && 'testgraphs Laser absent' }, () => {
+test('regression: Laser, no dots fitted on the brackets\' bars between the dots on them', { skip: !(existsSync(LASER) && existsSync(LASER_TRUTH)) && 'bench-local Laser absent' }, () => {
     // before: 80 found for 70, all 70 matched, 10 extras on the bars (P 0.875)
     const results = extractAll(readImage(LASER));
     const truth = readTruthJson(LASER_TRUTH).dots;

@@ -5,8 +5,8 @@ node_modules/
 # notes for this machine only
 CLAUDE.local.md
 # test images (third-party figures, not cleared for redistribution) and anything derived from them: everything in
-# testgraphs/ but its README, which keeps the directory in every clone
-testgraphs/*
-!testgraphs/README.md
+# bench-local/ but its README, which keeps the directory in every clone
+bench-local/*
+!bench-local/README.md
 # real-world test set from Nature figures (third-party, not cleared for redistribution): local only for now
 bench-nature/

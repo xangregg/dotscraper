@@ -9,7 +9,7 @@ import { pageStroke } from '../src/core/stroke.js';
 import { matchDots } from '../src/core/metrics.js';
 import { readImage } from '../tools/png.mjs';
 
-const TESTGRAPHS = new URL('../testgraphs/', import.meta.url).pathname;
+const BENCH_LOCAL = new URL('../bench-local/', import.meta.url).pathname;
 const R = 10; // px, the dots' fill radius
 const BLUE = [58, 111, 165];
 const ORANGE = [223, 105, 59];
@@ -196,10 +196,10 @@ test('the stroke\'s pixels: beside a sliver of a dot too, and not other ink betw
     assert.equal(at(66, 345), 0);
 });
 
-test('regression: song-cents, a white stroke 2.4 px wide, and the dots it cuts', { skip: !existsSync(TESTGRAPHS + 'song-cents.png') && 'local test image absent' }, () => {
+test('regression: song-cents, a white stroke 2.4 px wide, and the dots it cuts', { skip: !existsSync(BENCH_LOCAL + 'song-cents.png') && 'local test image absent' }, () => {
     // 36 of its 325 dots were missed, most with half their fill in view. A part of the plot with piles of dots in
     // four fills, and the truth's dots in it (by hand, from the page's SVG):
-    const image = readImage(TESTGRAPHS + 'song-cents.png');
+    const image = readImage(BENCH_LOCAL + 'song-cents.png');
     const [x0, y0, w, h] = [1700, 560, 560, 360];
     const crop = { width: w, height: h, data: new Uint8ClampedArray(4 * w * h) };
     for (let y = 0; y < h; y++)
@@ -209,7 +209,7 @@ test('regression: song-cents, a white stroke 2.4 px wide, and the dots it cuts',
     // the SVG's stroke is 1 unit, 2.36 px
     assert.ok(Math.abs(stroke.width - 2.36) <= 0.15, `width ${stroke.width}`);
     assert.ok(stroke.share >= 0.8, `${stroke.share} of one width`);
-    const truth = JSON.parse(readFileSync(TESTGRAPHS + 'truth/song-cents.json', 'utf8')).dots
+    const truth = JSON.parse(readFileSync(BENCH_LOCAL + 'truth/song-cents.json', 'utf8')).dots
         .map(d => ({ x: d.x - x0, y: d.y - y0 }))
         .filter(d => d.x > 14 && d.y > 14 && d.x < w - 14 && d.y < h - 14);
     const hit = dots => matchDots(truth, dots, 6).pairs.length;

@@ -1,4 +1,4 @@
-# Test images
+# bench-local: test images for this machine only
 
 Images here appear in the app's list of test images when it runs from this machine. Git ignores everything in
 this directory except this README: the images are third-party figures (journals, The Economist) that are not

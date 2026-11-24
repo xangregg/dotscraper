@@ -115,9 +115,9 @@ bench3: JMP renderings, 204 dots as beeswarms
 | dots-swarm-grid | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.01 | 0 | 4.4 | 1.2 |  |
 | dots-swarm-violin | exact | exact | 204 | 204 | 1.000 | 1.000 | 0 | 0.01 | 0 | 6.1 | 1.7 |  |
 
-## testgraphs
+## bench-local
 
-testgraphs: real figures (local only)
+bench-local: real figures (local only)
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

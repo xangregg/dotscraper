@@ -288,7 +288,7 @@ test('truthPixelsByTicks: values through detected ticks, interpolated in log(v +
     assert.ok(Math.abs(r.dots[1].y - 100) < 1e-9);
 });
 
-const PATHOGEN = new URL('../testgraphs/pathogen-trade-time-scatter', import.meta.url).pathname;
+const PATHOGEN = new URL('../bench-local/pathogen-trade-time-scatter', import.meta.url).pathname;
 
 test('regression: pathogen, outlined dots colored by a scale, found by their rings', { skip: !existsSync(PATHOGEN + '.csv') && 'pathogen truth absent' }, () => {
     // before: "No dot family found" (the fills vary by dot, and no color line held enough of them)

@@ -1,6 +1,6 @@
 // Getting images into the app: decoding, the list of local test images, and paste / drop / file-picker wiring.
 
-const IMAGE_DIR = 'testgraphs/';
+const IMAGE_DIR = 'bench-local/';
 const IMAGE_INDEX = 'index.json'; // in IMAGE_DIR: a JSON array of file names, written by npm run images:index
 // The Server header of Python's http.server (npm run serve), which lists directories. Other servers (WebStorm's
 // built-in one) answer a directory request with 404 or an error page, so they get the index file instead.

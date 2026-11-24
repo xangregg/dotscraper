@@ -71,7 +71,7 @@ Residual are for everyone). It is on for a local server and off on the deployed 
 
 `npm run bench` scores the detector against ground truth: synthetic presets, and the renderings in `bench1/`–`bench3/`
 with their exact data, and figures from PLOS ONE articles in `bench-plos/`, which are CC BY 4.0 and credited in
-`bench-plos/README.md`. The other real-world test images (`testgraphs/`, `bench-nature/`) are third-party figures that
+`bench-plos/README.md`. The other real-world test images (`bench-local/`, `bench-nature/`) are third-party figures that
 are not cleared for redistribution, so they stay local and out of the repository; the benchmark and the tests skip
 them when they're absent.
 

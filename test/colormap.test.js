@@ -123,9 +123,9 @@ test('findColormap: a categorical palette is told from a scale; its dots split b
     assert.ok(matched >= 0.75 * dots.length, `${matched} of ${dots.length}`);
 });
 
-const WAGES = new URL('../testgraphs/wages2025', import.meta.url).pathname;
+const WAGES = new URL('../bench-local/wages2025', import.meta.url).pathname;
 
-test('regression: wages2025, 22 occupation groups in a palette are families, each dot by its own pixels', { skip: !existsSync(WAGES + '.png') && 'testgraphs wages2025 absent' }, () => {
+test('regression: wages2025, 22 occupation groups in a palette are families, each dot by its own pixels', { skip: !existsSync(WAGES + '.png') && 'bench-local wages2025 absent' }, () => {
     // before: one family "colored by a continuous scale" (P 0.860 R 0.845 pooled); split one family at a time, 9
     // families in 6 minutes; by palette, 38 colors (stacks, gridline grays) until the colors had to be uniform, 41
     // dots in the wrong family until each dot voted by its exact pixels, and no pink (8 dots, outside the chain).

@@ -112,20 +112,20 @@ test('an opaque bar in the dot color is masked as thin; dots cut by another line
     }
 });
 
-const TESTGRAPHS = new URL('../testgraphs/', import.meta.url).pathname;
-const has = name => existsSync(TESTGRAPHS + name);
+const BENCH_LOCAL = new URL('../bench-local/', import.meta.url).pathname;
+const has = name => existsSync(BENCH_LOCAL + name);
 
 test('families of the real images', { skip: !has('cantons-haemocytes-dotplot.png') && 'local test images absent' }, () => {
-    const kinds = name => estimateStyle(readPng(TESTGRAPHS + name)).candidates.map(c => c.kind);
+    const kinds = name => estimateStyle(readPng(BENCH_LOCAL + name)).candidates.map(c => c.kind);
     assert.deepEqual(kinds('dog-ages.png'), ['translucent']);
     assert.deepEqual(kinds('economist-canada-unfriendly-chart.png'), ['translucent', 'translucent']);
-    const cantons = estimateStyle(readPng(TESTGRAPHS + 'cantons-haemocytes-dotplot.png')).candidates;
+    const cantons = estimateStyle(readPng(BENCH_LOCAL + 'cantons-haemocytes-dotplot.png')).candidates;
     assert.equal(cantons.length, 4);
     assert.ok(cantons.every(c => Math.abs(c.radius - 6.37) < 0.1));
     assert.equal(kinds('Laser-Asyllable-Maturity.png').length, 3);
     // the gray dots share their color with antialiased text, which once made white their background and text their
     // radius; the red dots read as half of pink and once took pink dots as their own
-    const nicest = estimateStyle(readPng(TESTGRAPHS + 'nicest language.png')).candidates;
+    const nicest = estimateStyle(readPng(BENCH_LOCAL + 'nicest language.png')).candidates;
     assert.ok(nicest.length >= 4);
     assert.ok(nicest.some(c => Math.hypot(...c.seed.map((v, ch) => v - [202, 201, 191][ch])) < 6));
     // violin's dots sit on its shading and on white
@@ -133,7 +133,7 @@ test('families of the real images', { skip: !has('cantons-haemocytes-dotplot.png
 });
 
 test('regression: Laser’s black family fits its dots, not its text or bar', { skip: !has('Laser-Asyllable-Maturity.png') && 'local test image absent' }, () => {
-    const image = readPng(TESTGRAPHS + 'Laser-Asyllable-Maturity.png');
+    const image = readPng(BENCH_LOCAL + 'Laser-Asyllable-Maturity.png');
     const { candidates } = estimateStyle(image);
     const k = candidates.findIndex(c => c.seed.every(v => v < 40));
     const { fit } = fitFamily(image, k, candidates);
@@ -444,7 +444,7 @@ test('regression: a cluster of one opaque color is not covered by too few dots (
 
 test('regression: no outlined family made of a translucent family’s levels (economist)', { skip: !has('economist-canada-unfriendly-chart.png') && 'local test image absent' }, () => {
     // a red–blue lens inside red dots, with red's one-dot level around it, passed as an outlined opaque family
-    const { estimates } = estimateFamilies(readPng(new URL('../testgraphs/economist-canada-unfriendly-chart.png', import.meta.url).pathname));
+    const { estimates } = estimateFamilies(readPng(new URL('../bench-local/economist-canada-unfriendly-chart.png', import.meta.url).pathname));
     assert.deepEqual(estimates.map(e => e.familyMeasure.kind), ['translucent', 'translucent']);
 });
 
@@ -865,7 +865,7 @@ test('regression: beeswarm-boxplot, packed red and gray swarms are two families 
     // colormap took gray plus its noise for a scale (one point held 97% of the votes); gray's radius came from the
     // distance transform, 6.2 for 9 (no dot isolated in a packed swarm), and at 8.2–8.7 the fit put two dots in
     // nearly every gray dot
-    const results = extractAll(readImage(TESTGRAPHS + 'beeswarm-boxplot.png'));
+    const results = extractAll(readImage(BENCH_LOCAL + 'beeswarm-boxplot.png'));
     assert.equal(results.length, 2, results.map(r => `${r.est.style.color.map(Math.round)}`).join('; '));
     const gray = results.find(r => r.est.style.color[0] < 200);
     const red = results.find(r => r.est.style.color[0] > 200);

@@ -74,7 +74,7 @@ const inside = (box, x, y) => x >= box[0] && x < box[2] && y >= box[1] && y < bo
 test('annotationBoxes: lines of text and a legend column are boxed; dots, crescents, a row of rings and a frame aren\'t', () => {
     const R = 12;
     const shapes = [
-        // a frame around the plot (thin for its height, as a glyph is: testgraphs violin-beeswarm's made the plot "text")
+        // a frame around the plot (thin for its height, as a glyph is: bench-local violin-beeswarm's made the plot "text")
         { rect: [4, 4, 796, 6], color: INK }, { rect: [4, 314, 796, 316], color: INK }, { rect: [4, 4, 6, 316], color: INK }, { rect: [794, 4, 796, 316], color: INK },
         // a title, bold (strokes 5 px, thinner than the dots: 8 px, as thick as them, would be no text)
         ...word(20, 60, 44, 'THE TITLE', 5),
@@ -149,9 +149,9 @@ test('regression: crimson, "Productive" and "Latent" are masked, and no dot is',
         assert.ok(!covered(d.x, d.y), `a box over the dot at ${d.x}, ${d.y}`);
 });
 
-const WAGES = new URL('../testgraphs/wages2025.png', import.meta.url).pathname;
+const WAGES = new URL('../bench-local/wages2025.png', import.meta.url).pathname;
 
-test('regression: wages2025, its title, subtitle, legend and the median line\'s label are masked', { skip: !existsSync(WAGES) && 'testgraphs wages2025 absent' }, () => {
+test('regression: wages2025, its title, subtitle, legend and the median line\'s label are masked', { skip: !existsSync(WAGES) && 'bench-local wages2025 absent' }, () => {
     // before: 105 extras of 767 found on them (P 0.851). Its bold title, strokes as thick as the dots, stays.
     const image = readImage(WAGES);
     const { text, legend } = annotationBoxes(image, backgroundColors(image)[0], 17.6);

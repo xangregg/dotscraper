@@ -14,7 +14,7 @@
 // x(100) = width − 0.50 px, residuals 0.01–0.03 px). Through it, truth is exact; through detected ticks it would
 // be off by up to 0.25 px, because JMP draws ticks on whole pixels.
 //
-// A test image's own truth (testgraphs/<name>.csv) may have no plot area: its tick values are then paired with the
+// A test image's own truth (bench-local/<name>.csv) may have no plot area: its tick values are then paired with the
 // ticks detected in the image (truthPixelsByTicks), and positions are interpolated between ticks in the scale's
 // transform. Scale types: "linear", "log" and "log y+1" (log(v + 1)); "with jitter" after the type means each dot was
 // moved by a random amount, so the truth gives its cell, not its position.

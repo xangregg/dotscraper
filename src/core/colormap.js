@@ -61,7 +61,7 @@ const MAX_FEW_SHARE = 0.7;
 // Many in peaks is a categorical palette, not a scale: its colors chain through the mixes of overlapping dots of
 // unlike colors, but its votes pile up at its colors. Peaks are points with the most votes within NEIGHBOR_DIST; a
 // palette has PALETTE_MIN_PEAKS or more and its top PALETTE_TOP_POINTS of the points hold over PALETTE_TOP_SHARE of
-// the votes (testgraphs wages2025, 22 colors: 26 peaks, 0.87; scales: 3–6 peaks, 0.32–0.41 for bench1–2's
+// the votes (bench-local wages2025, 22 colors: 26 peaks, 0.87; scales: 3–6 peaks, 0.32–0.41 for bench1–2's
 // gradients, 0.61 for score2's viridis). It is fitted as a scale is, one virtual family, which reads overlaps of
 // unlike colors; split one at a time its 22 colors gave 9 families and took 6 minutes against 1. Each fitted dot's
 // color is then its own pixels' (paletteColors).
