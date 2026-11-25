@@ -4383,3 +4383,112 @@ The local test images' folder is `bench-local/`, named like the other sets and s
 ignored but its README). The name was replaced throughout, in this file's earlier entries too, so their paths still
 lead somewhere; commits before this one say `testgraphs`. The benchmark's set is `--set bench-local`, and the section
 of RESULTS.md has the new name, which keeps its notes (they are matched by set).
+
+**bench-pmc: 20 figures from PubMed Central, a baseline; and three changes to editing by hand** (2026-11-25)
+
+The user added `bench-pmc/`: 20 figures from articles found through PubMed Central, with truth placed by hand
+(`truth/<name>.json`, 2,340 dots). Most are screenshots of a PDF whose figure is an embedded raster image, so many are
+low in resolution or JPEG-noisy. The set is in the benchmark (`--set bench-pmc`), the label benchmark (no truth of
+its lists tick values yet) and RESULTS.md. Git ignores the folder, as it does bench-nature: the articles' licenses
+vary and haven't been checked.
+
+Baseline, before any work on the set (RESULTS.md has every row and a note on each image):
+
+- **Fitted, 15 of 20.** Seven are right or nearly (precision ≥ 0.95 and recall ≥ 0.98): amino, healer, latency,
+  mortality, oxygen, reading, rvat. The rest: aerobic 95 found for 222, bread1 8 for 24, gc 83 for 64, potato 80 for
+  86, reward 308 for 342, shannon 68 for 111, shap 67 for 119, tegner 88 for 75.
+- **Not fitted, 5.** No family found: bread2, cycle, funnel, grapes. One family and no radius: culicine.
+
+What fails, by cause, from the user's notes and a look at each image (nothing here is diagnosed yet):
+
+1. **Fills under translucent dots**: ggplot2's gray panel with white gridlines (bread1, bread2), filled boxes
+   (bread1, culicine, gc) and confidence bands (bread2). The user asks whether the fill can be detected and adjusted
+   for. `background.js` does that for shaded regions, and bench-plos synthetic's gray panel is read, so the first
+   step is to see why these aren't.
+2. **Dots on a color scale read as several families**: potato (viridis, 8 families) and shap (blue to red, 4, with
+   colors left out). `colormap.js` reads dots on a continuous scale in other images (bench1–2's gradient dots), so
+   the first step is to see why not here. Their truth files have a family per color for now, to be rewritten as
+   one family.
+3. **Outlined dots at low resolution, not found**: funnel and grapes (black outlines), culicine (darker outlines of
+   the fill's hue), cycle (hollow circles).
+4. **Families missed beside found ones**: aerobic (3 of 7 colors) and reward (black beside teal). A family added by
+   hand on aerobic measures r 13.8 where the found ones have 8.6: a picked color could take a found family's size
+   when its own measure allows it.
+5. **Mask**: shannon's right third is masked, and a family is found there with no dots.
+6. **Extras in blurred images**: doubles (gc, tegner) and dots on box lines in the dots' colors (gc).
+7. **Axes**: axes crossing in the middle of the plot (latency), a y axis running down (cycle), labels not read
+   (oxygen), ticks not found (culicine), labels without tick marks (tegner), a pseudo-log scale (bread1), and
+   categorical axes (reading, rvat, shannon).
+
+Three changes to editing by hand, from the same notes:
+
+- **An added dot settles within 12 screen pixels of the click** (`main.js ADD_REACH`, CSS px; `fit.js refitNear`
+  takes the reach in image px and tethers the added dot). Before, the refinement had no limit, so zoomed in, a dot
+  placed with care could be carried off. The dot also starts at the point clicked, not its pixel's center. Measured
+  in the app on cantons, a dot removed and added again: at 41%, clicked 5 px from its center, it settles on the
+  center (240.88, 171.64); at 802%, clicked 3 px off, it stays 1.9 px off (reach 1.5 px from the click); clicked
+  1 px off, it settles on the center.
+- **Shift hides the dots' marks** in Add, Remove and Move while it is held; Shift with an arrow key is still the
+  fine nudge and shows them again. **D** turns the Dots checkbox on and off in any mode.
+- **Keys work after a click on a checkbox.** The cause of the complaint: a focused checkbox counted as a text
+  field, so A, R, M and the arrows were ignored until a click in the graph. A checkbox no longer counts.
+
+Tests: `refitNear` with a reach (the added dot stays within it, and settles on the dot when the dot is within it);
+it fails with the tether taken out. 343 tests pass (342 before). In the app, checked on cantons: the marks hide and
+return with Shift, D and a window blur, the keys work from the focused checkbox, no console errors.
+
+**bench-pmc, fills under translucent dots: bread1** (2026-11-25)
+
+The user's first note on the set: translucent dots over ggplot2's gray panel are difficult; can the panel's color
+and its white gridlines be detected and adjusted for, and boxes and bands likewise? Looked at the four images with
+fills under their dots. The panel and the gridlines are not what fails: in bread1 and bread2 the panel (229) is the
+page the families are read from, and bread1's white is a region under the dots. Each image fails on something else:
+
+- **bread1**: the dots are two grays, grey15 (39) over the red box and black over the blue, both at α 0.6 (over the
+  panel 114 and 92; over the red box 104, 59, 52; over the blue 28, 54, 69; over a box's dark outline, 72, 52 and 29).
+  Gray dots, the gray panel, the axis title (85) and the boxes' outlines (72) are all on one color line. The grays
+  114, 92 and 85 fit one family's levels 1, 2, 3 (color 85, α 0.79, rms 0.8), whose level 2 lies nowhere near its
+  level 1, so the candidate was dropped and its colors left as other ink. What was found instead: the dots over
+  the red box as an opaque maroon family, 8 dots for 24, and, voted on by that family, the blue box as a layer over
+  the dots (s 0.48), divided out.
+- **bread2**: a JPEG of translucent dots in three hues with darker rims (matplotlib's), regression lines over them
+  and confidence bands in their hues, two of them 160,000 and 29,000 px and overlapping; most dots are in a pile
+  along the bottom. The bands are read as layers and divided out, and no family is found. Not worked on.
+- **culicine**: translucent pink and teal dots with darker outlines over pale boxes of their hues. The pink box
+  (255, 227, 225, 27,818 flat px) is read as the pink family's level 2, with no whole dot. Not worked on.
+- **gc**: opaque dots; its extras are doubles in the blur and dots on the boxes' lines, not the fills. It belongs
+  with the blurred images.
+
+Two changes, both from bread1:
+
+1. **A level that doesn't nest is set aside** (`style.js nestedLevels`). A candidate whose level 2 lies outside its
+   level 1 was dropped whole. Now that color's pixels are taken out and the family measured again, up to 3 times
+   (`NEST_MAX_RETRIES`); the colors set aside stay other ink. bread1 without 92 and 85: levels 114, 72, 52, 44, α
+   0.602, color 40 (the truth: 39 at about 0.6; 72 is the outlines' gray, 4 units from the real level 2, 68). With
+   that family the red, blue and white regions are all read as under the dots, and the maroon "family" is its dots
+   over the red box. A color picked by hand is measured the same way (`estimateStyle` with a seed).
+2. **A picked family is read against the regions under it** (`families.js pickedEstimate`, which the scan worker's
+   `seed` now calls). Add family by color measured the color and stopped: the regions under the dots, which the
+   scan's own families are read against (unmix.js), were never looked for. Picking bread1's gray gave color 85 at
+   α 0.79 and, fitted, 509 dots, most stacked along the red box's outline; now the same family as the scan's.
+
+The "very large dots" the user saw there were not dots: the close flag chains, and the shared ring of a group was
+drawn around a whole column of stacked dots, 300 px across. A group reaching more than 2 radii from its middle now
+gets no ring (`view.js CLOSE_RING_MAX_RADII`); its dots keep the close color.
+
+Measured: bread1 8 → 40 found for 24, recall 0.292 → 1.000, precision 0.875 → 0.600, 27 flagged. All 24 dots are
+found; the 16 extras are doubles, every one flagged close: 12 on the black dots, which the grey15 family reads as
+more than one dot where they lie over the blue box or a line, and 4 where a grey15 dot crosses a box's outline (the
+outline shows through the dot, 52, as a deeper level). Full benchmark: bread1 alone changes, 199 rows the same
+(synthetic's row differs by its truth, updated on 2026-11-23).
+
+Left open on bread1: the black dots as a family of their own (a second family on the same line; unmixing two
+collinear families isn't determined per pixel), and lines under translucent dots, which could be masked through
+the dots they cross. The y axis is a pseudo-log scale with six ticks found and no values.
+
+Tests: a synthetic gray family on a gray page with marks of 92 and text of 85 on its line (the family by the scan
+and by a picked color: α within 0.02, color within 4, no level at 92 or 85); a picked family with half its dots
+over a box (every dot found, RMSE under 0.2 px); bread1 itself (one translucent family, the three regions under,
+picked the same, recall 1 with at most 40 dots). Each fails with its change taken out.
+346 tests pass (343 before). In the app: bread1 scans as one translucent family (α 0.60, r 13.5) and finds 40 dots;
+a family picked on a black dot (92) measures the same and finds the same 40; no console errors.

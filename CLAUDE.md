@@ -42,7 +42,7 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         overlapping translucent families), background.js (shaded regions over or under the
                         dots), colormap.js (dots colored by a continuous scale, or by a categorical palette, split by each dot's own color after the fit), outline.js (outlined dots fitted by their rings in drawing order:
                         whole images whose fills vary, single outlined families, hollow rings, and thick-walled open circles in a solid family's color), annotations.js (text lines and legend markers, masked), stroke.js (a stroke in the page's color around opaque dots, read where whole dots lie over cut ones; its pixels masked), families.js (all of the
-                        above, per image: the families to fit), extract.js (from an image to its dots: the scan with the choice of color
+                        above, per image: the families to fit, and a family picked by its color), extract.js (from an image to its dots: the scan with the choice of color
                         matching, mask options, fit input, dots' fill colors, and extractAll, all of it at once: the steps the app takes
                         and the bench and tests run), stats.js (medians, quantile), rng.js
 src/ui/                 main.js (state, panel), view.js (canvas zoom/pan/click, dot and axis marks), overlays.js,
@@ -57,6 +57,9 @@ bench1/ bench2/ bench3/  the user's own JMP renderings (PNG and JPEG) of one dat
                         with scale, tick and plot-area header lines (bench1: 100 dots, bench2: 204 with more ties,
                         bench3: 204 as beeswarms, x a lane). Exact ground truth; the user's to commit or not.
                         Tests using them skip when they're absent.
+bench-pmc/              figures from articles found through PubMed Central, most of them screenshots of a PDF's embedded
+                        raster image, with truth placed by hand in truth/<name>.json: LOCAL ONLY (git ignores the
+                        folder; the licenses vary and aren't checked). Tests using them skip when they're absent.
 bench-r/                R's renderings with tick labels in scientific notation, and of ggplot2's gray theme, drawn by
                         bench-r/make.R, each with a CSV of its points and tick values: for both benchmarks and
                         tests (which skip without it)
@@ -90,8 +93,8 @@ test/*.test.js          node:test + node:assert/strict
 - Measure a dot family: `npm run measure -- bench-local/<image> [--seed r,g,b] [--out dir]` (writes the overlap
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose --jobs n]` runs style, mask and
-  fit on the synthetic presets, every local image with `bench-local/truth/<name>.json`, and every image of the truth
-  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  fit on the synthetic presets, every image with truth placed by hand (`<set>/truth/<name>.json`), and every image of the truth
+  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-pmc` the PubMed Central ones, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. It fits 10 images at a time in worker threads (`--jobs n`
   for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
   (14% in all at 10), so compare times only between runs at one job count.

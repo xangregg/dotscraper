@@ -468,7 +468,7 @@ function blurPlane(src, width, height, sigma) {
  *
  * @param {FitInput} input
  * @returns {object}  the fit's state and steps: style (live: the radius is refitted), lambda, weight and imgT (per
- *   pixel); add, remove, refineAll, refineDot, pin, births, splits, deaths, merges, fitFills, refitRadius, ringless, bestZ;
+ *   pixel); add, remove, refineAll, refineDot, pin, tether, births, splits, deaths, merges, fitFills, refitRadius, ringless, bestZ;
  *   totalLoss, assess, birthFailures, modelImage, dots, ids, position, near. Each is documented where it is defined.
  */
 export function createFit(input) {
@@ -501,6 +501,7 @@ export function createFit(input) {
     const pos = new Map(); // id → { x, y }
     const shownT = new Float32Array(n).fill(NaN); // the transmittance each pixel shows, once read (imageT)
     const pinned = new Set(); // ids placed by hand: refinement leaves them where they are
+    const tethers = new Map(); // id → { x, y, reach }: a dot put by hand that refinement keeps within reach (px) of there
 
     function modelT(p) {
         return model.image.data[p];
@@ -564,10 +565,11 @@ export function createFit(input) {
         return { without, withDot: loss(rect) };
     }
 
-    // compass search on one center, from COMPASS_STEPS[first], never farther than maxMove from where it started;
-    // returns the distance moved
+    // compass search on one center, from COMPASS_STEPS[first], never farther than maxMove from where it started, nor
+    // out of its tether's reach if it has one; returns the distance moved
     function refineDot(id, first = 0, maxMove = Infinity) {
         const start = { ...pos.get(id) };
+        const tether = tethers.get(id);
         for (const step of COMPASS_STEPS.slice(first)) {
             let improved = true;
             while (improved) {
@@ -575,6 +577,8 @@ export function createFit(input) {
                 const { x, y } = pos.get(id);
                 for (const [dx, dy] of [[step, 0], [-step, 0], [0, step], [0, -step]]) {
                     if (Math.hypot(x + dx - start.x, y + dy - start.y) > maxMove)
+                        continue;
+                    if (tether && Math.hypot(x + dx - tether.x, y + dy - tether.y) > tether.reach)
                         continue;
                     if (tryMove(id, x + dx, y + dy)) {
                         improved = true;
@@ -1393,7 +1397,7 @@ export function createFit(input) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, pin: id => pinned.add(id), births, splits, deaths, merges, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
+        add, remove, refineAll, refineDot, pin: id => pinned.add(id), tether: (id, reach) => tethers.set(id, { ...pos.get(id), reach }), births, splits, deaths, merges, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
         get birthFailures() {
             return birthFailures;
         },
@@ -1582,16 +1586,19 @@ export function flagClose(dots, radius) {
  *
  * Outlined dots keep their drawing order (z); one marked `added` is placed where in its neighbors' order it fits
  * best (bestZ), after the others are in. Dots marked `pinned` (placed or moved by hand) stay where they are: the
- * user's placement overrides the fit's.
+ * user's placement overrides the fit's. An `added` dot settles within `reach` of where it was put: the app gives
+ * the pointer's precision there, a few screen pixels, which zoomed in is a fraction of an image pixel, so that a
+ * dot placed with care isn't carried off to a better fit elsewhere.
  *
  * @param {FitInput} input
  * @param {{x: number, y: number, z?: number, added?: boolean, pinned?: boolean}[]} dots  px
  * @param {number} x  px, the edit
  * @param {number} y  px
+ * @param {number} [reach]  px, how far an added dot may settle from where it was put (default: any distance)
  * @returns {{dots: FittedDot[], sigma: number, lambda: number, from: number[]}}  dots sorted by x; from[i]: the index
  *   in `dots` of dots[i]
  */
-export function refitNear(input, dots, x, y) {
+export function refitNear(input, dots, x, y, reach = Infinity) {
     const fit = createFit(input);
     const idOf = new Array(dots.length);
     dots.forEach((d, i) => {
@@ -1605,6 +1612,10 @@ export function refitNear(input, dots, x, y) {
     dots.forEach((d, i) => {
         if (d.pinned)
             fit.pin(idOf[i]);
+    });
+    dots.forEach((d, i) => {
+        if (d.added && reach < Infinity)
+            fit.tether(idOf[i], reach);
     });
     fit.refineAll(fit.near(x, y, NEIGHBOR_RADII * input.style.radius));
     const { dots: assessed, sigma, ids } = fit.assess();

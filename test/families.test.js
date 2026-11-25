@@ -11,7 +11,11 @@ import { groupRow, laneRow, jitterRow } from '../tools/bench.mjs';
 import { detectAxes } from '../src/core/axes.js';
 import { findColormap } from '../src/core/colormap.js';
 import { backgroundColor, flatMask, EXACT_TOLERANCES } from '../src/core/scan.js';
-import { estimateFamilies } from '../src/core/families.js';
+import { estimateFamilies, pickedEstimate } from '../src/core/families.js';
+import { fitInput } from '../src/core/extract.js';
+import { buildMask } from '../src/core/layers.js';
+import { fitDots } from '../src/core/fit.js';
+import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
 import { matchDots } from '../src/core/metrics.js';
 import { readTruthJson } from '../tools/truth-json.mjs';
 
@@ -206,4 +210,58 @@ test('regression: lung-tumor, small blurred dots with a ring inside the rim, som
     const m = matchDots(truth, fit.dots, 0.5 * fit.radius);
     assert.ok(m.pairs.length >= 499, `${m.pairs.length} of ${truth.length} found`);
     assert.ok(fit.dots.length <= 503, `${fit.dots.length} dots in all`);
+});
+
+test('a family picked by its color is read against a box under its dots, as the scan\'s families are', () => {
+    // translucent dots, half of them over a filled box: read against the page there, they are no level of the family
+    const W = 420;
+    const H = 260;
+    const fam = { color: [200, 60, 40], alpha: 0.5, radius: 10 };
+    const bg = solidImage(W, H, [255, 255, 255]);
+    for (let y = 30; y < 230; y++) {
+        for (let x = 230; x < 400; x++)
+            bg.data.set([69, 134, 172], 3 * (y * W + x));
+    }
+    const dots = [];
+    for (let k = 0; k < 6; k++)
+        dots.push({ x: 30 + 30 * k, y: 40 }, { x: 30 + 30 * k, y: 110 + 5 * k }, { x: 42 + 30 * k, y: 116 + 5 * k });
+    for (let k = 0; k < 5; k++)
+        dots.push({ x: 255 + 30 * k, y: 60 }, { x: 255 + 30 * k, y: 130 + 6 * k }, { x: 266 + 30 * k, y: 137 + 6 * k });
+    const model = createDotModel(bg, fam);
+    model.addAll(dots);
+    const image = toRgba(model.image);
+    const est = pickedEstimate(image, [228, 158, 148]);
+    assert.equal(est.familyMeasure.kind, 'translucent');
+    assert.ok(Math.abs(est.style.alpha - 0.5) <= 0.02, `α ${est.style.alpha}`);
+    assert.ok(est.notes.some(n => /69, 134, 172 lies under the dots/.test(n)), est.notes.join(' '));
+    const fit = fitDots(fitInput(est.image, est, buildMask(est.image, est).mask));
+    const m = matchDots(dots, fit.dots, fam.radius / 2);
+    assert.equal(fit.dots.length, dots.length);
+    assert.equal(m.recall, 1);
+    assert.ok(m.rmse < 0.2, `rmse ${m.rmse}`);
+});
+
+const BREAD1 = new URL('../bench-pmc/bread1-10.1128-jcm.01578-22.png', import.meta.url).pathname;
+
+test('regression: bread1, grey15 dots on ggplot2\'s gray panel with black dots and gray text on the same line, over two boxes', { skip: !existsSync(BREAD1) && 'bench-pmc absent' }, () => {
+    // before: the grays 114, 92 and 85 read as one family's levels, which had no dots; the dots over the red box were
+    // an opaque maroon family, 8 found for 24, and the blue box a layer over the dots
+    const image = readImage(BREAD1);
+    const { layers, estimates } = estimateFamilies(image);
+    assert.equal(estimates.length, 1);
+    const { style, familyMeasure } = estimates[0];
+    assert.equal(familyMeasure.kind, 'translucent');
+    assert.ok(Math.abs(style.alpha - 0.6) <= 0.02, `α ${style.alpha}`);
+    style.color.forEach(v => assert.ok(Math.abs(v - 39) <= 4, `color ${style.color}`));
+    assert.deepEqual(layers.regions.map(r => r.mode), ['under', 'under', 'under']);
+    // picked by hand, the same family (before: color 85 at α 0.79, and 509 dots along a box's outline)
+    const picked = pickedEstimate(image, [92, 92, 92]);
+    assert.ok(Math.abs(picked.style.alpha - 0.6) <= 0.02, `picked α ${picked.style.alpha}`);
+    // every dot found; the extras are doubles on the black dots, darker than the family's, and where a dot crosses
+    // a box's outline
+    const truth = readTruthJson(BREAD1.replace('bench-pmc/', 'bench-pmc/truth/').replace('.png', '.json')).dots;
+    const found = extractAll(image).flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, 0.5 * style.radius);
+    assert.equal(m.recall, 1);
+    assert.ok(found.length <= 40, `${found.length} dots`);
 });

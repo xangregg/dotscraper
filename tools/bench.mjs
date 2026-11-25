@@ -1,5 +1,5 @@
 // Benchmark the extraction (PLAN.md §2.6): synthetic presets over several seeds, every image with truth placed by hand
-// in bench-local/truth/, bench-nature/truth/ or bench-plos/truth/ (<name>.json, the app's Save truth in px, tools/truth-json.mjs; every
+// in bench-local/truth/, bench-nature/truth/, bench-plos/truth/ or bench-pmc/truth/ (<name>.json, the app's Save truth in px, tools/truth-json.mjs; every
 // family fitted, scored by truth family and fill), and every PNG and JPEG of a
 // truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/), and every test image with a
 // CSV of its own (bench-local/<name>.csv, bench-nature/<name>.csv, bench-plos/<name>.csv and bench-r/<name>.csv, mapped through the detected ticks; lane data
@@ -32,7 +32,7 @@ import { pixelHash } from '../src/core/image.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 // directories of images with a CSV each (data units, ticks in the header), mapped through the detected ticks
-const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-r'];
+const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r'];
 const MATCH_TOL_RADII = 0.5;
 // Images fitted at a time unless --jobs says otherwise. Measured on 12 performance cores, the full bench: 1,115 s one
 // at a time, 269 s at 6, 207 s at 10, where the slowest image (about 2 minutes) begins to set the time.

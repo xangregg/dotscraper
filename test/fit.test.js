@@ -110,6 +110,23 @@ test('refitNear: an added dot near another settles where the image has one; a re
     assert.notEqual(added, res.dots.length - 1);
 });
 
+test('refitNear: an added dot settles no farther than its reach from where it was put', () => {
+    const points = [{ x: 60, y: 90 }, { x: 140, y: 100 }, ...SEPARATE];
+    const { input } = prepare(spec(points));
+    const given = [...points.filter(p => p.x !== 140), { x: 143, y: 97, added: true }];
+    // the click is 5 px from the dot's center; zoomed in, the app's reach is less than that
+    for (const reach of [1.5, 0.3]) {
+        const res = refitNear(input, given, 143, 97, reach);
+        const d = res.dots[res.from.indexOf(given.length - 1)];
+        const moved = Math.hypot(d.x - 143, d.y - 97);
+        assert.ok(moved <= reach + 1e-9 && moved > reach / 2, `reach ${reach}: moved ${moved}`);
+        assert.ok(Math.hypot(d.x - 140, d.y - 100) < 5, 'toward the dot in the image');
+    }
+    // within reach, it settles on the dot as it does with no limit
+    const res = refitNear(input, given, 143, 97, 8);
+    assert.ok(res.dots.some(d => Math.hypot(d.x - 140, d.y - 100) < 0.2));
+});
+
 test('regression: a missing dot whose neighbors drifted into its place is born (births re-settle neighbors)', () => {
     // a pentagon of dots 9 px from (110, 90), r 12; the fit starts with one missing and the other four pulled 3 px
     // toward the gap, as a fit does while a dot is missing. Judged alone, the new dot raised the loss.

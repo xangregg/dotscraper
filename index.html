@@ -147,7 +147,7 @@
                     <label class="dev-only" title="The selected family's fitted dots, rendered"><input type="radio" name="overlay" value="model"><span>Model</span></label>
                     <label title="Image − model for the selected family"><input type="radio" name="overlay" value="residual"><span>Residual</span></label>
                 </div>
-                <label class="toggle"><input type="checkbox" id="show-dots" checked> Dots</label>
+                <label class="toggle" title="Mark the dots found (D). In Add, Remove and Move, holding Shift hides the marks for a look at the image under them."><input type="checkbox" id="show-dots" checked> Dots</label>
                 <label class="toggle" title="Mark dots of one family almost in one place (magenta, with a shared ring). Off, they are drawn as other dots; their close flag stays in the counts, the table and the hover line."><input type="checkbox" id="show-close" checked> Close pairs</label>
                 <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
                 <div class="zoom" role="group" aria-label="Zoom">
@@ -204,6 +204,7 @@
         <dl class="keys">
             <dt><kbd>A</kbd> <kbd>R</kbd> <kbd>M</kbd></dt><dd>Add, Remove, Move mode; <kbd>Esc</kbd> ends it</dd>
             <dt>Arrows</dt><dd>move the chosen or last added dot 1 px; with <kbd>Shift</kbd>, 0.1 px</dd>
+            <dt><kbd>D</kbd></dt><dd>show or hide the dots' marks; in Add, Remove and Move, holding <kbd>Shift</kbd> hides them</dd>
             <dt><kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd></dt><dd>undo an edit</dd>
             <dt>Wheel, drag</dt><dd>zoom at the pointer, pan</dd>
         </dl>

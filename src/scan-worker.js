@@ -6,13 +6,14 @@
 //            scan is made with exact and with noisy color matching, and the one that finds more families with a
 //            radius wins. `bounds` are the plot's sides (axes.js plotBounds): a family beyond them is left out.
 //            The result is scanFamilies' without the image as analyzed, which the page makes for itself.
-//   'seed'   { image, seed, jpeg }: estimateStyle of a picked color.
+//   'seed'   { image, seed, jpeg }: families.js pickedEstimate of a picked color.
 //   'opaque' { image, jobs: [{ seed, opts }] }: opaqueFamilyEstimate for each.
 // Out: { type: 'progress', label, fraction } (0–1 of the whole request), then { type: 'result', result } or
 // { type: 'error', message }.
 
 import { scanFamilies } from './core/extract.js';
-import { estimateStyle, opaqueFamilyEstimate } from './core/style.js';
+import { opaqueFamilyEstimate } from './core/style.js';
+import { pickedEstimate } from './core/families.js';
 
 const progress = (label, fraction) => self.postMessage({ type: 'progress', label, fraction });
 
@@ -35,7 +36,7 @@ self.onmessage = e => {
         if (op === 'scan')
             result = scan(args);
         else if (op === 'seed')
-            result = estimateStyle(args.image, { seed: args.seed, jpeg: args.jpeg, onProgress: f => progress('Measuring the color', f) });
+            result = pickedEstimate(args.image, args.seed, { jpeg: args.jpeg, onProgress: f => progress('Measuring the color', f) });
         else if (op === 'opaque')
             result = opaque(args);
         else

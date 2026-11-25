@@ -32,6 +32,10 @@ export const MARK_COLORS = { ok: '#1d5fd6', flagged: '#d9342b', close: '#c2189b'
 // all of them, or farther with a thick stroke
 const CLOSE_RING_GAP = 4; // CSS px
 const CLOSE_RING_GAP_LINES = 2.5; // × the stroke width
+// The close flag chains: dots stacked along a line the fit took for dots are one group, and a ring around all of it
+// reads as one huge dot (a picked gray family on a box's outline: 80 dots, a ring 300 px across). A group reaching
+// farther than this from its middle is not in one place and gets no ring; its dots keep their color.
+const CLOSE_RING_MAX_RADII = 2; // × the dots' radius, to the far side of the farthest dot
 const AXIS_TICK_MARK = 7; // CSS px, half-length of a tick marker across its axis
 const AXIS_DASH = 5; // CSS px, the dashes and gaps of a tick placed by hand, drawn across the image
 
@@ -45,7 +49,7 @@ const AXIS_DASH = 5; // CSS px, the dashes and gaps of a tick placed by hand, dr
  *   clicked (a press and release without a drag), whether Option/Alt was held, and the exact point (image px)
  * @param {function(number): void} opts.onZoom  the new scale
  * @returns {object}  the view: setImage, fit, setAxisMarks, setMarks and the rest that set what is drawn; zoomBy and
- *   zoomTo; ZOOM_STEP. Each is documented where it is defined.
+ *   zoomTo; scale; ZOOM_STEP. Each is documented where it is defined.
  */
 export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     const ctx = canvas.getContext('2d');
@@ -189,6 +193,8 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
             const cx = dots.reduce((t, d) => t + d.x, 0) / dots.length;
             const cy = dots.reduce((t, d) => t + d.y, 0) / dots.length;
             const reach = Math.max(...dots.map(d => Math.hypot(d.x - cx, d.y - cy) + (d.r ?? marks.radius)));
+            if (reach > CLOSE_RING_MAX_RADII * (dots[0].r ?? marks.radius))
+                continue;
             const path = new Path2D();
             path.arc(cx, cy, reach + Math.max(CLOSE_RING_GAP, CLOSE_RING_GAP_LINES * line) / scale, 0, 2 * Math.PI);
             paths.push({ path, line, color: MARK_COLORS.close });
@@ -376,6 +382,8 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         zoomTo(s) {
             setScale(s, stage.clientWidth / 2, stage.clientHeight / 2);
         },
+        /** @returns {number} CSS px per image px */
+        scale: () => scale,
         ZOOM_STEP,
     };
 }

@@ -10,3 +10,5 @@ bench-local/*
 !bench-local/README.md
 # real-world test set from Nature figures (third-party, not cleared for redistribution): local only for now
 bench-nature/
+# figures from articles found through PubMed Central, under various licenses not yet checked: local only for now
+bench-pmc/

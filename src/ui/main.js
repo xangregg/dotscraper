@@ -40,6 +40,9 @@ const SCALE_CAPTION = {
 const EXTRAPOLATED_SWATCHES = 3; // level swatches shown beyond the measured ones
 const REMOVE_HIT_RADII = 1; // × r: Remove takes the nearest dot of the selected family within this of the click
 const UNDO_DEPTH = 100; // edits kept for Undo
+// An added dot settles where the image has one, no farther than this from the click: the pointer's precision, which
+// zoomed in is little in the image (1.5 px at 8×) and zoomed out is a dot or more.
+const ADD_REACH = 12; // CSS px
 const NUDGE_STEP = 1; // px, an arrow key in Move mode
 const NUDGE_FINE = 0.1; // px, Shift + an arrow key
 // the modifier for edits without a refit, by its name on this platform
@@ -100,6 +103,7 @@ const state = {
     tick: null, // the status timer while a fit runs
     blockedShown: false, // the status shows why Find dots can't run (findBlocked)
     showDots: true,
+    peek: false, // Shift held in Add, Remove or Move: the dots' marks are off for a look at the image under them
     showClose: true, // possible duplicates drawn in magenta with a shared ring (their 'close' flag stays either way)
     hoverDot: -1, // index into fit.dots of the dot Remove would take or Move has chosen, highlighted
     axes: null, // from detectAxes
@@ -595,7 +599,7 @@ function refreshView(keepTransform) {
 function refreshMarks(dots = state.fit?.dots) {
     const style = currentStyle();
     const selected = dots === state.fit?.dots && state.hoverDot >= 0 ? state.hoverDot : undefined;
-    view.setMarks(state.showDots && dots && style ? { dots, radius: style.radius, selected, family: state.current, showClose: state.showClose } : null);
+    view.setMarks(state.showDots && !(state.peek && editing()) && dots && style ? { dots, radius: style.radius, selected, family: state.current, showClose: state.showClose } : null);
 }
 
 /**
@@ -959,9 +963,12 @@ function clickAt(x, y, { alt = false, point = null } = {}) {
         outlineChanged(k);
         return;
     }
-    // Option-click: no refit, and an added dot goes exactly where clicked rather than at the pixel's center
-    if (state.mode === 'add' || state.mode === 'remove')
-        editAt(state.mode, alt && point ? point.x : x + 0.5, alt && point ? point.y : y + 0.5, alt);
+    // an added dot starts at the point clicked, not its pixel's center: zoomed in, the click is finer than a pixel.
+    // Option-click: no refit, so it stays exactly there
+    if (state.mode === 'add')
+        editAt('add', point.x, point.y, alt);
+    if (state.mode === 'remove')
+        editAt('remove', x + 0.5, y + 0.5, alt);
     if (state.mode === 'move')
         chooseMoving(x + 0.5, y + 0.5);
 }
@@ -1360,7 +1367,7 @@ function editAt(kind, x, y, exact = false) {
     }
     else {
         const input = dots.map(d => ({ x: d.x, y: d.y, z: d.z, added: d.added, pinned: !!(d.placed || d.moved) }));
-        const res = refitNear({ ...fitInputFor(k), style: { ...currentStyle(), radius: f.radius } }, input, x, y);
+        const res = refitNear({ ...fitInputFor(k), style: { ...currentStyle(), radius: f.radius } }, input, x, y, ADD_REACH / view.scale());
         // the refit assesses every dot again; the marks of what the user did stay, and a moved dot's position isn't
         // the fit's, so its standard errors and removal margin don't describe it
         out = res.dots.map((d, i) => {
@@ -1693,7 +1700,18 @@ function wireSections() {
     }
 }
 
-const typing = e => e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement;
+// a key pressed in a field is the field's; a checkbox takes no keys but Space, and keeps the focus after a click on
+// it, so the view's keys work from there too
+const typing = e => (e.target instanceof HTMLInputElement && e.target.type !== 'checkbox') || e.target instanceof HTMLSelectElement
+    || e.target instanceof HTMLTextAreaElement;
+const editing = () => state.mode === 'add' || state.mode === 'remove' || state.mode === 'move';
+
+function setPeek(on) {
+    if (state.peek === on)
+        return;
+    state.peek = on;
+    refreshMarks();
+}
 
 function wireControls() {
     $('jpeg').addEventListener('change', async e => {
@@ -1805,9 +1823,15 @@ function wireControls() {
         // the About dialog is modal: its keys aren't the view's
         if (typing(e) || $('about').open)
             return;
+        if (e.key === 'Shift' && !e.repeat && editing()) {
+            setPeek(true);
+            return;
+        }
         const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
         if (arrow && (state.mode === 'move' || state.mode === 'add') && state.moving && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
+            // Shift here is the fine step: the dot being moved has to show
+            setPeek(false);
             const step = e.shiftKey ? NUDGE_FINE : NUDGE_STEP;
             nudge(arrow[0] * step, arrow[1] * step);
             return;
@@ -1825,7 +1849,16 @@ function wireControls() {
         else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'm' && !$('edit-move').disabled) {
             setMode(state.mode === 'move' ? null : 'move');
         }
+        else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'd') {
+            $('show-dots').click();
+        }
     });
+    // a key released outside the window never reports it: leaving the window ends the look too
+    document.addEventListener('keyup', e => {
+        if (e.key === 'Shift')
+            setPeek(false);
+    });
+    window.addEventListener('blur', () => setPeek(false));
 }
 
 async function init() {

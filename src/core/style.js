@@ -82,6 +82,7 @@ const NEST_REACH = 6; // px from a level-2 piece to level 1's flat pixels
 const NEST_MIN_PIECES = 20; // level-2 pieces of NEST_MIN_PIECE_AREA px needed to judge (real families at 0: 7 or fewer)
 const NEST_MIN_PIECE_AREA = 3; // px
 const NEST_MIN_SHARE = 0.05; // of the pieces near level 1
+const NEST_MAX_RETRIES = 3; // colors set aside as other ink on a family's line before the candidate is given up
 
 /** The note on a translucent family whose radius no isolated dot gave. */
 export const NO_ISOLATED_NOTE = 'No isolated whole dot found, so the radius and edge blur must be set by hand.';
@@ -139,6 +140,8 @@ export function estimateStyle(image, opts = {}) {
     let familyIndex = opts.family ?? 0;
     if (opts.seed) {
         fam = measureFamily(scan, opts.seed);
+        // (a picked color's line can hold other ink as the search's candidates' do)
+        fam = (fam.translucent && nestedLevels(scan, fam).family) || fam;
         if (!fam.translucent) {
             const plain = measureOpaque(scan, opts.seed);
             fam = isDotFamily(plain) ? plain : strokedFamily(scan, opts.seed, plain) ?? plain;
@@ -251,16 +254,50 @@ function translucentFamilies(scan) {
 // only lines is a line's color that happens to lie on the line to an opaque family's color (microplastics1: a
 // 3 px border bar at 48 and black dots read as levels 1 and 3, α 0.81, with no isolated dot, which hid the black
 // dots as an opaque family).
-// A candidate whose level 2 lies outside its level 1 is no family (levelsNest); its colors stay other ink for the
-// opaque families, as when it was dropped later as text (engagement1: black text and the blues' strokes; without
-// them the blues' fit gave 55 dots for 49, P 0.873)
+// A candidate whose level 2 lies outside its level 1, however it is measured, is no family (nestedLevels); its colors
+// stay other ink for the opaque families, as when it was dropped later as text (engagement1: black text and the
+// blues' strokes; without them the blues' fit gave 55 dots for 49, P 0.873)
 function levelCandidates(scan) {
     const nesting = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c)
         .filter(c => c.translucent && firstLevelFills(scan, c))
         .map(c => withoutBand(scan, c));
-    const measured = nesting.filter(c => levelsNest(scan, c));
-    const ink = nesting.filter(c => !measured.includes(c)).flatMap(c => c.levels.filter(L => !L.inferred).map(L => L.color));
+    const measured = [];
+    const ink = [];
+    for (const c of nesting) {
+        const { family, others } = nestedLevels(scan, c);
+        if (family)
+            measured.push(family);
+        ink.push(...others);
+    }
     return { measured, ink };
+}
+
+// A translucent candidate with levels that nest, and the colors that aren't its levels (`others`). A level 2 that
+// lies outside level 1 (levelsNest) is other ink on the family's line, not two of its dots, and with it the fit is of
+// colors that have nothing to do with each other. The family is measured again without that color's pixels, up to
+// NEST_MAX_RETRIES times (bread1: grey15 dots at α 0.6 over ggplot2's gray panel, 114, with black dots, 92, and the
+// axis title, 85, all on the page's own gray line; the three fit a family of 85 at α 0.79, which had no dots, and
+// picked by hand put 509 on a box's outline. Without 92 and 85 the levels are 114, 72, 52, 44: α 0.60, color 40).
+// `family` is null when nothing nests; a candidate read with a band or a box keeps its one reading.
+function nestedLevels(scan, c) {
+    const { image } = scan;
+    const others = [];
+    let m = c;
+    let rest = scan.flat;
+    for (let i = 0; i < NEST_MAX_RETRIES && m.translucent && !levelsNest(scan, m) && !c.band; i++) {
+        const [L1, L2] = m.levels;
+        others.push(L2.color);
+        const isOther = nearColor(image.data, L2.color, colorDistance(L1.color, L2.color) / 2);
+        rest = rest.slice();
+        for (let p = 0; p < rest.length; p++) {
+            if (isOther(p))
+                rest[p] = 0;
+        }
+        m = measureFamily({ ...scan, flat: rest }, c.seed);
+    }
+    if (m.translucent && (m === c || firstLevelFills(scan, m)) && levelsNest(scan, m))
+        return { family: m, others };
+    return { family: null, others: [...others, ...m.levels.filter(L => !L.inferred).map(L => L.color)] };
 }
 
 // A candidate without a lone dot whose first level is a solid area at the other families' radius is a band, with

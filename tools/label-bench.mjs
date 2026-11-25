@@ -24,7 +24,7 @@ import { readTickLabels } from '../src/core/labels.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
-const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-r'];
+const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r'];
 const VALUE_TOL = 1e-9; // relative: a value is right when it is the header's
 
 // the header's tick values as written, or null when one isn't a number

@@ -378,6 +378,29 @@ export function estimateFamilies(image, opts = {}) {
     return { image: work, layers, estimates: [...ringed, ...hollow] };
 }
 
+/**
+ * The estimate for a family picked by its color (the app's Add family by color): estimateStyle's for that seed, and
+ * a translucent family read against the shaded regions under its dots, as the scan's own families are (unmix.js).
+ * Without that, a picked family's dots over a box or a panel were read against the page, where they are no level of
+ * the family (bread1: gray dots at α 0.6, most of them over a red or a blue box).
+ *
+ * @param {import('./image.js').RgbaImage} image  the image as analyzed, with any overlays divided out
+ * @param {number[]} seed  0–255, the color picked
+ * @param {object} [opts]
+ * @param {boolean} [opts.jpeg]  noisy color matching
+ * @param {(fraction: number) => void} [opts.onProgress]  the share of the measuring done (0–1)
+ * @returns {import('./style.js').Estimate}  with the `image` to fit it on when it is read against regions
+ */
+export function pickedEstimate(image, seed, opts = {}) {
+    const jpeg = !!opts.jpeg;
+    const scan = scanOf(image, { jpeg });
+    const est = estimateStyle(image, { seed, jpeg, scan, onProgress: opts.onProgress });
+    if (!est.style || est.familyMeasure.kind === 'opaque')
+        return est;
+    const layers = backgroundRegions(image, scan.B, [candidateStyle(est.familyMeasure)], est.flat, est.style.radius ?? DEFAULT_RADIUS);
+    return unmixEstimates(image, [est], scan.tol, layers)[0];
+}
+
 // Dots colored by a scale: `estimate` when the scale settles the image, `first` (the families by their colors, which
 // the caller needs next) when a few families explain it instead, neither when there is no scale.
 function scaleReading(image, scan, jpeg, stage) {

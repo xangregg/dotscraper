@@ -163,6 +163,40 @@ test('a gray label on the line to opaque black dots is no level 1: the dots are 
     near(est.style.radius, 7, 0.5, 'radius');
 });
 
+test('other ink on a family\'s line that fits as its levels is set aside: gray dots on a gray page, with darker gray marks and text', () => {
+    // bread1's colors: grey15 dots at α 0.6 over ggplot2's gray panel (114, and 68 where two overlap), with marks of 92
+    // and text of 85 on the same gray line. 114, 92 and 85 fit a family of 85 at α 0.79; its "level 2" lies nowhere
+    // near its level 1, and before, that left no translucent family at all.
+    const W = 520;
+    const H = 280;
+    const fam = { color: [40, 40, 40], alpha: 0.6, radius: 10 };
+    const model = createDotModel(solidImage(W, H, [229, 229, 229]), fam);
+    const dots = [];
+    for (let k = 0; k < 8; k++)
+        dots.push({ x: 30 + 60 * k, y: 30 }, { x: 30 + 60 * k, y: 80 }, { x: 42 + 60 * k, y: 84 });
+    model.addAll(dots);
+    const im = model.image;
+    const rect = (x0, y0, w, h, v) => {
+        for (let y = y0; y < y0 + h; y++) {
+            for (let x = x0; x < x0 + w; x++)
+                im.data.set([v, v, v], 3 * (y * W + x));
+        }
+    };
+    for (let s = 0; s < 20; s++) {
+        rect(20 + 24 * s, 150, 5, 60, 85);
+        rect(20 + 24 * s, 178, 16, 5, 85);
+        rect(22 + 24 * s, 240, 12, 12, 92);
+    }
+    const image = toRgba(im);
+    for (const est of [estimateStyle(image), estimateStyle(image, { seed: [114, 114, 114] })]) {
+        assert.equal(est.familyMeasure?.kind, 'translucent', est.notes.join(' '));
+        near(est.style.alpha, 0.6, 0.02, 'α');
+        est.style.color.forEach(v => near(v, 40, 4, 'color'));
+        near(est.style.radius, 10, 0.5, 'radius');
+        assert.ok(est.familyMeasure.levels.every(L => Math.abs(L.color[0] - 92) > 5 && Math.abs(L.color[0] - 85) > 5), `levels ${est.familyMeasure.levels.map(L => Math.round(L.color[0]))}`);
+    }
+});
+
 // Translucent dots over a box plot's box drawn in their own hue, darker than one dot (protrusion2: the green box read
 // as level 2, 6 units from the dots' own level 2). sRGB compositing, as JMP's.
 function dotsOverBox(boxAlpha) {
