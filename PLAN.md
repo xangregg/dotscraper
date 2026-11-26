@@ -4569,3 +4569,77 @@ found')`: the same failure reports in under a second.
 351 tests pass (346 before). In the app: potato scans as one family "colored by a scale, opaque, r 10.8" (14 colors
 sampled) and finds 86 dots, none flagged; shap as one such family, r 16.2 (76 colors sampled), 99 dots with 1
 flagged weak, its color bar left alone; no console errors.
+
+**bench-pmc, outlined dots at low resolution: funnel and cycle; grapes diagnosed** (2026-11-25)
+
+Four figures of the set show outlined dots in a low-resolution raster and gave no family (culicine no radius).
+They are four different cases.
+
+- **funnel**: 72 slate-blue dots in black rings, fills of 3.7 px in dots of 5.5, a crisp PNG. Two causes.
+  1. *The ring reading was given the wrong fill radius.* The ring, 1.5–1.8 px and antialiased into six grays, is
+     no outline color (white is the commonest color around the fills), so the stroke reading is the one that
+     applies, and it does read the black (71 isolated fills). But it took the fill's radius from the plain
+     reading, which is no family here and whose radius came out 6.33 px, more than the whole dot (the value fits
+     the top of its scan for centers, 1.6 × the distance transform's; that wasn't traced). No center's inner disc
+     was fill, so no family. Now `strokeColor` returns the isolated fills' own radius (a disc of their median area: 3.70 px)
+     and `strokedFamily` uses it. With it: 72 of 72, and 48 extras.
+  2. *The frame.* 45 of the extras were strung along the plot's right frame line, 2 px wide in the rings' black,
+     their centers hidden beyond the plot's edge. In the stroke reading ink of the stroke's color is covered
+     wherever it is; the mask's thin marks are what keeps lines out, and its second opening (1 px, against
+     slivers along jagged rims) removes lines of 2 px with the slivers, though its comment says lines are at
+     least 2 px wide. Now what an opening by a 2 × 2 block keeps, less what the 1 px opening kept, is thin where
+     it runs along a row or a column for the length a thin mark needs (`layers.js blockOpening`, `markRuns`).
+
+  Two things tried and narrowed, both measured on the full benchmark:
+  - Stroke-colored ink beyond a ring's reach of every fill read as other ink: funnel the same, but engagement1
+    lost two real dots lying on its thick black line (recall 0.959 → 0.918) and tsne gained an extra. Dropped.
+  - Every 2 px mark taken as thin (the block opening in place of the 1 px one): 24 rows moved, 12 fewer extras
+    and 4 more, positions worse where rims were masked (adults1's rmse 0.06 → 0.13 px). Straight runs only, and
+    then only pure 2 px lines: with the corners of thicker pieces included, each piece of adults1's masked
+    regression line grew two pixels at each end, where dots cross it, and two extras came with them.
+- **cycle**: 212 hollow rings 13 px across, their walls 2 px and blurred, and a smoother in a darker shade. The
+  hollow-ring search reads the rings' ink (11 462 px in their direction) but its isolated rings must fill under
+  half their box (`ISO_FILL`), and at this size a blurred wall fills two thirds: 2 rings passed. Now, when a
+  direction shows no thin-walled ring, rings up to `THICK_ISO_FILL` of their box are read, otherwise as thin
+  ones are (dark ink masked, the same fit asked): `outlinesInP`'s `wide`. 88 isolated rings, radius 6.5 (the
+  truth: 6.3), inner 0.69, blur 0.9, rms 0.024. The fit finds 160, all real. The 52 missed are rings the
+  smoother crosses and rings stacked two to four deep in a column: the ring fit's limit, not the search's.
+  The family's color is read along the direction it shares with the text's gray (130, 129, 135), not the rings'
+  own slate blue: the two directions are 6° apart and binned as one.
+- **grapes** (a JPEG, seven fill colors in black outlines 2.5 px wide, 8–15 dots a color, most overlapping):
+  diagnosed, not fixed. No color has three isolated fills, so no stroke is read; the outline reading finds each
+  fill's radius (13.5–14.2 px; the truth 12–13.8) and no center. The pixels along each fill's edge lie 28–66
+  units off the line from black to the fill, toward white (chroma bleeding; the tolerance is 26), are unread,
+  and blank the edge around them: a whole legend marker shows 0.24 of its circle. Read as three-way mixes
+  (fill, outline, page) the fills come out whole, but a full circle still collects 0.65 of its votes at the
+  right radius (the gradient's direction is noisy; 0.75 makes a strong center) and 0.49 at the radius measured,
+  a pixel large. The three-way reading alone changed no result and was taken out.
+- **culicine**: as found with the fills under dots: the pink box read as the pink family's second level. Not
+  worked on here.
+
+Measured (full benchmark, 203 rows; 199 the same):
+
+| image | before | after |
+|---|---|---|
+| bench-pmc funnel | no family | 75 for 72, P 0.960, R 1.000, RMSE 0.103, r 5.54 |
+| bench-pmc cycle | no family | 160 for 212, P 1.000, R 0.755, RMSE 0.697, r 6.44 |
+| bench-plos biomarker | 92 for 83, P 0.902 | 90, P 0.922 (by the 2 px rule; which marks wasn't looked at) |
+| bench-pmc shannon | 68 for 111, P 0.926 | 67, P 0.940 |
+
+funnel's 3 extras are on one dot whose ring is thicker than the others' (2 px and more against 1.5), flagged
+close and weak: several points in one place, probably, which the truth counts once.
+
+Tests: small stroked fills with a 2 px frame in the stroke's color (one family read with its stroke, radius
+within 0.4 px, fill radius within 0.5, 58 of 60 dots at least and no more than 61, every frame pixel thin);
+funnel itself (recall 1, at most 75 dots, none on the frame); adults1 (at most 146 dots, rmse under 0.1 px);
+small blurred rings whose walls fill two thirds of their box (one hollow family, radius within 0.5 px, every
+ring found and no more); cycle itself. Each of the four rules fails a test when taken out: the fill radius
+from the plain reading, the straight runs left out, the thicker pieces' corners left in, the wide reading left
+out.
+
+356 tests: 355 passed in the full run and one failed on a stale premise, since updated and passing: step1's
+regression asserted that no family with a radius shows with exact colors; its red rings are now found there too
+(`wide`), the noisy scan still wins with both families, and the result is the same (73 dots and 55 rings). In
+the app: funnel scans as one family "opaque, outlined, r 5.5" (a fill of 3.7 px inside a stroke) and finds 75
+dots, none on the frame; cycle as "hollow rings, r 6.5" and finds 160; no console errors. Shown but not right:
+cycle's family color is the text's gray, not the rings' slate blue (above).

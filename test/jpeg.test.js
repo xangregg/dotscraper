@@ -114,16 +114,17 @@ const STEP1 = 'step1-10.1371-journal.pone.0360641';
 const step1Skip = !existsSync(`${PLOS}${STEP1}.png`) ? 'bench-plos absent'
     : !jpegNoise(readImage(`${PLOS}${STEP1}.png`)).likely && 'step1 no longer has JPEG noise';
 
-test('regression: a PNG with JPEG noise is analyzed as a JPEG when no family with a radius shows with exact colors', { skip: step1Skip }, () => {
+test('regression: a PNG with JPEG noise is analyzed as a JPEG when fewer families with a radius show with exact colors', { skip: step1Skip }, () => {
     // before (primates1): "No dot family found" (the blue dots' edges leave the white–blue line, so no isolated dot
-    // passed). step1 with exact colors: the blue dots alone, their radius unknown, so nothing to fit, and the red
-    // rings not at all; with noisy matching both, at 5.4 and 6.4 px.
+    // passed). step1 with exact colors: the blue dots, their radius unknown, so nothing to fit, and the red rings
+    // (not at all, until small rings with thick walls were read as hollow: outline.js outlinesInP's `wide`); with
+    // noisy matching both, at 5.4 and 6.4 px.
     const image = readImage(`${PLOS}${STEP1}.png`);
     const exact = scanFamilies(image).prepared.estimates;
-    assert.equal(exact.filter(e => e.style?.radius).length, 0, `with exact colors: ${exact.map(e => e.style?.radius).join(', ')}`);
+    assert.equal(exact.filter(e => e.style?.radius).length, 1, `with exact colors: ${exact.map(e => e.style?.radius).join(', ')}`);
     const scan = scanFamilies(image, { tryNoisy: true });
     assert.equal(scan.switched, true);
-    assert.equal(scan.exact, 0);
+    assert.equal(scan.exact, 1);
     assert.equal(scan.found, 2);
     assert.notEqual(scan.work, image, 'analyzed with its chroma restored');
     const results = extractAll(image, false);

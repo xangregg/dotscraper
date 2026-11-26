@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { pixelCoverage } from '../src/core/render.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { pixelCoverage, createDotModel, solidImage } from '../src/core/render.js';
 import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness, findHollowRings, lineOpening } from '../src/core/outline.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
@@ -425,6 +425,57 @@ test('findHollowRings: red rings with nothing inside, over gridlines and beside 
     }
     assert.equal(findHollowRings(lined, WHITE).length, 1);
     assert.equal(findHollowRings(lined, WHITE, [PALE]).length, 1);
+});
+
+// Small hollow rings as a low-resolution figure shows them (bench-pmc cycle): a wall of 2 px around a ring 13 px
+// across, blurred, so that above ISO_LEVEL the ring fills about two thirds of its box
+const SMALL_RING = { radius: 6.5, inner: 0.69, blur: 0.9, color: [100, 105, 135] };
+
+function smallRingsImage() {
+    const rng = createRng(11);
+    const dots = [];
+    while (dots.length < 40) {
+        const d = { x: 20 + rng.uniform() * (W - 40), y: 20 + rng.uniform() * (H - 40) };
+        if (dots.some(e => Math.hypot(e.x - d.x, e.y - d.y) < 2 * SMALL_RING.radius + 6))
+            continue;
+        dots.push(d);
+    }
+    const model = createDotModel(solidImage(W, H, WHITE), { color: SMALL_RING.color, alpha: 0, radius: SMALL_RING.radius, ring: { inner: SMALL_RING.inner, alpha: 1 }, blur: SMALL_RING.blur });
+    for (const d of dots)
+        model.add(d.x, d.y);
+    const data = new Uint8ClampedArray(4 * W * H);
+    for (let p = 0; p < W * H; p++) {
+        for (let ch = 0; ch < 3; ch++)
+            data[4 * p + ch] = Math.round(model.image.data[3 * p + ch]);
+        data[4 * p + 3] = 255;
+    }
+    return { image: { width: W, height: H, data }, dots };
+}
+
+test('findHollowRings: small blurred rings whose walls fill two thirds of their box are hollow rings', () => {
+    const { image, dots } = smallRingsImage();
+    const found = findHollowRings(image, WHITE);
+    assert.equal(found.length, 1);
+    assert.ok(Math.abs(found[0].ring.radius - SMALL_RING.radius) <= 0.5, `radius ${found[0].ring.radius}`);
+    const results = extractAll(image);
+    assert.equal(results.length, 1);
+    const m = matchDots(dots, results[0].fit.dots, SMALL_RING.radius / 2);
+    assert.equal(m.recall, 1);
+    assert.equal(results[0].fit.dots.length, dots.length);
+});
+
+const CYCLE = new URL('../bench-pmc/cycle-10.1371-journal.pone.0305300.g002.png', import.meta.url).pathname;
+const CYCLE_TRUTH = new URL('../bench-pmc/truth/cycle-10.1371-journal.pone.0305300.g002.json', import.meta.url).pathname;
+
+test('regression: cycle, small hollow rings at low resolution are a family', { skip: !existsSync(CYCLE) && 'bench-pmc absent' }, () => {
+    // before: no family: 2 of its 212 rings passed as hollow. Still missed: rings the smoother crosses, and those
+    // stacked two to four deep in a column
+    const truth = JSON.parse(readFileSync(CYCLE_TRUTH, 'utf8')).dots;
+    const results = extractAll(readImage(CYCLE));
+    assert.equal(results.length, 1);
+    assert.ok(Math.abs(results[0].fit.radius - 6.3) <= 0.5, `radius ${results[0].fit.radius}`);
+    const m = matchDots(truth, results[0].fit.dots, results[0].fit.radius / 2);
+    assert.ok(m.precision >= 0.99 && m.recall >= 0.75, `${results[0].fit.dots.length} dots, P ${m.precision.toFixed(3)} R ${m.recall.toFixed(3)}`);
 });
 
 test('regression: gray rings are found beside a family whose color darkens the page the same way', () => {

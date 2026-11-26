@@ -144,7 +144,7 @@ export function estimateStyle(image, opts = {}) {
         fam = (fam.translucent && nestedLevels(scan, fam).family) || fam;
         if (!fam.translucent) {
             const plain = measureOpaque(scan, opts.seed);
-            fam = isDotFamily(plain) ? plain : strokedFamily(scan, opts.seed, plain) ?? plain;
+            fam = isDotFamily(plain) ? plain : strokedFamily(scan, opts.seed) ?? plain;
         }
         familyIndex = -1;
     }

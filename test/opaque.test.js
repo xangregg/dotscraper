@@ -492,6 +492,89 @@ test('stroked fills: a light fill inside a dark stroke is a family, and each fam
     }
 });
 
+// Small fills in a black ring, as a low-resolution figure has them (bench-pmc funnel): fills of 3.7 px in dots of
+// 5.5, and the plot's frame, 2 px wide, in the ring's black.
+const SMALL_STROKED = { width: 600, height: 360, radius: 5.5, stroke: 1.8, strokeColor: [31, 28, 29], fill: [63, 129, 180], frame: [20, 20, 580, 340] };
+
+function smallStrokedImage(seed) {
+    const rng = createRng(seed);
+    const { width, height, radius, frame } = SMALL_STROKED;
+    const dots = [];
+    while (dots.length < 60) {
+        const d = { x: 40 + rng.uniform() * (width - 80), y: 40 + rng.uniform() * (height - 80) };
+        if (dots.length < 50 && dots.some(e => Math.hypot(e.x - d.x, e.y - d.y) < 2 * radius + 8))
+            continue;
+        dots.push(d);
+    }
+    let img = solidImage(width, height, [255, 255, 255]);
+    const [x0, y0, x1, y1] = frame;
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+            if (x < x0 + 2 || x >= x1 - 2 || y < y0 + 2 || y >= y1 - 2)
+                img.data.set(SMALL_STROKED.strokeColor, 3 * (y * width + x));
+        }
+    }
+    for (const d of dots) {
+        for (const [color, r] of [[SMALL_STROKED.strokeColor, radius], [SMALL_STROKED.fill, radius - SMALL_STROKED.stroke]]) {
+            const m = createDotModel(img, { color, alpha: 1, radius: r, blur: 0 });
+            m.add(d.x, d.y);
+            img = m.image;
+        }
+    }
+    return { image: toRgba(img), dots };
+}
+
+test('small stroked fills are a family at their whole radius, and a 2 px frame in the stroke\'s color is no dot\'s', () => {
+    // before: no family. The stroke reading took the fill's radius from the plain one, no family itself, whose
+    // radius a scan for centers had raised past the whole dot (funnel: 6.33 px for fills of 3.6 in dots of 5.5), so
+    // no center's inner disc was fill
+    const { image, dots } = smallStrokedImage(3);
+    const results = extractAll(image, false);
+    assert.equal(results.length, 1);
+    const [res] = results;
+    assert.ok(res.est.familyMeasure.stroke, 'read with its stroke');
+    near(res.fit.radius, SMALL_STROKED.radius, 0.4, 'radius');
+    near(res.est.familyMeasure.fillRadius, SMALL_STROKED.radius - SMALL_STROKED.stroke, 0.5, 'fill radius');
+    const m = matchDots(dots, res.fit.dots, 2);
+    assert.ok(m.pairs.length >= 58, `${m.pairs.length} of 60 found`);
+    assert.ok(res.fit.dots.length <= 61, `${res.fit.dots.length} dots`);
+    // the frame reads as covered (it is the stroke's color), and the mask's thin marks were lines of 3 px or more:
+    // every frame pixel away from the dots is thin now
+    const { width, frame } = SMALL_STROKED;
+    const [x0, y0, x1, y1] = frame;
+    let onFrame = 0;
+    let thin = 0;
+    for (let x = x0 + 4; x < x1 - 4; x++) {
+        for (const y of [y0, y0 + 1, y1 - 2, y1 - 1]) {
+            onFrame++;
+            thin += res.layers.thin[y * width + x];
+        }
+    }
+    for (let y = y0 + 4; y < y1 - 4; y++) {
+        for (const x of [x0, x0 + 1, x1 - 2, x1 - 1]) {
+            onFrame++;
+            thin += res.layers.thin[y * width + x];
+        }
+    }
+    assert.equal(thin, onFrame, `${thin} of ${onFrame} frame pixels thin`);
+});
+
+const PMC = new URL('../bench-pmc/', import.meta.url).pathname;
+const FUNNEL = 'funnel-10.1155-tbed-1096796';
+
+test('regression: funnel, small blue fills in black rings are found, and none on the frame', { skip: !existsSync(`${PMC}${FUNNEL}.png`) && 'bench-pmc absent' }, () => {
+    // before: no family; with the fills' own radius, 120 dots for 72, 45 of them strung along the right frame line
+    const image = readImage(`${PMC}${FUNNEL}.png`);
+    const truth = readTruthJson(`${PMC}truth/${FUNNEL}.json`).dots;
+    const results = extractAll(image, false);
+    assert.equal(results.length, 1);
+    const found = results[0].fit.dots;
+    const m = matchDots(truth, found, results[0].fit.radius / 2);
+    assert.equal(m.recall, 1);
+    assert.ok(found.length <= 75, `${found.length} dots for 72`);
+    assert.ok(found.every(d => d.x < 1040), 'no dot on the right frame line');
+});
+
 const NATURE = new URL('../bench-nature/', import.meta.url).pathname;
 const ENGAGEMENT = 'engagement1-10.1038-s41586-026-10967-w';
 

@@ -424,3 +424,19 @@ test('plotClips: a cut that the families show together is every family\'s; ink t
     }
     assert.deepEqual(plotClips([a, b, { D: through, radius: 30 }], width, height, [edge]), [[], [], []], 'a large dot across the edge: under 70% of the full rows are cut');
 });
+
+const ADULTS1 = new URL('../bench-plos/adults1-10.1371-journal.pone.0359858.png', import.meta.url).pathname;
+const ADULTS1_TRUTH = new URL('../bench-plos/truth/adults1-10.1371-journal.pone.0359858.json', import.meta.url).pathname;
+
+test('regression: adults1, the 2 px lines taken as thin marks are not the corners of thicker ones', { skip: !existsSync(ADULTS1) && 'bench-plos absent' }, () => {
+    // black dots across a black regression line 6 px wide, masked in pieces between them. Every straight run of
+    // 2 px ink taken as thin added two pixels at each end of a piece (the corners the 1 px opening shaves), where
+    // the dots cross the line: 148 dots for 139, two of them new extras, and the matched dots' rmse 0.06 → 0.13 px
+    const truth = readTruthJson(ADULTS1_TRUTH).dots;
+    const results = extractAll(readImage(ADULTS1), false);
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, results[0].fit.radius / 2);
+    assert.ok(found.length <= 146, `${found.length} dots for 139`);
+    assert.equal(m.recall, 1);
+    assert.ok(m.rmse <= 0.1, `rmse ${m.rmse.toFixed(3)} px`);
+});

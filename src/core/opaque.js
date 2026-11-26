@@ -2022,7 +2022,7 @@ function outlineReadings(search, color) {
     if (!isDotFamily(fam) && ringable && isThin(scan, ring))
         fam = outlinedFamily() ?? fam;
     if (!isDotFamily(fam))
-        fam = strokedFamily(scan, color, plain) ?? fam;
+        fam = strokedFamily(scan, color) ?? fam;
     if (!isDotFamily(fam) && notPage && !isThin(scan, color) && luminance(ring) < luminance(color))
         fam = outlinedFamily() ?? fam;
     // (4) else a ring in a darker shade of the fill's own hue, when the fill's surroundings are the page: a line
@@ -2241,17 +2241,16 @@ function ringFill(image, color, ring) {
  *
  * @param {Scan} scan
  * @param {number[]} color  the fill, 0–255
- * @param {OpaqueMeasure} plain  the color measured without a stroke
  * @returns {OpaqueMeasure|null}  with fillRadius, and strokeOff: how far the stroke's color lies off the line from
  *   the page to the fill, 0–255 units
  */
-export function strokedFamily(scan, color, plain) {
+export function strokedFamily(scan, color) {
     const stroke = strokeColor(scan.image, color, scan.backgrounds[0]);
     if (!stroke)
         return null;
     // The fill's radius is its isolated fills', not the plain reading's: that one is no family here, and its radius
-    // is the distance transform's raised by a scan for centers that found a few (funnel: 6.33 px for fills of 3.6
-    // in dots of 5.5, so no center's inner disc was fill, and no family)
+    // can pass the whole dot's (funnel: 6.33 px for fills of 3.7 in dots of 5.5, so no center's inner disc was fill,
+    // and no family)
     const fillRadius = stroke.fillRadius;
     const fam = measureOpaque(scan, color, [], null, { stroke: stroke.color, fillRadius });
     return isDotFamily(fam) ? { ...fam, fillRadius, strokeOff: stroke.off } : null;
