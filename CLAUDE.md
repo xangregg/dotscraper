@@ -35,7 +35,7 @@ src/core/               pure algorithms: image.js (hash, pixel access, color tes
                         style: the families of an image and one family's style, with the band and box rules), scan.js
                         (page, flat pixels, tolerances, the Scan passed through the search), levels.js (translucent
                         families: levels, alpha, color), opaque.js (opaque families: measureOpaque, opaqueFamilies, radius
-                        from shapes), shape.js (isolated dots, components, edge blur), layers.js (classes, morphology, mask), synth.js (synthetic graphs with known
+                        from shapes), shape.js (isolated dots, components, edge blur), layers.js (classes, morphology, mask: thin marks, bars and dashed lines in the dots' colors), synth.js (synthetic graphs with known
                         dots), metrics.js (matching against ground truth), fit.js (the fit), axes.js (lines, light ones in pieces
                         under dots too, a filled panel's edges, gridlines' ends with their labels off them, ticks, labels, scales), labels.js (reading tick labels' numbers: glyphs, digits by template, raised
                         exponents, scientific notation ("1e+05", "2 × 10³"), a y axis's labels written along it, the check by the axis's scale; digit-templates.js, generated: the shapes of the digits and of the signs e, E, +, × in 18 fonts), jpeg.js (chroma restoration for JPEGs, JPEG-noise detection), unmix.js (separating
@@ -100,7 +100,7 @@ test/*.test.js          node:test + node:assert/strict
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose --jobs n]` runs style, mask and
   fit on the synthetic presets, every image with truth placed by hand (`<set>/truth/<name>.json`), and every image of the truth
-  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-pmc` the PubMed Central ones, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-pmc` the PubMed Central ones, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets, `--fewer-doubles` fits with the app's Fewer doubles), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. It fits 10 images at a time in worker threads (`--jobs n`
   for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
   (14% in all at 10), so compare times only between runs at one job count.

@@ -66,6 +66,7 @@
                 </div>
                 <label class="check" title="For colors that are smeared or noisy, as JPEG compression leaves them (also a PNG screenshot of a JPEG): restores the color JPEG blurs at edges and loosens the tests that assume exact pixel values. On for JPEG files, and turned on by itself when no dot family shows with exact colors. Changing it finds the families again."><input type="checkbox" id="jpeg"> Noisy color matching</label>
                 <p id="noise-hint" class="fine" hidden></p>
+                <label class="check" title="For dots found twice: one dot fitted as two, or an extra dot beside a real one on a line or text of the dots' color. A dot that overlaps another of its color must then explain much more of the image to be kept (more the more they overlap); dots far enough apart to show apart are unaffected. Real ties and tightly packed dots may be counted as one. Applies to the next Find dots."><input type="checkbox" id="fewer-doubles"> Fewer doubles</label>
                 <div id="family-detail">
                     <h3 id="family-title"></h3>
                     <div class="levels-row">

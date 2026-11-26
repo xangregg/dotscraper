@@ -47,6 +47,21 @@ const BAR_FILL = 0.7; // share of a piece's bounding box (Laser's corner piece, 
 const BAR_MIN_ELONGATION = 1.3; // a piece's length over its thickness
 const BAR_EDGE_TOL = 1; // px, between pieces' rows (columns) and in a thin mark's cover of them
 const BAR_GAP_SLACK = 1; // px beyond a dot's diameter between pieces
+// A dashed line in the dots' color, at any angle, is cut into pieces by its own gaps as well as by the dots
+// (prot-cath-chris: ggplot2's fitted curves 10 px wide in the families' colors, dashes 15–45 px long, dots r 9.6;
+// the dashes shorter than the length test were explained by 63 extra dots, most beside a real one). The pieces are
+// measured along their principal axis instead of a row or column (dashPieces); a curve turns a little between dashes.
+const DASH_ANGLE_TOL = 0.35; // rad between two pieces' directions
+const DASH_ACROSS_TOL = 1.5; // px beyond half a piece's thickness: how far off its axis the next piece's center lies
+// Between two dashes the line may pass under a dot as well as through its own gap: the dot's pixels are the
+// family's (deep), and kept whole by the opening. A chain reaches across this many gaps (a dot's diameter each) as
+// long as no stretch of its axis without deep pixels is longer than one.
+const DASH_REACH_GAPS = 3;
+// A dash keeps its width to its ends, where a piece of a dot tapers: half a disc (a dot clipped at the plot's edge)
+// fills π/4 of its box, as a dash's antialiased pixels may, but only 0.61 of the box's outer quarters. A chain
+// starts only at a piece filling its ends this much (prot-cath-chris: 8 extras without the test, 5 at 0.65, 11 at
+// 0.7, 32 at 0.8, where its own dashes stop starting chains)
+const DASH_END_FILL = 0.65;
 // A pixel at count ≥ 1.5 is inside at least one dot, so a disc of nearly the dot's radius around it lies in the
 // family's pixels (or under other marks). Text in a translucent family's own color fails that: JMP's 50% black dots
 // share their line with black text, whose antialiased strokes read as counts 1–8, too short for the length test,
@@ -410,6 +425,239 @@ function barPieces(pieces, deep, thin, width, height, radius) {
     }
 }
 
+// a piece's principal axis: its center (px), unit direction (ux, uy), extent along it (a0..a1) and across (b0..b1),
+// both measured on pixel centers and widened by a pixel, as a bounding box counts them; and `ends`, the share of the
+// box's outer quarters along it that the piece fills
+function pieceFrame(c, width) {
+    let sx = 0;
+    let sy = 0;
+    for (const p of c.pixels) {
+        sx += p % width;
+        sy += Math.floor(p / width);
+    }
+    const n = c.pixels.length;
+    const cx = sx / n;
+    const cy = sy / n;
+    let xx = 0;
+    let yy = 0;
+    let xy = 0;
+    for (const p of c.pixels) {
+        const dx = p % width - cx;
+        const dy = Math.floor(p / width) - cy;
+        xx += dx * dx;
+        yy += dy * dy;
+        xy += dx * dy;
+    }
+    const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+    const ux = Math.cos(angle);
+    const uy = Math.sin(angle);
+    let a0 = Infinity;
+    let a1 = -Infinity;
+    let b0 = Infinity;
+    let b1 = -Infinity;
+    for (const p of c.pixels) {
+        const dx = p % width - cx;
+        const dy = Math.floor(p / width) - cy;
+        const a = dx * ux + dy * uy;
+        const b = -dx * uy + dy * ux;
+        a0 = Math.min(a0, a);
+        a1 = Math.max(a1, a);
+        b0 = Math.min(b0, b);
+        b1 = Math.max(b1, b);
+    }
+    // the share of the box's outer quarters (along) that the piece fills
+    const quarter = (a1 - a0 + 1) / 4;
+    let outer = 0;
+    for (const p of c.pixels) {
+        const a = (p % width - cx) * ux + (Math.floor(p / width) - cy) * uy;
+        if (a < a0 - 0.5 + quarter || a > a1 + 0.5 - quarter)
+            outer++;
+    }
+    const ends = outer / (2 * quarter * (b1 - b0 + 1));
+    return { c, cx, cy, ux, uy, angle, a0: a0 - 0.5, a1: a1 + 0.5, b0: b0 - 0.5, b1: b1 + 0.5, n, ends };
+}
+
+/**
+ * Marks as thin the pieces of dashed lines at any angle. A chain starts at a dash: a component, short or long enough
+ * to be a thin mark already, left unmarked by barPieces, longer along its principal axis than across it (if short),
+ * no thicker than the opening removes, filling its oriented box and the box's ends. It grows along the dash's strip
+ * (its thickness, DASH_ACROSS_TOL either side) across gaps up to a dot's diameter (DASH_REACH_GAPS of them where the
+ * axis runs through deep pixels, under dots), taking in any piece lying wholly in the strip (the rest of a dash cut
+ * by a dot is ragged where the dot was, and fills no box), and following each dash it takes in that turns no more
+ * than DASH_ANGLE_TOL. A chain of two pieces or more that reaches the length test is a line: its pieces are marked,
+ * and so are its deep pixels in the strip between them and on to a thin mark just past its ends (the line goes on
+ * under the dots), except between two long
+ * pieces: a solid line through a dot of its color, which the length test takes as it always did, unbridged (shannon:
+ * a dot on a median line 6 px wide, r 6.2, was masked whole and lost). In place. O(pieces² + pieces · radius ·
+ * thickness).
+ *
+ * @param {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]} pieces  short components
+ * @param {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]} long  the components long enough to be
+ *   thin marks alone
+ * @param {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]} leaning  pieces of the family's ink
+ *   that the opening kept only with other ink beside them: a chain may take them in, never start at one
+ * @param {Uint8Array} deep
+ * @param {Uint8Array} thin
+ * @param {number} width
+ * @param {number} height
+ * @param {number} radius  px, the dots'
+ */
+function dashPieces(pieces, long, leaning, deep, thin, width, height, radius) {
+    const thick = 2 * OPEN_RADIUS_FRACTION * radius;
+    const gap = 2 * radius + BAR_GAP_SLACK;
+    const length = THIN_MIN_LENGTH_RADII * radius;
+    const dashLike = (f, short) => {
+        const along = f.a1 - f.a0;
+        const across = f.b1 - f.b0;
+        return (!short || along >= BAR_MIN_ELONGATION * across) && across <= thick && f.n >= BAR_FILL * along * across && f.ends >= DASH_END_FILL;
+    };
+    const frames = pieces.filter(c => !thin[c.pixels[0]]).map(c => pieceFrame(c, width));
+    for (const f of frames)
+        f.dash = dashLike(f, true);
+    for (const c of leaning)
+        frames.push({ ...pieceFrame(c, width), dash: false });
+    for (const c of long) {
+        const f = pieceFrame(c, width);
+        if (dashLike(f, false))
+            frames.push({ ...f, dash: true, long: true });
+    }
+    const turn = (p, q) => {
+        const d = Math.abs(p.angle - q.angle) % Math.PI;
+        return Math.min(d, Math.PI - d);
+    };
+    // a piece's pixels along and across the axis of frame f, through f's center
+    const extent = (f, q) => {
+        const half = (f.b1 - f.b0) / 2 + DASH_ACROSS_TOL;
+        let a0 = Infinity;
+        let a1 = -Infinity;
+        let inside = 0;
+        for (const p of q.c.pixels) {
+            const dx = p % width - f.cx;
+            const dy = Math.floor(p / width) - f.cy;
+            const a = dx * f.ux + dy * f.uy;
+            a0 = Math.min(a0, a - 0.5);
+            a1 = Math.max(a1, a + 0.5);
+            if (Math.abs(-dx * f.uy + dy * f.ux) <= half)
+                inside++;
+        }
+        return { a0, a1, inStrip: inside === q.n };
+    };
+    const point = (f, a) => [f.cx + 0.5 + a * f.ux, f.cy + 0.5 + a * f.uy];
+    const at = ([x, y]) => (x >= 0 && y >= 0 && x < width && y < height ? Math.floor(y) * width + Math.floor(x) : -1);
+    // along f's axis from a for d px (side: +1 or −1), no stretch without deep pixels longer than a gap
+    const crossable = (f, a, side, d) => {
+        let run = 0;
+        for (let s = 1; s <= d; s++) {
+            const p = at(point(f, a + side * s));
+            run = p >= 0 && deep[p] ? 0 : run + 1;
+            if (run > gap)
+                return false;
+        }
+        return true;
+    };
+    // the deep pixels in the strip from point (x0, y0) to (x1, y1), half as wide as h
+    const bridge = ([x0, y0], [x1, y1], h) => {
+        const len = Math.hypot(x1 - x0, y1 - y0);
+        if (len === 0)
+            return;
+        const ux = (x1 - x0) / len;
+        const uy = (y1 - y0) / len;
+        const reach = Math.ceil(h) + 1;
+        for (let y = Math.max(0, Math.floor(Math.min(y0, y1)) - reach); y <= Math.min(height - 1, Math.ceil(Math.max(y0, y1)) + reach); y++) {
+            for (let x = Math.max(0, Math.floor(Math.min(x0, x1)) - reach); x <= Math.min(width - 1, Math.ceil(Math.max(x0, x1)) + reach); x++) {
+                const a = (x + 0.5 - x0) * ux + (y + 0.5 - y0) * uy;
+                const b = -(x + 0.5 - x0) * uy + (y + 0.5 - y0) * ux;
+                const p = y * width + x;
+                if (a >= 0 && a <= len && Math.abs(b) <= h && deep[p])
+                    thin[p] = 1;
+            }
+        }
+    };
+    // a thin mark on f's axis past the point at a (side: +1 or −1), within reach as a piece is, across the middle half
+    // of f's thickness; the point reached, or null
+    const meets = (f, a, side) => {
+        const h = (f.b1 - f.b0) / 4;
+        let run = 0;
+        for (let s = 1; s <= DASH_REACH_GAPS * gap && run <= gap; s++) {
+            const [x, y] = point(f, a + side * s);
+            const p = at([x, y]);
+            run = p >= 0 && deep[p] ? 0 : run + 1;
+            let hits = 0;
+            for (const t of [-h, 0, h])
+                hits += thin[at([x - t * f.uy, y + t * f.ux])] ?? 0;
+            if (hits === 3)
+                return [x, y];
+        }
+        return null;
+    };
+    const used = new Set();
+    for (const start of frames.filter(f => f.dash).sort((p, q) => q.n - p.n)) {
+        if (used.has(start))
+            continue;
+        // each side's chain, outward: the pieces and, between each and the one before, the strip to bridge
+        const chain = [start];
+        const bridges = [];
+        const ends = [];
+        for (const side of [1, -1]) {
+            let f = start;
+            let prev = start;
+            let edge = side > 0 ? f.a1 : f.a0;
+            for (;;) {
+                let best = null;
+                for (const q of frames) {
+                    if (used.has(q) || chain.includes(q))
+                        continue;
+                    if (Math.hypot(q.cx - f.cx, q.cy - f.cy) > Math.abs(edge) + DASH_REACH_GAPS * gap + Math.max(q.c.x1 - q.c.x0, q.c.y1 - q.c.y0) + 2)
+                        continue;
+                    const e = extent(f, q);
+                    const near = side > 0 ? e.a0 - edge : edge - e.a1;
+                    if (!e.inStrip || near > DASH_REACH_GAPS * gap || near < -1 || (side > 0 ? e.a1 <= edge : e.a0 >= edge))
+                        continue;
+                    if (near > gap && !crossable(f, edge, side, near))
+                        continue;
+                    if (!best || near < best.near)
+                        best = { q, e, near };
+                }
+                if (!best) {
+                    // the line goes on under a dot to a thin mark beyond it: bridged, unless the chain ends in a long
+                    // piece (a thin mark itself: two with a dot between)
+                    const hit = prev.long ? null : meets(f, edge, side);
+                    if (hit)
+                        bridges.push([point(f, edge), hit, (f.b1 - f.b0) / 2]);
+                    ends.push(point(f, edge));
+                    break;
+                }
+                const { q, e } = best;
+                chain.push(q);
+                if (!(q.long && prev.long))
+                    bridges.push([point(f, edge), point(f, side > 0 ? e.a0 : e.a1), (f.b1 - f.b0) / 2]);
+                prev = q;
+                const farEdge = side > 0 ? e.a1 : e.a0;
+                if (q.dash && turn(f, q) <= DASH_ANGLE_TOL) {
+                    // follow the new dash, its axis pointing the way the chain grows: the chain's edge in its frame
+                    const [x, y] = point(f, farEdge);
+                    const a = (x - 0.5 - q.cx) * q.ux + (y - 0.5 - q.cy) * q.uy;
+                    const flip = f.ux * q.ux + f.uy * q.uy < 0;
+                    f = flip ? { ...q, ux: -q.ux, uy: -q.uy, angle: q.angle + Math.PI, a0: -q.a1, a1: -q.a0, b0: -q.b1, b1: -q.b0 } : q;
+                    edge = flip ? -a : a;
+                }
+                else {
+                    edge = farEdge;
+                }
+            }
+        }
+        if (chain.length < 2 || Math.hypot(ends[0][0] - ends[1][0], ends[0][1] - ends[1][1]) < length)
+            continue;
+        for (const f of chain) {
+            used.add(f);
+            for (const p of f.c.pixels)
+                thin[p] = 1;
+        }
+        for (const [a, b, h] of bridges)
+            bridge(a, b, h);
+    }
+}
+
 /**
  * Connected components (8-neighbor) of a binary mask, in the order of their first pixels. shape.js components is
  * the 4-neighbor one, for the pieces of a coverage image.
@@ -756,11 +1004,13 @@ export function buildMask(image, estimate, opts = {}) {
             raw[p] = deep[p] && !kept[p] ? 1 : 0;
         const candidate = opening(raw, width, height, SLIVER_OPENING);
         const short = [];
+        const long = [];
         for (const comp of components8(candidate, width, height)) {
             if (Math.max(comp.x1 - comp.x0, comp.y1 - comp.y0) + 1 < THIN_MIN_LENGTH_RADII * style.radius) {
                 short.push(comp);
                 continue;
             }
+            long.push(comp);
             for (const p of comp.pixels)
                 thin[p] = 1;
         }
@@ -773,6 +1023,13 @@ export function buildMask(image, estimate, opts = {}) {
         }
         markRuns(narrow, thin, width, height, THIN_MIN_LENGTH_RADII * style.radius);
         barPieces(short, deep, thin, width, height, style.radius);
+        // the family's ink that the opening kept only with other ink beside it: a dash touching a dot of another
+        // color (prot-cath-chris: the red curve between green and blue dots), a piece a dashed line may take in
+        const own = opening(deep, width, height, OPEN_RADIUS_FRACTION * style.radius);
+        const leaning = new Uint8Array(n);
+        for (let p = 0; p < n; p++)
+            leaning[p] = deep[p] && kept[p] && !own[p] ? 1 : 0;
+        dashPieces(short, long, components8(opening(leaning, width, height, SLIVER_OPENING), width, height), deep, thin, width, height, style.radius);
         const fam = estimate.familyMeasure;
         if (opaque && fam?.outline && fam.fillRadius && fam.radius - fam.fillRadius >= BARE_MIN_OUTLINE)
             bareFill(image, classes, D, fam.seed, fam.outline, cuts, thin);

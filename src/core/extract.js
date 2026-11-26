@@ -196,13 +196,14 @@ export function dotFills(work, est, dots, radius) {
  *
  * @param {RgbaImage} source  the image as decoded
  * @param {boolean} [jpeg]  a JPEG file
+ * @param {object} [fitOpts]  fit.js fitDots' options (fewerDoubles)
  * @returns {{est: Estimate, layers: object, fit: import('./fit.js').FitResult, jpegAuto: boolean, fill?: number}[]}
  *   per family: its estimate, layers.js buildMask's result (classes, thin, mask, stats) and fit.js fitDots';
  *   jpegAuto: noisy color matching was turned on for the JPEG noise; fill: its color's index, for a family told
  *   apart by fill color
  * @throws {Error} when a family has no style to fit with (its notes say why)
  */
-export function extractAll(source, jpeg = false) {
+export function extractAll(source, jpeg = false, fitOpts = {}) {
     // The axes are the image's as decoded, as in the app, where they are found before the scan and carry the tick
     // values the user types. Read on the image as analyzed instead, the plot's sides moved by up to 0.08 px on six
     // PNGs with JPEG noise, and no dot of any test image changed.
@@ -215,7 +216,7 @@ export function extractAll(source, jpeg = false) {
     const stroke = pageStroke(work, prepared.estimates);
     return prepared.estimates.flatMap((est, k) => {
         const layers = buildMask(est.image, est, maskOptions(axes, excludedBoxes(work, est.style.radius), clips[k], stroke.mask));
-        const fit = fitDots(fitInput(est.image, est, layers.mask));
+        const fit = fitDots(fitInput(est.image, est, layers.mask), fitOpts);
         return byFill(work, { est, layers, fit });
     }).map(r => ({ ...r, jpegAuto: switched }));
 }

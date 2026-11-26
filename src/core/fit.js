@@ -22,6 +22,13 @@ import { upperMedian } from './stats.js';
 const HUBER_DELTA = 3; // t units (0–255 scale): residuals beyond this count linearly
 const DOT_COST_PIXELS = 20; // λ = this many pixels …
 const DOT_COST_STEP = 10; // … each this many t units wrong
+// Fewer doubles (fitDots' opts.fewerDoubles, the app's checkbox): a dot pays λ more by this many times the share of
+// its disc it shares with the nearest dot of its family, and its neighbors' prices count in each change. One dot
+// found twice is the commonest extra (lines or text in the dots' color beside a dot, blur, a JPEG's ringing), and
+// two dots far enough apart to show apart cost what they did; real ties and close pairs are lost with it. Full
+// benchmark against the fit without it: at 4, 444 extras → 263 and 906 misses → 1002 (68 rows changed); at 10,
+// 195 and 1221 (pathogen's ties 30 → 100 missed, bench2's opaque sets twice as many).
+const DOUBLE_PRICE = 4;
 const COMPASS_STEPS = [2, 1, 0.5, 0.25, 0.125, 0.0625]; // px
 const FIRST_SWEEP_STEP = 1; // index into COMPASS_STEPS where the first sweep starts (1 px: Hough centers are
                             // within about a pixel); births start at 0, from a box center
@@ -473,11 +480,12 @@ function blurPlane(src, width, height, sigma) {
  * A fit in progress: the image along the color line, the weights, the incremental model, and the dots.
  *
  * @param {FitInput} input
+ * @param {{fewerDoubles?: boolean}} [opts]  fitDots'
  * @returns {object}  the fit's state and steps: style (live: the radius is refitted), lambda, weight and imgT (per
  *   pixel); add, remove, refineAll, refineDot, pin, tether, births, splits, deaths, merges, fitFills, refitRadius, ringless, bestZ;
  *   totalLoss, assess, birthFailures, modelImage, dots, ids, position, near. Each is documented where it is defined.
  */
-export function createFit(input) {
+export function createFit(input, opts = {}) {
     const { image, line, mask } = input;
     const { width, height } = image;
     const n = width * height;
@@ -660,6 +668,32 @@ export function createFit(input) {
         return [...pos].filter(([, p]) => Math.hypot(p.x - x, p.y - y) <= d).map(([id]) => id);
     }
 
+    // The price of dot `id` where it stands, without the dots in `skip`: λ, and with fewerDoubles more by the share
+    // of its disc it shares with the nearest other (DOUBLE_PRICE). O(dots).
+    const doublePrice = opts.fewerDoubles ? DOUBLE_PRICE : 0;
+    function price(id, skip = null) {
+        if (!doublePrice)
+            return lambda;
+        const p = pos.get(id);
+        let share = 0;
+        for (const o of near(p.x, p.y, 2 * style.radius)) {
+            if (o !== id && !skip?.has(o))
+                share = Math.max(share, discOverlap(Math.hypot(pos.get(o).x - p.x, pos.get(o).y - p.y) / style.radius));
+        }
+        return lambda * (1 + doublePrice * share);
+    }
+    const prices = ids => ids.reduce((s, id) => s + price(id), 0);
+    // the dots within reach of an overlap with a dot at (x, y), but `id`
+    const overlapping = (x, y, id) => (doublePrice ? near(x, y, 2 * style.radius).filter(o => o !== id) : []);
+    // what removing dot `id` saves in prices: its own, and what its neighbors' fall by
+    function removalPrice(id) {
+        if (!doublePrice)
+            return lambda;
+        const p = pos.get(id);
+        const skip = new Set([id]);
+        return overlapping(p.x, p.y, id).reduce((s, o) => s + price(o) - price(o, skip), price(id));
+    }
+
     // ΔL of removing a dot (positive: the dot explains that much)
     function removalGain(id) {
         const { without, withDot } = lossWithout(id);
@@ -679,7 +713,7 @@ export function createFit(input) {
         let removed = 0;
         for (const id of [...pos.keys()]) {
             const p = pos.get(id);
-            if (visibleFraction(p.x, p.y) < minVisible || !filled(p.x, p.y) || hiddenUnder(id) || removalGain(id) < lambda) {
+            if (visibleFraction(p.x, p.y) < minVisible || !filled(p.x, p.y) || hiddenUnder(id) || removalGain(id) < removalPrice(id)) {
                 remove(id);
                 removed++;
             }
@@ -702,7 +736,9 @@ export function createFit(input) {
                 const grow = r => [Math.max(0, r[0] - 3), Math.max(0, r[1] - 3), Math.min(width, r[2] + 3), Math.min(height, r[3] + 3)];
                 const foot = grow(union(model.footprint(a.x, a.y), model.footprint(b.x, b.y)));
                 const rect = grow(union(model.influenceRect(a.x, a.y), model.influenceRect(b.x, b.y)));
-                const before = loss(rect) + 2 * lambda;
+                // the prices of the pair and of the dots overlapping either (only they change)
+                const others = [...new Set([...overlapping(a.x, a.y, ids[i]), ...overlapping(b.x, b.y, ids[j])])].filter(o => o !== ids[i] && o !== ids[j]);
+                const before = loss(rect) + (doublePrice ? prices([ids[i], ids[j], ...others]) : 2 * lambda);
                 const snap = model.snapshot(foot);
                 const posA = pos.get(ids[i]);
                 const posB = pos.get(ids[j]);
@@ -714,7 +750,7 @@ export function createFit(input) {
                 refineDot(m);
                 const pm = pos.get(m);
                 const inside = pm.x - style.radius >= foot[0] && pm.y - style.radius >= foot[1] && pm.x + style.radius < foot[2] && pm.y + style.radius < foot[3];
-                if (inside && loss(rect) + lambda < before) {
+                if (inside && loss(rect) + (doublePrice ? prices([m, ...others]) : lambda) < before) {
                     merged++;
                     continue;
                 }
@@ -756,6 +792,7 @@ export function createFit(input) {
             foot = grow(foot, Math.ceil(SPLIT_OFFSET_RADII * r + slack + COMPASS_STEPS[0] + 1));
             const scoreRect = grow(foot, Math.ceil(style.blur ? 3 * style.blur + 1 : 0));
             const before = loss(scoreRect);
+            const priced = doublePrice ? prices([id, ...neighbors]) : 0;
             const snap = model.snapshot(foot);
             const saved = [[id, p0], ...neighbors.map(nid => [nid, pos.get(nid)])];
             const undo = () => {
@@ -784,8 +821,9 @@ export function createFit(input) {
                 const gain = before - loss(scoreRect);
                 // each half must pay for itself, as deaths require: otherwise the "split" only moved the dot (Laser: a
                 // dot half under a bar split into one dot and one on the bar, and a later death took the real one)
-                const ok = gain > lambda && ids.every(nid => visibleFraction(pos.get(nid).x, pos.get(nid).y) >= minVisible
-                    && filled(pos.get(nid).x, pos.get(nid).y) && removalGain(nid) > lambda);
+                const cost = doublePrice ? prices([...ids, ...neighbors]) - priced : lambda;
+                const ok = gain > cost && ids.every(nid => visibleFraction(pos.get(nid).x, pos.get(nid).y) >= minVisible
+                    && filled(pos.get(nid).x, pos.get(nid).y) && removalGain(nid) > removalPrice(nid));
                 if (ok && (!best || gain > best.gain))
                     best = { k, gain };
                 undo();
@@ -825,6 +863,7 @@ export function createFit(input) {
         foot = grow(foot, Math.ceil(slack + COMPASS_STEPS[0] + 1));
         const scoreRect = grow(foot, Math.ceil(style.blur ? 3 * style.blur + 1 : 0));
         const before = loss(scoreRect);
+        const priced = doublePrice ? prices(neighbors) : 0;
         const snap = model.snapshot(foot);
         const saved = neighbors.map(nid => [nid, pos.get(nid)]);
         const id = add(x, y, z);
@@ -835,7 +874,8 @@ export function createFit(input) {
         if (style.layered && fitFill(id))
             refineDot(id, RESWEEP_FIRST_STEP, slack);
         const born = pos.get(id);
-        if (before - loss(scoreRect) > lambda && visibleFraction(born.x, born.y) >= minVisible && filled(born.x, born.y))
+        const cost = doublePrice ? prices([id, ...neighbors]) - priced : lambda;
+        if (before - loss(scoreRect) > cost && visibleFraction(born.x, born.y) >= minVisible && filled(born.x, born.y))
             return scoreRect;
         model.restore(snap);
         pos.delete(id);
@@ -1431,6 +1471,7 @@ export function createFit(input) {
  * @param {object} [opts]
  * @param {boolean} [opts.refitRadius]  default true
  * @param {{x: number, y: number}[]} [opts.initial]  start from these centers instead of the Hough candidates
+ * @param {boolean} [opts.fewerDoubles]  a dot overlapping another of its family must explain more (DOUBLE_PRICE)
  * @param {function({stage: string, round: number, dots: {x: number, y: number}[], loss: number}): void} [onProgress]
  *   called as the fit goes, at most every PROGRESS_INTERVAL ms
  * @returns {FitResult}
@@ -1466,6 +1507,18 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
     return res;
 }
 
+/**
+ * The share of a disc's area that another of the same radius covers, their centers u radii apart.
+ *
+ * @param {number} u  distance over radius
+ * @returns {number}  0–1
+ */
+export function discOverlap(u) {
+    if (u >= 2)
+        return 0;
+    return (2 * Math.acos(u / 2) - (u / 2) * Math.sqrt(4 - u * u)) / Math.PI;
+}
+
 // pairs of dots closer than d (px), by a sweep in x: O(n log n) plus the pairs within d in x
 function coincidentPairs(dots, d) {
     const xs = dots.map(p => [p.x, p.y]).sort((a, b) => a[0] - b[0]);
@@ -1491,7 +1544,7 @@ function withSeeds(centers, seeds, r) {
 // fitDots without the radius check for doubled dots
 function fitOnce(input, opts, onProgress) {
     const t0 = Date.now();
-    const fit = createFit(input);
+    const fit = createFit(input, opts);
     const { width, height } = input.image;
     const log = [];
     let lastReport = 0;

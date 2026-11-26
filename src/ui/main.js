@@ -1277,7 +1277,7 @@ function runFit() {
             partial.push({ family: last.family, dots: last.progress.dots.map(d => ({ ...d, flags: [] })), radius: radiusOf(last.family), sigma: NaN });
         return partial;
     };
-    state.worker.postMessage({ inputs, opts: {} });
+    state.worker.postMessage({ inputs, opts: { fewerDoubles: $('fewer-doubles').checked } });
     renderFitControls();
     showProgress();
 }

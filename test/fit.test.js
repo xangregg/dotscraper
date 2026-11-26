@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRng } from '../src/core/rng.js';
-import { houghCenters, fitDots, refitNear, flagClose, createFit, suppressNear } from '../src/core/fit.js';
+import { houghCenters, fitDots, refitNear, flagClose, createFit, suppressNear, discOverlap } from '../src/core/fit.js';
 import { estimateStyle } from '../src/core/style.js';
 import { createOutlineModel } from '../src/core/outline.js';
 import { buildMask } from '../src/core/layers.js';
@@ -269,4 +269,62 @@ test('opaque outlined dots: one hidden under another at the same place goes, tho
     two.add(30, 32, 1);
     two.add(34, 32, 2);
     assert.equal(two.deaths(), 0);
+});
+
+
+test('fewerDoubles: dots on a dashed line of their color, unmasked, aren\'t doubled by the dashes; a pair 1.25 r apart stays two', () => {
+    // the dashes 10 px wide, as in prot-cath-chris before its dashes were masked: a second dot beside a dot on the
+    // line explains a dash; the mask is left empty here so that only the fit can tell
+    const color = [8, 157, 131];
+    const [x0, y0, x1, y1] = [30, 210, 370, 70];
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const ux = (x1 - x0) / len;
+    const uy = (y1 - y0) / len;
+    const loose = [[40, 40], [110, 30], [190, 45], [60, 110], [300, 200], [360, 180], [250, 230], [140, 235], [330, 25], [395, 120], [60, 170], [72, 170]];
+    const on = [75, 141, 200, 265].map(a => [x0 + a * ux, y0 + a * uy]);
+    const { image } = synthGraph({
+        width: 420, height: 260, background: [255, 255, 255], blur: 0.3,
+        families: [{ color, alpha: 1, radius: 9.6, points: [...loose, ...on].map(([x, y]) => ({ x, y })) }],
+    });
+    const { width, height, data } = image;
+    const inDash = (x, y) => {
+        const a = (x - x0) * ux + (y - y0) * uy;
+        return a >= 0 && a <= len && Math.abs(-(x - x0) * uy + (y - y0) * ux) <= 5 && a % 32 < 18;
+    };
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            let c = 0;
+            for (let s = 0; s < 16; s++)
+                c += inDash(x + (s % 4 + 0.5) / 4, y + (Math.floor(s / 4) + 0.5) / 4) ? 1 / 16 : 0;
+            for (let ch = 0; ch < 3; ch++)
+                data[4 * (y * width + x) + ch] = Math.round(data[4 * (y * width + x) + ch] * (1 - c) + color[ch] * c);
+        }
+    }
+    const est = estimateStyle(image);
+    const input = { image, style: est.style, line: est.familyMeasure.line, mask: new Uint8Array(width * height), D: est.D, imgT: est.fitT };
+    const doubled = fit => on.filter(([x, y]) => fit.dots.filter(d => Math.hypot(d.x - x, d.y - y) < 12).length > 1).length;
+    assert.ok(doubled(fitDots(input)) >= 1, 'without it, a dot on the line is doubled');
+    const fewer = fitDots(input, { fewerDoubles: true });
+    assert.equal(doubled(fewer), 0, 'with it, none');
+    for (const [x, y] of [...loose, ...on])
+        assert.ok(fewer.dots.some(d => Math.hypot(d.x - x, d.y - y) <= 1.5), `dot at ${x.toFixed(1)}, ${y.toFixed(1)}`);
+});
+
+test('discOverlap: the shared share of two equal discs, by brute force on a grid', () => {
+    for (const u of [0, 0.3, 1, 1.5, 1.99, 2, 3]) {
+        let shared = 0;
+        let inside = 0;
+        const N = 400;
+        for (let j = 0; j < N; j++) {
+            for (let i = 0; i < N; i++) {
+                const x = -1 + 2 * (i + 0.5) / N;
+                const y = -1 + 2 * (j + 0.5) / N;
+                if (x * x + y * y <= 1) {
+                    inside++;
+                    shared += (x - u) ** 2 + y * y <= 1 ? 1 : 0;
+                }
+            }
+        }
+        assert.ok(Math.abs(discOverlap(u) - shared / inside) < 0.003, `u ${u}: ${discOverlap(u)} vs ${shared / inside}`);
+    }
 });

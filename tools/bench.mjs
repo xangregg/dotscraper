@@ -7,11 +7,12 @@
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
 // Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose] [--json file]
-//                             [--jobs n]
+//                             [--jobs n] [--fewer-doubles]
 //   --json  also write every row, and every image that fails, as JSON (tools/results.mjs builds RESULTS.md from it)
 //   --jobs  fit n images at a time, in worker threads (default 10, or the machine's cores if fewer; 1 for one at a
 //           time, in this process). The rows are the same; each image's time is longer than alone, so compare times
 //           only between runs at one job count.
+//   --fewer-doubles  fit with the app's "Fewer doubles" (fit.js fitDots' fewerDoubles)
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
@@ -42,6 +43,9 @@ const DEFAULT_JOBS = 10;
 // year), y ±25 px about rows 0–2.
 const JITTER_BOX = { x: 14, y: 27 }; // px, half-widths
 
+// the fit's options, the same in the main thread and in each worker (which gets the parsed arguments)
+const FIT_OPTS = { fewerDoubles: Boolean(isMainThread ? process.argv.includes('--fewer-doubles') : workerData?.benchOpts?.fewerDoubles) };
+
 function parseArgs(argv) {
     const opts = { seeds: 5, preset: null, set: null, only: null, verbose: false, json: null, jobs: Math.min(DEFAULT_JOBS, availableParallelism()) };
     for (let i = 0; i < argv.length; i++) {
@@ -59,6 +63,8 @@ function parseArgs(argv) {
             opts.json = argv[++i];
         else if (argv[i] === '--jobs')
             opts.jobs = Math.max(1, Math.floor(Number(argv[++i])) || 1);
+        else if (argv[i] === '--fewer-doubles')
+            opts.fewerDoubles = true;
     }
     return opts;
 }
@@ -71,7 +77,7 @@ function houghOnly(image, est, layers) {
 // Every image, synthetic ones too, goes through extract.js extractAll, as in the app; here each result also gets its
 // Hough candidates. A family split by fill color has none of its own.
 function extractWithHough(image, jpeg = false) {
-    return extractAll(image, jpeg).map(r => ({ ...r, hough: r.fill === undefined ? houghOnly(r.est.image, r.est, r.layers) : [] }));
+    return extractAll(image, jpeg, FIT_OPTS).map(r => ({ ...r, hough: r.fill === undefined ? houghOnly(r.est.image, r.est, r.layers) : [] }));
 }
 
 // truth families matched to found families by color (each found family to the nearest truth color)

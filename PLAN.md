@@ -5046,3 +5046,69 @@ preprint's version 1). Titles and authors are Crossref's. Two disagreed with the
 
 The screenshots' metadata (an EXIF and an XMP chunk in each PNG) holds macOS's "Screenshot" comment and the pixel
 size, nothing else, so the files are committed as they were.
+
+**prot-cath-chris: dashed curves in the dots' colors, and Fewer doubles** (2026-11-26)
+
+bench-local/prot-cath-chris (added by the user, 187 dots by hand): ggplot2 dots r 9.6 in three opaque colors, each
+color with a dash-dot fitted curve 10 px wide in the same color. 254 found for 187 (P 0.732, R 0.995): 67 extras,
+most of them 3–10 px from a dot on its curve, the rest on dashes alone. The dashes shorter than the length test
+(3 r) weren't masked: barPieces joins the pieces of a bar cut by dots only along a row or a column, and the opening
+that tells dots from lines keeps a dash touching a dot of another color (the two inks together are thick).
+
+`dashPieces` (layers.js) masks dashed lines at any angle. A chain starts at a dash (a short piece, or a long one that
+is a thin mark already, measured along its principal axis: elongated, no thicker than the opening removes, filling
+its oriented box and that box's ends) and grows along the dash's strip, taking in any piece lying wholly in it:
+across a gap up to a dot's diameter, or three where the axis runs through the family's ink (under dots), following
+each dash it takes in that turns less than 0.35 rad. Pieces of the family's ink kept by the opening only because
+other ink is beside them may join a chain. A chain of two pieces or more reaching 3 r is a line: its pieces are
+thin, and so is the strip between them, and on to a thin mark just past its ends, except between two long pieces.
+
+Tried and changed on the way (pooled counts on prot-cath-chris, extras / misses):
+
+- Only pieces filling their boxes in chains, gaps up to 2 r + 1: 62 / 2. The pieces next to dots are ragged.
+- Any piece in the strip, gaps through dots: 34 / 2; with the leaning pieces 32; long dashes starting chains 8 / 2.
+- Bridging only 0.5–1.25 r into each gap: 9–12 / 2 and a double in the synthetic scene; no bridge at all 36. The
+  strip is dilated as other thin marks are: without the dilation 16 (a curving line leaves the strip a little).
+- Bridges between two long pieces, and "meets" alone making a one-piece chain a line, masked whole dots: shannon's
+  two dots on a median line 6 px wide (r 6.2), and phase1's dot clipped at the plot's edge, a half disc taken as a
+  dash. Both rules went (no change on prot-cath-chris).
+- The ends test, the share of the oriented box's outer quarters filled (half a disc: 0.61): 8 extras without it, 5 at
+  0.65, 11 at 0.7, 32 at 0.8.
+
+Measured (full benchmark, 199 rows, 189 the same; P, R):
+
+| image | before | after |
+| --- | --- | --- |
+| prot-cath-chris | 254 found, 0.732, 0.995 | 190, 0.974, 0.989 |
+| kite1 | 28, 0.893, 1.000 | 27, 0.926, 1.000 |
+| adults1 | 146, 0.952, 1.000 | 142, 0.972, 0.993 |
+| boxdots1 | 275, 0.938, 0.963 | 272, 0.949, 0.963 |
+| mpo | 49, 0.918, 1.000 | 48, 0.938, 1.000 |
+| gc | 83, 0.771, 1.000 | 81, 0.790, 1.000 |
+| song-cents | 323, 0.978, 0.972 | 322, 0.981, 0.972 |
+| wave1 | 41, 0.951, 0.975 | 38, 1.000, 0.950 |
+| corneal | 128, 0.945, 1.000 | 129, 0.938, 1.000 |
+| gradient-dots-stroke | 215, 0.902, 0.951 | 215, 0.898, 0.946 |
+
+adults1's miss is the middle dot of a cluster of three on its regression line, now masked through them: too little
+of it shows beside the strip and its neighbors (the test there allows one miss now). wave1's are two places where
+the truth has two dots at one point and the fit now puts one. corneal gains a double under a horizontal line.
+
+**Fewer doubles**, a checkbox under Noisy color matching (fitDots' `fewerDoubles`, the bench's `--fewer-doubles`).
+One dot found twice is the commonest extra. With the box checked, a dot's price is λ · (1 + 4 s), s the share of its
+disc that its nearest neighbor of the family covers (`discOverlap`), and births, deaths, merges and splits count the
+change in every affected dot's price, so a double must explain several dots' worth of ink. Off, the fit is as
+before. Full benchmark with it on, against the same code with it off (P/R rows change in 68 of 199):
+
+| price | extras | misses |
+| --- | --- | --- |
+| off | 444 | 906 |
+| 4 | 263 | 1002 |
+| 10 | 195 | 1221 |
+
+At 4 the extras go from reward (46 → 22), gradient-dots-stroke.jpg (22 → 7), gc (17 → 5), violin-beeswarm
+(11 → 0), protrusion1, economist-canada, comment1, crimson, grader1; the misses come from real ties in dense
+swarms (pathogen 30 → 51, bench2 gradient-opaque 16 → 27, solid-opaque 15 → 25). So it stays a choice, off by
+default, for images whose extras are doubles. prot-cath-chris, with its dashes masked, is not one: 5 extras → 6 at 4
+(4 at 10); in the app (Chrome's decode) 188 found with it off and on, for 187. Test: dots on an unmasked dashed line of their color, doubled without it, not with it, a
+pair 1.25 r apart kept (fails with the price at 0).
