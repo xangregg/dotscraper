@@ -693,6 +693,54 @@ test('regression: a row through light gray dots is no line in pieces', () => {
     assert.deepEqual(detectAxes(large).lines, []);
 });
 
+// Box plots as shannon draws them: a dark frame, labeled y ticks, x ticks whose labels are cut off, and colored
+// lines 3 px wide with a paler, nearly gray column at each side (their antialiased edges): the whiskers of two
+// boxes, each in a piece above its box and one below, and an error bar in one piece.
+function whiskerPlot() {
+    const image = { width: 460, height: 380, data: new Uint8ClampedArray(4 * 460 * 380).fill(255) };
+    const dark = [90, 90, 90];
+    fill(image, [60, 10, 440, 12], dark);
+    fill(image, [60, 348, 440, 350], dark);
+    fill(image, [60, 10, 62, 350], dark);
+    fill(image, [438, 10, 440, 350], dark);
+    for (const y of [60, 140, 220, 300]) {
+        fill(image, [54, y, 60, y + 2], dark);
+        fill(image, [30, y - 6, 50, y + 8], dark);
+    }
+    for (const x of [130, 250, 370])
+        fill(image, [x, 350, x + 2, 356], dark);
+    const line = (x, y0, y1, color, flank) => {
+        fill(image, [x - 1, y0, x + 2, y1], color);
+        fill(image, [x - 2, y0, x - 1, y1], flank);
+        fill(image, [x + 2, y0, x + 3, y1], flank);
+    };
+    for (const [x, color, flank] of [[130, [76, 2, 82], [242, 221, 239]], [250, [9, 38, 85], [233, 235, 247]]]) {
+        line(x, 60, 150, color, flank);
+        line(x, 230, 320, color, flank);
+        for (const y of [150, 228]) {
+            fill(image, [x - 40, y, x + 41, y + 3], color);
+        }
+        fill(image, [x - 40, 150, x - 37, 231], color);
+        fill(image, [x + 38, 150, x + 41, 231], color);
+    }
+    line(370, 80, 300, [222, 52, 12], [255, 240, 240]);
+    return image;
+}
+
+test('regression: the pale edges of colored lines are no gridlines (shannon\'s whiskers)', () => {
+    // before: each whisker's flanks, light and of chroma 14–21, were light lines (those in two pieces as a line in
+    // pieces); with no labeled x ticks they stood in as the x axis's ticks, their ends as its line, and the plot was
+    // clipped to their span: everything right of the last whisker masked
+    const ax = detectAxes(whiskerPlot());
+    assert.deepEqual(ax.lines.filter(l => !l.dark).map(l => [l.dir, l.pos]), []);
+    assert.equal(ax.lines.length, 4);
+    assert.equal(ax.x, null);
+    assert.equal(ax.y.ticks.filter(t => t.label).length, 4);
+    const bounds = plotBounds(ax);
+    assert.deepEqual([bounds.right, bounds.top, bounds.bottom], [null, null, null]);
+    near(bounds.left, 61, 0.05, 'left');
+});
+
 test('a light line in pieces is thin and fills its span; a dark line under dots keeps its run', () => {
     const blank = () => ({ width: 560, height: 300, data: new Uint8ClampedArray(4 * 560 * 300).fill(255) });
     // a light gray ellipse in stripes: every row is long pieces of light ink, each as thick as the ellipse there

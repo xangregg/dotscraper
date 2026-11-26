@@ -1401,6 +1401,51 @@ test('dots in the color of the figure\'s text, at a found family\'s radius with 
     assert.ok(!familyOf(extractAll(scene(0).image), INK), 'the dark color is a family with no whole dot');
 });
 
+test('regression: a color near a family\'s, which reads that family\'s dots as its own, is no family (after shannon)', () => {
+    // 20 slate dots, and a frame and rows of short strokes in a gray 25 units from the slate: measured alone, the gray
+    // has the 20 dots too. before: two families, the gray one fitted beside the slate with no dot
+    const SLATE = [112, 129, 148];
+    const dots = [];
+    for (let i = 0; i < 20; i++)
+        dots.push({ x: 60 + 90 * (i % 5) + 7 * (i % 3), y: 50 + 60 * Math.floor(i / 5) + 5 * (i % 2) });
+    const model = createDotModel(solidImage(520, 400, [255, 255, 255]), { color: SLATE, alpha: 1, radius: 8 });
+    model.addAll(dots);
+    const image = toRgba(model.image);
+    const GRAY = [130, 130, 131];
+    for (const box of [[20, 10, 500, 13], [20, 290, 500, 293], [20, 10, 23, 293], [497, 10, 500, 293]])
+        fillRect(image, ...box, GRAY);
+    for (let k = 0; k < 6; k++) {
+        for (let x = 40; x < 470; x += 14)
+            fillRect(image, x, 310 + 12 * k, x + 9, 313 + 12 * k, GRAY);
+    }
+    const gray = measureOpaque(scanOf(image), GRAY);
+    assert.equal(gray.dots, 20);
+    assert.ok(isDotFamily(gray));
+    const results = extractAll(image);
+    assert.equal(results.length, 1);
+    assert.ok(Math.hypot(...results[0].est.style.color.map((v, ch) => v - SLATE[ch])) < 5, `color ${results[0].est.style.color}`);
+    assert.equal(matchDots(dots, results[0].fit.dots, 1).pairs.length, 20);
+    assert.equal(results[0].fit.dots.length, 20);
+});
+
+const SHANNON = 'shannon-10.3390-nu15092152.png';
+
+test('regression: shannon, four colors of dots over box plots outlined in their colors', { skip: !existsSync(PMC + SHANNON) && 'bench-pmc shannon absent' }, () => {
+    // before: 67 found for 111. The whiskers' pale edges were gridlines and the plot ended at the third box's
+    // whisker; and a fifth family, the gray of the frame's edges, had the gray-blue dots for its own
+    const image = readImage(PMC + SHANNON);
+    const axes = detectAxes(image);
+    assert.equal(axes.lines.filter(l => !l.dark).length, 0);
+    const results = extractAll(image);
+    assert.equal(results.length, 4);
+    const truth = readTruthJson(PMC + 'truth/' + SHANNON.replace('.png', '.json')).dots;
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, 0.5 * Math.max(...results.map(r => r.fit.radius)));
+    assert.equal(m.recall, 1);
+    // (the extras: dots touching a line of their color or each other, fitted twice)
+    assert.ok(found.length <= 117, `${found.length} dots`);
+});
+
 const AEROBIC = 'aerobic-10.1371-journal.pcbi.1012736.png';
 const REWARD = 'reward-10.1523-JNEUROSCI.0020-24.2024.png';
 

@@ -4736,3 +4736,55 @@ square's color comes in as "Picked 228, 26, 28: opaque, r 8.6" with the note tha
 families' and 5 of its dots show at it; Find dots gives 196 (24 red, 17 of them flagged); no console errors.
 Not exercised there: the picked family's radius kept when the families are measured again for an outline
 (`remeasureOpaque` passes it; aerobic has no outlined family).
+
+**bench-pmc, shannon: the whiskers' pale edges were gridlines, and a family that was another's seen again** (2026-11-25)
+
+Four colors of small dots over box plots outlined in the same colors; 67 found for 111, with nothing right of the
+third box, and a fifth family with no dots (item 5 of the list above). The mask was right for what it was told:
+the cause was in the axes.
+
+1. *The plot was clipped to the whiskers.* The whiskers are colored lines 3 px wide. Their cores are no gray ink,
+   but the antialiased column at each side is light and nearly gray (chroma 14–21, under the 24 that makes a
+   pixel gray), and long: the purple whisker's flank and both of the navy one's were three light vertical lines
+   (as lines in pieces: each whisker is a piece above its box and one below). The figure is cut off above its x
+   tick labels, so the frame's bottom line, with tick marks and no labels, was no x axis, and the light
+   lines stood in as gridlines: their positions the x ticks, the line through their ends (y 649) the axis, and
+   the plot clipped below it and right of the last of them (x 631.5). Now a light run with colored ink within
+   2 px across it along 0.8 of its light ink is a colored line's edge and no line (`axes.js findLines`,
+   `COLORED_EDGE_MIN_SHARE`); a gridline has colored ink beside it only where a dot or a curve crosses it. With
+   it shannon has its four frame lines and no other, the y axis as before, and no x axis: tick marks without
+   labels still make none, which is right for the plot's sides here (nothing is clipped that shouldn't be) and
+   leaves the x scale to be typed.
+2. *The fifth family.* The gray of the frame's and labels' edges (130, 130, 131) is a color cluster of its own,
+   25 units from the gray-blue dots' (112, 129, 148), and measured alone it has those dots: 28 centers, so a
+   family. Fitted beside the others it finds none, and stays in the list. Now a family with every center at
+   another family's, the pixel at each nearer that family's color than its own by 10 units or more, is dropped
+   before the families are measured for the fit (`opaque.js withoutEchoes`). Two limits, each from a failure of
+   the first version:
+   - *Every center, not most.* Asked 0.8 of them, bench1's ellipse (translucent dots over the page and over a
+     tinted region: two such colors, each with the other's 56 centers, both needed to see them as one translucent
+     family) lost one, and the family came out opaque with 98 dots for 100.
+   - *The 10 units.* With any nearer color enough, the test of outlined grays over a curve of one's gray failed:
+     its 82 gray has a second histogram peak 1.7 units off, a family with no dot in the fit, and without that
+     second family the first fits 9 dots for 7, two on stubs of the curve between other dots. Which of two peaks
+     of one color is nearer a pixel is noise, so they are no echo and family; the pair is left as it was. Why
+     the first needs the second there wasn't traced: such a duplicate is still listed with no dots.
+
+shannon: 117 for 111 in four families, P 0.949, R 1.000 (67, P 0.940, R 0.568). The 6 extras are dots fitted
+twice, a pixel or two apart by the overlay: four purple ones as before, flagged close, on dots touching the
+whisker or the median line or each other, and two navy ones at the box's lines, not flagged (the open item 6).
+
+Label benchmark: 1374 of 1479 labels read right, 215 of 235 axes solved, none wrong: as before.
+
+Tests: box plots with colored whiskers in two pieces, an error bar in one, a dark frame, labeled y ticks and x
+ticks without labels (no light line, four lines in all, no x axis, the plot bounded at the left only); slate
+dots beside a frame and strokes in a gray 25 units off (one family, 20 of 20); shannon itself (no light line,
+four families, every dot, at most 117). Seven mutations fail a test each: a colored edge kept as a run, kept as
+a line in pieces, the share never reached; echoes kept; the pixel's color not asked (both families go); four
+fifths of the centers enough (bench1's ellipse is opaque); no margin (the outlined grays' test).
+
+Full benchmark: shannon's row alone changed (203 rows, 202 the same); summed fit times as before (2610 s →
+2628 s at 10 jobs). 368 tests pass (3 new). In the app: shannon scans as four families and Find dots gives 117
+(28 + 31 + 30 + 28) across the whole plot; the Axes line reads "x not found · y linear, read"; the mask view
+shows only the left of the y axis, the lines and the labels masked. That check was made before the 10-unit
+margin went in, which changes nothing on shannon (the benchmark row is the same after it).

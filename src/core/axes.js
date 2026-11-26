@@ -44,6 +44,11 @@ const BROKEN_MIN_FLAT = 0.8;
 // itself (grader1: a column of a "3" below its gridline's end).
 const BROKEN_MIN_END = 8; // px
 const DARK_EDGE_REACH = 2; // px: rows this near a dark line's run are its antialiased edge, not a light line
+// A colored line's antialiased edge is light and nearly gray too (shannon: box plots' whiskers in purple and navy,
+// 3 px wide, in two pieces above and below their boxes; their flanks, of chroma 14–21, were three light "gridlines"
+// in pieces, and the plot was clipped to their span). It has the line's colored ink within DARK_EDGE_REACH of it
+// all along; a gridline has colored ink beside it where a dot or a curve crosses it.
+const COLORED_EDGE_MIN_SHARE = 0.8; // of a light run's ink
 const LINE_MAX_THICKNESS_FRACTION = 0.02; // of the smaller image dimension …
 const LINE_MIN_MAX_THICKNESS = 4; // … but at least this many px
 const BAND_EXTENT_TOL = 0.1; // rows of one band have runs agreeing in start and end within this fraction of length
@@ -371,13 +376,20 @@ function brokenLine(ink, n, at, beside, maxThick) {
  * Long thin straight gray lines, horizontal and vertical. A line is a long run of gray ink in its row or column, or,
  * for a light one under other marks, pieces that fill most of their span (brokenLine).
  *
+ * A colored line is none, and neither are its antialiased edges, which are light and nearly gray: a light run with
+ * colored ink beside most of it is that line's edge (COLORED_EDGE_MIN_SHARE).
+ *
  * @param {import('./image.js').RgbaImage} image
  * @param {Uint8Array} ink  from grayInk
+ * @param {number[][]} backgrounds  from backgroundColors: ink that isn't gray is colored
  * @returns {Line[]}
  */
-export function findLines(image, ink) {
+export function findLines(image, ink, backgrounds) {
     const { width, height, data } = image;
     const maxThick = Math.max(LINE_MIN_MAX_THICKNESS, LINE_MAX_THICKNESS_FRACTION * Math.min(width, height));
+    const color = new Uint8Array(width * height);
+    for (let p = 0; p < color.length; p++)
+        color[p] = !ink[p] && isInk(data, 4 * p, backgrounds) ? 1 : 0;
     const lines = [];
     for (const dir of ['h', 'v']) {
         const across = dir === 'h' ? height : width;
@@ -388,6 +400,24 @@ export function findLines(image, ink) {
             const run = longestRun(ink, along, j => idx(i, j));
             runs.push(run && run[1] - run[0] >= LINE_MIN_FRACTION * along ? run : null);
         }
+        // whether a run is the edge of a colored line: COLORED_EDGE_MIN_SHARE of its light ink has colored ink
+        // within an edge's reach across it
+        const coloredEdge = (run, i) => {
+            let light = 0;
+            let beside = 0;
+            for (let j = run[0]; j < run[1]; j++) {
+                if (ink[idx(i, j)] !== 1)
+                    continue;
+                light++;
+                for (let k = Math.max(0, i - DARK_EDGE_REACH); k <= Math.min(across - 1, i + DARK_EDGE_REACH); k++) {
+                    if (color[idx(k, j)]) {
+                        beside++;
+                        break;
+                    }
+                }
+            }
+            return beside >= COLORED_EDGE_MIN_SHARE * light;
+        };
         // a light line in pieces, where no dark line's run is within its antialiased edge of the row (a dark line's
         // edge is light ink too, and its run is the line's)
         const darkRun = runs.map((run, i) => {
@@ -398,6 +428,10 @@ export function findLines(image, ink) {
                 dark += ink[idx(i, j)] === 2 ? 1 : 0;
             return dark >= (run[1] - run[0]) / 2;
         });
+        for (let i = 0; i < across; i++) {
+            if (runs[i] && !darkRun[i] && coloredEdge(runs[i], i))
+                runs[i] = null;
+        }
         const pieces = runs.map((run, i) => {
             for (let k = Math.max(0, i - DARK_EDGE_REACH); k <= Math.min(across - 1, i + DARK_EDGE_REACH); k++) {
                 if (darkRun[k])
@@ -407,7 +441,7 @@ export function findLines(image, ink) {
         });
         for (let i = 0; i < across; i++) {
             const span = pieces[i];
-            if (span && (!runs[i] || span[1] - span[0] > runs[i][1] - runs[i][0]))
+            if (span && !coloredEdge(span, i) && (!runs[i] || span[1] - span[0] > runs[i][1] - runs[i][0]))
                 runs[i] = span;
         }
         // bands of consecutive qualifying rows whose runs agree
@@ -1067,7 +1101,7 @@ export function detectAxes(image) {
     const all = backgroundColors(image);
     const backgrounds = all.filter((c, i) => i === 0 || Math.abs(luminance(c, 0) - luminance(all[0], 0)) < PANEL_MAX_CONTRAST);
     const ink = grayInk(image, backgrounds);
-    const lines = findLines(image, ink);
+    const lines = findLines(image, ink, backgrounds);
     // labeled ticks drawn as strokes (a corner tick, on a line, has none) are straight, and their labels are in
     // plain view of the axis
     const axisLike = ticks => {

@@ -100,6 +100,8 @@ const DOT_MANY_ISOLATED = 10;
 // in pairs and a stack, gray pair lines reaching each, arcs at most 0.72; 5 filled centers at its radius, coverage
 // 0.64, radius 13.84 as the orange family's). It still needs DOT_MIN_STRONG centers of DOT_MIN_ARC and coverage.
 export const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
+const ECHO_CENTER_RADII = 0.5; // × r: two families' centers this near are one dot's
+const ECHO_MIN_MARGIN = 10; // 0–255 units: how much nearer the other family's color a center's pixel is than its own
 const SIBLING_MIN_ISOLATED = 2; // whole dots of its own, for its thick pixels alone to count (siblingEvidence)
 // … and a color that is all dots of that size needs only two of them, one seen whole or by a strong arc: a group can be
 // two points (bench-plos synthetic's teal: 2 dots of 16, one alone and one touching a salmon dot, radius 11.5 beside the
@@ -1862,7 +1864,7 @@ export function opaqueFamilies(scan, translucent, ink = [], onProgress = null, r
         search.out.push(paged);
     // Specks go before the others are measured again: a speck family's color can be a real family's stroke (hair3:
     // the black of the decimal points is the pink dots' outline, which excluded left their radius 18 for 28)
-    const final = measuredForFit(search, withoutSpecks(search.out, translucent.length > 0));
+    const final = measuredForFit(search, withoutEchoes(scan.image, withoutSpecks(search.out, translucent.length > 0)));
     for (const f of final)
         f.under = final.filter(g => g !== f && drawnUnder(f, g, scan.image.width)).map(g => g.seed);
     return final.sort((a, b) => b.dots - a.dots);
@@ -2361,6 +2363,30 @@ export function strokedFamily(scan, color) {
     const fillRadius = stroke.fillRadius;
     const fam = measureOpaque(scan, color, [], null, { stroke: stroke.color, fillRadius });
     return isDotFamily(fam) ? { ...fam, fillRadius, strokeOff: stroke.off } : null;
+}
+
+// Without the families whose dots are another family's: a color near a family's reads that family's dots as its own
+// (shannon: the gray of the frame's and labels' edges, 130, is 25 units from the gray-blue dots' color and had their
+// 28 centers; fitted beside the others it found no dot, and stayed in the list). An echo has every center at another
+// family's, the pixel at each nearer that family's color than its own by ECHO_MIN_MARGIN: no dot of its own. With
+// some of its own it is no echo, however few: translucent dots over two backgrounds are two such colors, each with
+// the other's dots, and both are needed to see them as one family (bench1's ellipse: 56 centers each; taken for an
+// echo with four fifths of them, the family was opaque and lost 2 dots of 100). Nor are two peaks of one color,
+// a unit or two apart, an echo and its family: which is nearer a pixel is noise, and the second is left as it was
+// (outlined grays over a curve of one's gray: the second peak of the 82 gray, 1.7 units off, has no dot in the
+// fit; with it among the families the first fits its 7 dots, and without it 9, two of them on stubs of the curve
+// between other dots. Why wasn't traced).
+function withoutEchoes(image, families) {
+    const { width, data } = image;
+    const echoOf = (f, g) => {
+        const others = c => {
+            const i = 4 * (Math.floor(c.y) * width + Math.floor(c.x));
+            const px = [data[i], data[i + 1], data[i + 2]];
+            return colorDistance(px, f.seed) - colorDistance(px, g.seed) > ECHO_MIN_MARGIN && g.centers.some(d => Math.hypot(c.x - d.x, c.y - d.y) <= ECHO_CENTER_RADII * f.radius);
+        };
+        return f.centers.length > 0 && f.centers.every(others);
+    };
+    return families.filter(f => !families.some(g => g !== f && echoOf(f, g)));
 }
 
 // Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline, the
