@@ -840,8 +840,9 @@ function thickMembers(image, colors) {
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} color  the fill, 0–255
  * @param {number[]} B  the page background, 0–255
- * @returns {{color: number[], off: number, rings: number}|null}  color 0–255; off: its distance from the
- *   background–fill line, 0–255 units; rings: isolated fills read
+ * @returns {{color: number[], off: number, rings: number, fillRadius: number}|null}  color 0–255; off: its distance
+ *   from the background–fill line, 0–255 units; rings: isolated fills read; fillRadius: px, the radius of a disc
+ *   of their median area (the fill's own color: the rim's mixes with the stroke are left out)
  */
 export function strokeColor(image, color, B) {
     const { width, height, data } = image;
@@ -879,11 +880,11 @@ export function strokeColor(image, color, B) {
     const u = color.map((v, ch) => v - B[ch]);
     const uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
     const pixels = [];
-    let rings = 0;
+    const sizes = [];
     comps.forEach((c, k) => {
         if (c.length < STROKE_COMPONENT[0] || c.length > STROKE_COMPONENT[1] || !clear[k] || clearBg[k] < STROKE_CLEAR_SHARE * clear[k])
             return;
-        rings++;
+        sizes.push(c.length);
         for (const p of ring[k]) {
             const v = [0, 1, 2].map(ch => data[4 * p + ch] - B[ch]);
             if (Math.hypot(...v) <= INK_TOL)
@@ -892,13 +893,13 @@ export function strokeColor(image, color, B) {
             pixels.push({ p, off: Math.hypot(v[0] - m * u[0], v[1] - m * u[1], v[2] - m * u[2]) });
         }
     });
-    if (rings < STROKE_MIN_RINGS || !pixels.length)
+    if (sizes.length < STROKE_MIN_RINGS || !pixels.length)
         return null;
     pixels.sort((a, b) => a.off - b.off);
     const top = pixels.slice(Math.floor(STROKE_TOP * (pixels.length - 1)));
     const S = [0, 1, 2].map(ch => top.reduce((t, q) => t + data[4 * q.p + ch], 0) / top.length);
     const { off } = alongLine(S.map((x, ch) => x - B[ch]), u);
-    return off >= STROKE_MIN_OFF ? { color: S, off, rings } : null;
+    return off >= STROKE_MIN_OFF ? { color: S, off, rings: sizes.length, fillRadius: Math.sqrt(median(sizes) / Math.PI) } : null;
 }
 
 /**
@@ -2240,7 +2241,7 @@ function ringFill(image, color, ring) {
  *
  * @param {Scan} scan
  * @param {number[]} color  the fill, 0–255
- * @param {OpaqueMeasure} plain  the color measured without a stroke: its radius is the fill's
+ * @param {OpaqueMeasure} plain  the color measured without a stroke
  * @returns {OpaqueMeasure|null}  with fillRadius, and strokeOff: how far the stroke's color lies off the line from
  *   the page to the fill, 0–255 units
  */
@@ -2248,8 +2249,12 @@ export function strokedFamily(scan, color, plain) {
     const stroke = strokeColor(scan.image, color, scan.backgrounds[0]);
     if (!stroke)
         return null;
-    const fam = measureOpaque(scan, color, [], null, { stroke: stroke.color, fillRadius: plain.radius });
-    return isDotFamily(fam) ? { ...fam, fillRadius: plain.radius, strokeOff: stroke.off } : null;
+    // The fill's radius is its isolated fills', not the plain reading's: that one is no family here, and its radius
+    // is the distance transform's raised by a scan for centers that found a few (funnel: 6.33 px for fills of 3.6
+    // in dots of 5.5, so no center's inner disc was fill, and no family)
+    const fillRadius = stroke.fillRadius;
+    const fam = measureOpaque(scan, color, [], null, { stroke: stroke.color, fillRadius });
+    return isDotFamily(fam) ? { ...fam, fillRadius, strokeOff: stroke.off } : null;
 }
 
 // Small dots count only when nothing else does: beside regular dots, a few round specks are a dotted gridline, the

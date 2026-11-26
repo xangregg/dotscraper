@@ -1013,7 +1013,11 @@ export function findHollowRings(image, B, known = [], opts = {}) {
             else
                 P[p] = Math.max(0, t) / WHITE_LENGTH;
         }
-        const found = outlinesInP(P, width, height, unknown, { hollow: (isolated, ring) => hollowInside(image, isolated, ring) });
+        const hollow = (isolated, ring) => hollowInside(image, isolated, ring);
+        // (when no thin-walled ring shows: at low resolution a wall of 2 px, blurred, is two thirds of a small ring's
+        // box. cycle: rings 13 px across, 2 of 212 under ISO_FILL)
+        const found = outlinesInP(P, width, height, unknown, { hollow })
+            ?? outlinesInP(P, width, height, unknown, { hollow, wide: true, inside: opts.inside });
         if (!found)
             continue;
         const color = B.map((x, ch) => Math.round(Math.min(255, Math.max(0, x - u[ch] * found.ring.alpha * WHITE_LENGTH))));
@@ -1168,12 +1172,14 @@ export function localFill(image) {
  * @param {function(object[], object): boolean} [opts.hollow]  hollow rings: a test of the isolated rings and the
  *   ring's style that must pass, made before the work that follows; no αf is measured (fillAlpha 0, pairs 0)
  * @param {boolean} [opts.thick]  thick-walled rings (THICK_ISO_FILL): read with nothing masked, their darkness fitted
+ * @param {boolean} [opts.wide]  rings whose walls take up to THICK_ISO_FILL of their box, read otherwise as thin ones
+ *   are (dark ink masked, the same fit asked): small rings in a low-resolution image
  * @param {function({x: number, y: number}): boolean} [opts.inside]  the isolated rings that count: those inside the
  *   plot (a label's 0 or O is a ring too)
  * @returns {RingReading|null}
  */
 export function outlinesInP(P, width, height, unknown = null, opts = {}) {
-    const rings = isolatedRings(P, width, height, opts.thick ? THICK_ISO_FILL : ISO_FILL).filter(c => !opts.inside || opts.inside(c));
+    const rings = isolatedRings(P, width, height, opts.thick || opts.wide ? THICK_ISO_FILL : ISO_FILL).filter(c => !opts.inside || opts.inside(c));
     if (rings.length < ISO_MIN)
         return null;
     const r0 = upperMedian(rings.map(c => c.r));

@@ -28,9 +28,15 @@ const OPEN_RADIUS_FRACTION = 0.75; // × dot radius: the opening removes marks n
                                    // trend lines are ~9 px wide, r 8.4)
 const THIN_MIN_LENGTH_RADII = 3; // × dot radius, the larger side of a thin component's bounding box
 // The opening also shaves one-pixel slivers off jagged rims, and where opaque dots touch in a chain the slivers
-// join into long components (synthetic swarm: 8 of 84 dots masked). Lines are at least 2 px wide: a second, 1 px
-// opening of the candidates removes the slivers.
+// join into long components (synthetic swarm: 8 of 84 dots masked). A second, 1 px opening of the candidates
+// removes the slivers, and with them lines 2 px wide.
 const SLIVER_OPENING = 1; // px
+// A line 2 px wide is thin too where it runs straight along a row or a column for the length a thin mark needs:
+// frames, axes, error bars. A sliver along a rim is an arc, flat for a few pixels. What is 2 px wide is what an
+// opening by a 2 × 2 block keeps. funnel: the plot's frame, 2 px in the dots' stroke color, stayed a dot's worth of
+// coverage all along, and the fit strung 45 dots on it, hidden beyond the plot's edge. (Every 2 px mark taken as
+// thin moved 24 rows of the benchmark: 12 fewer extras, 4 more, and positions worse where rims were masked:
+// adults1's rmse 0.06 → 0.13 px.)
 // Dots sitting on a bar of their own color cut it into pieces shorter than the length test (Laser's brackets: 5–9 px
 // between dots 11 px across, 10 dots fitted on the bars). Straight pieces in one row (or column), one's rows within
 // the other's, filling their boxes as a bar does and a crescent doesn't, with gaps no wider than a dot, are one line,
@@ -260,6 +266,51 @@ export function erode(mask, width, height, r) {
  */
 export function opening(mask, width, height, r) {
     return dilate(erode(mask, width, height, r), width, height, r);
+}
+
+/**
+ * Opening by a 2 × 2 block: the pixels that lie in some 2 × 2 block of the mask. Removes what is 1 px wide and keeps
+ * lines of 2.
+ *
+ * @param {ArrayLike<number>} mask  nonzero where set, width × height
+ * @param {number} width
+ * @param {number} height
+ * @returns {Uint8Array}  1 or 0 per pixel
+ */
+export function blockOpening(mask, width, height) {
+    const out = new Uint8Array(mask.length);
+    for (let y = 0; y < height - 1; y++) {
+        for (let x = 0; x < width - 1; x++) {
+            const p = y * width + x;
+            if (mask[p] && mask[p + 1] && mask[p + width] && mask[p + width + 1]) {
+                out[p] = 1;
+                out[p + 1] = 1;
+                out[p + width] = 1;
+                out[p + width + 1] = 1;
+            }
+        }
+    }
+    return out;
+}
+
+// Marks as thin the pixels of `mask` in a run along a row or a column at least `length` px long. O(pixels).
+function markRuns(mask, thin, width, height, length) {
+    const along = (count, step, start) => {
+        let run = 0;
+        for (let i = 0; i <= count; i++) {
+            if (i < count && mask[start + i * step]) {
+                run++;
+                continue;
+            }
+            for (let k = i - run; run >= length && k < i; k++)
+                thin[start + k * step] = 1;
+            run = 0;
+        }
+    };
+    for (let y = 0; y < height; y++)
+        along(width, 1, y * width);
+    for (let x = 0; x < width; x++)
+        along(height, width, x);
 }
 
 /**
@@ -713,6 +764,14 @@ export function buildMask(image, estimate, opts = {}) {
             for (const p of comp.pixels)
                 thin[p] = 1;
         }
+        // (2 px lines: not what the opening above kept, whose pieces end in corners it shaved. adults1: two pixels
+        // more at each end of a masked line's pieces, where dots cross it, and two more extras)
+        const narrow = blockOpening(raw, width, height);
+        for (let p = 0; p < n; p++) {
+            if (candidate[p])
+                narrow[p] = 0;
+        }
+        markRuns(narrow, thin, width, height, THIN_MIN_LENGTH_RADII * style.radius);
         barPieces(short, deep, thin, width, height, style.radius);
         const fam = estimate.familyMeasure;
         if (opaque && fam?.outline && fam.fillRadius && fam.radius - fam.fillRadius >= BARE_MIN_OUTLINE)
