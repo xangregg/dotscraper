@@ -33,7 +33,10 @@ import { upperMedian } from './stats.js';
 const WINDOW = 2; // px: half side of the window whose summed offsets give a pixel's direction
 const MIN_OFFSET = 15; // 0–255 units from B: flat pixels at least this far vote for the one-dot curve
 const CURVE_CELL = 0.02; // direction cell (unit-vector components)
-const RIM_REACH = 4; // px: flat pixels this close to a background pixel are the outer, one-dot part of a dot
+// Flat pixels this close to a background pixel are the outer, one-dot part of a dot. An image enlarged from a small
+// raster has edges wider than that and no such pixel anywhere, of dots or of text (shap: edges about 6 px wide, no
+// curve point at 4 px, 77 at 8); the wider reaches are tried only then.
+const RIM_REACHES = [4, 8, 12]; // px
 const CELL_MIN_VOTES = 5; // pixels for a cell to be a curve point
 const NEIGHBOR_DIST = 0.08; // between unit directions: cells this close are neighbors along the curve
 const MAX_NEIGHBOR_RATIO = 1.2; // a cell farther than this × its neighbors' median m₁ is a deeper stack
@@ -92,6 +95,12 @@ const PEAK_CENTROID = 3; // bins either side of the second peak averaged for its
 // Opaque dots of a scale show no second level (alpha null). With no level to confirm them, the chain must span
 // more: the bench gradients span 0.54–0.60, while bench1 smoother-ci.jpg's band edges chain to 0.215.
 const MIN_OPAQUE_SPREAD = 0.4;
+// An opaque scale with few dots has gaps in its colors, each dot a point of its own, and they don't all chain
+// (potato: 86 dots on viridis, a chain of 10 points from purple to teal and the greens and yellow in four chains of
+// one). A point as far from B as the chain's (LINK_MAX_RATIO beyond their range either way) is one of its colors,
+// unless it is gray: text and lines (black is this far from B as well, and within GRAY_DIST of the gray direction;
+// viridis's darkest purple is 0.17 from it).
+const GRAY_DIST = 0.1; // between unit directions
 const OPAQUE_WINDOW = 2; // px: half side of the window searched for a rim pixel's full color
 // A pixel is partial only next to one this much lighter than its full color: the background, or the middle of a
 // narrow gap between dots. A fill beside its own outline is not (the lightest JMP fill is 0.61 of its outline's
@@ -171,9 +180,14 @@ function oneDot(points, u0, u1, u2) {
     return { m1: sw > 0 ? sm / sw : NaN, dist: Math.sqrt(nearest) };
 }
 
-// The points' largest chain by votes (LINK_DIST, LINK_MAX_RATIO), and how far apart its ends are. Points of other
-// inks (the title's black strokes) form chains of their own.
-function largestChain(points) {
+// The chain of points that is a scale's, and how far apart its ends are; null when there is none. Points chain by
+// LINK_DIST and LINK_MAX_RATIO, and other inks form chains of their own (the title's black strokes). The chains are
+// taken by their votes. One that is a single color (fewer than MIN_POINTS points, a span under MIN_SPREAD, or
+// MAX_POINT_SHARE of its votes in one point) is other ink and passed over: light gridlines hold more votes than a
+// scale's dots (potato: the gray of 246, 4823 votes in one point, against 559 in the 10 points of its dots'
+// colors). The first chain of many colors decides: a scale, unless FEW_POINTS of its points hold MAX_FEW_SHARE of
+// its votes, which is a few families (protrusion1, where a smaller chain of their rims' mixes then read as a scale).
+function scaleChain(points) {
     const label = new Int32Array(points.length).fill(-1);
     const chains = [];
     for (let s = 0; s < points.length; s++) {
@@ -196,13 +210,13 @@ function largestChain(points) {
         chains.push(members.map(i => points[i]));
     }
     const votes = c => c.reduce((sum, q) => sum + q.votes, 0);
-    const best = chains.reduce((a, b) => (votes(b) > votes(a) ? b : a));
-    let spread = 0;
-    for (const a of best) {
-        for (const b of best)
-            spread = Math.max(spread, colorDistance(a.u, b.u));
-    }
-    return { points: best, spread };
+    const spreadOf = c => Math.max(0, ...c.flatMap(a => c.map(b => colorDistance(a.u, b.u))));
+    const oneColor = c => c.length < MIN_POINTS || spreadOf(c) < MIN_SPREAD || Math.max(...c.map(q => q.votes)) > MAX_POINT_SHARE * votes(c);
+    const best = chains.filter(c => !oneColor(c)).sort((a, b) => votes(b) - votes(a))[0];
+    if (!best)
+        return null;
+    const few = best.map(q => q.votes).sort((a, b) => b - a).slice(0, FEW_POINTS).reduce((t, v) => t + v, 0);
+    return few <= MAX_FEW_SHARE * votes(best) ? { points: best, spread: spreadOf(best) } : null;
 }
 
 /**
@@ -404,48 +418,16 @@ export function findColormap(image, B, flat, tol) {
     const background = new Uint8Array(n);
     for (let p = 0; p < n; p++)
         background[p] = Math.hypot(data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]) <= nearB ? 1 : 0;
-    const reach = nearReach(background, width, height);
     const dir = directionField(image, B);
-    const cells = new Map();
-    for (let p = 0; p < n; p++) {
-        if (!flat[p] || background[p] || !reach[p])
-            continue;
-        const m = Math.hypot(data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]);
-        if (m < MIN_OFFSET)
-            continue;
-        const u = [dir[3 * p], dir[3 * p + 1], dir[3 * p + 2]];
-        const key = u.map(v => Math.round(v / CURVE_CELL)).join(',');
-        let c = cells.get(key);
-        if (!c) {
-            c = { sum: [0, 0, 0], ms: [] };
-            cells.set(key, c);
-        }
-        for (let ch = 0; ch < 3; ch++)
-            c.sum[ch] += u[ch];
-        c.ms.push(m);
-    }
-    let points = [];
-    for (const c of cells.values()) {
-        if (c.ms.length < CELL_MIN_VOTES)
-            continue;
-        const l = Math.hypot(...c.sum);
-        points.push({ u: c.sum.map(v => v / l), m: upperMedian(c.ms), votes: c.ms.length });
-    }
-    points = points.filter((q, i) => {
-        const near = points.filter((o, j) => j !== i && colorDistance(o.u, q.u) < NEIGHBOR_DIST).map(o => o.m);
-        return !near.length || q.m <= MAX_NEIGHBOR_RATIO * upperMedian(near);
-    });
-    if (!points.length)
+    let all = [];
+    for (let i = 0; i < RIM_REACHES.length && !all.length; i++)
+        all = curvePoints(image, B, flat, background, nearReach(background, width, height, RIM_REACHES[i]), dir);
+    const scale = scaleChain(all);
+    if (!scale)
         return null;
-    const all = points;
-    const scale = largestChain(points);
-    points = scale.points;
+    let points = scale.points;
     const spread = scale.spread;
     const votes = points.reduce((t, q) => t + q.votes, 0);
-    const top = points.map(q => q.votes).sort((a, b) => b - a).slice(0, FEW_POINTS).reduce((t, v) => t + v, 0);
-    if (points.length < MIN_POINTS || spread < MIN_SPREAD || Math.max(...points.map(q => q.votes)) > MAX_POINT_SHARE * votes
-        || top > MAX_FEW_SHARE * votes)
-        return null;
     const palette = isPalette(points, votes);
     // a palette's colors needn't chain: one far from the others in direction, with few dots, links to none (wages2025:
     // pink, 8 dots, 0.38 from the nearest color); it is as far from B as they are, a light line not (the gridlines'
@@ -468,18 +450,60 @@ export function findColormap(image, B, flat, tol) {
     const alpha = ratioAlpha(ratios);
     if (alpha === null && spread < MIN_OPAQUE_SPREAD)
         return null;
+    if (alpha === null && !palette) {
+        const ms = points.map(q => q.m);
+        const gray = -1 / Math.sqrt(3);
+        const far = q => q.m >= Math.min(...ms) / LINK_MAX_RATIO && q.m <= LINK_MAX_RATIO * Math.max(...ms);
+        const colored = q => colorDistance(q.u, [gray, gray, gray]) >= GRAY_DIST;
+        points = [...points, ...all.filter(q => !points.includes(q) && far(q) && colored(q))];
+    }
     return { points, alpha, spread, dir, palette };
 }
 
-// 1 where a background pixel lies within RIM_REACH (a square neighborhood; cheap and close enough)
-function nearReach(background, width, height) {
+// The one-dot curve's points: per direction cell with CELL_MIN_VOTES flat pixels within reach of the background, its
+// mean direction and the median of their distances from B; cells of deeper stacks dropped (MAX_NEIGHBOR_RATIO).
+function curvePoints(image, B, flat, background, reach, dir) {
+    const { data } = image;
+    const cells = new Map();
+    for (let p = 0; p < flat.length; p++) {
+        if (!flat[p] || background[p] || !reach[p])
+            continue;
+        const m = Math.hypot(data[4 * p] - B[0], data[4 * p + 1] - B[1], data[4 * p + 2] - B[2]);
+        if (m < MIN_OFFSET)
+            continue;
+        const u = [dir[3 * p], dir[3 * p + 1], dir[3 * p + 2]];
+        const key = u.map(v => Math.round(v / CURVE_CELL)).join(',');
+        let c = cells.get(key);
+        if (!c) {
+            c = { sum: [0, 0, 0], ms: [] };
+            cells.set(key, c);
+        }
+        for (let ch = 0; ch < 3; ch++)
+            c.sum[ch] += u[ch];
+        c.ms.push(m);
+    }
+    const points = [];
+    for (const c of cells.values()) {
+        if (c.ms.length < CELL_MIN_VOTES)
+            continue;
+        const l = Math.hypot(...c.sum);
+        points.push({ u: c.sum.map(v => v / l), m: upperMedian(c.ms), votes: c.ms.length });
+    }
+    return points.filter((q, i) => {
+        const near = points.filter((o, j) => j !== i && colorDistance(o.u, q.u) < NEIGHBOR_DIST).map(o => o.m);
+        return !near.length || q.m <= MAX_NEIGHBOR_RATIO * upperMedian(near);
+    });
+}
+
+// 1 where a background pixel lies within `reach` px (a square neighborhood; cheap and close enough)
+function nearReach(background, width, height, reach) {
     const out = new Uint8Array(background.length);
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             if (!background[y * width + x])
                 continue;
-            for (let yy = Math.max(0, y - RIM_REACH); yy <= Math.min(height - 1, y + RIM_REACH); yy++) {
-                for (let xx = Math.max(0, x - RIM_REACH); xx <= Math.min(width - 1, x + RIM_REACH); xx++)
+            for (let yy = Math.max(0, y - reach); yy <= Math.min(height - 1, y + reach); yy++) {
+                for (let xx = Math.max(0, x - reach); xx <= Math.min(width - 1, x + reach); xx++)
                     out[yy * width + xx] = 1;
             }
         }
@@ -522,8 +546,9 @@ export function rayImage(image, B, cm) {
  * farther out (bench2 gradient-opaque-stroke: yellow fill 155 from white, its outline 255, 0.01 apart in direction),
  * so a full fill and a partial outline look alike. Position settles it instead: a pixel is partial only next to a
  * much lighter one (the background, or the middle of a narrow gap between dots), and then its full color is the
- * farthest pixel nearby in its direction. Every other dot pixel, a fill, an outline, or the boundary between two
- * dots, is covered. The result is a one-color rendering of the dots' union.
+ * farthest pixel nearby in its direction; or where it is itself much lighter than the scale's color in its direction
+ * (LIGHT of it: beyond what an outline's or a fill's own color can be). Every other dot pixel, a fill, an outline, or
+ * the boundary between two dots, is covered. The result is a one-color rendering of the dots' union.
  *
  * @param {import('./image.js').RgbaImage} image
  * @param {number[]} B
@@ -543,7 +568,7 @@ export function opaqueImage(image, B, cm) {
             off[3 * p + ch] = data[4 * p + ch] - B[ch];
         m[p] = Math.hypot(off[3 * p], off[3 * p + 1], off[3 * p + 2]);
     }
-    const dots = dotPixels(m, cm, width, height);
+    const { dots, m1 } = dotPixels(m, cm, width, height);
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             const p = y * width + x;
@@ -563,7 +588,11 @@ export function opaqueImage(image, B, cm) {
                         full = m[q];
                 }
             }
-            const a = lightest(m, width, height, x, y) <= LIGHT * full ? m[p] / full : 1;
+            // (a light gridline beside a dot takes the dot's direction from the window, and is the fullest pixel of
+            // its own direction there: potato, whiskers of full color along the gridlines at a dot's rim, and lone
+            // dots fitted as two and three)
+            const a = m[p] <= LIGHT * m1[p] ? m[p] / Math.max(full, m1[p])
+                : lightest(m, width, height, x, y) <= LIGHT * full ? m[p] / full : 1;
             for (let ch = 0; ch < 3; ch++)
                 out[4 * p + ch] = Math.round(B[ch] + a * (P[ch] - B[ch]));
         }
@@ -571,18 +600,22 @@ export function opaqueImage(image, B, cm) {
     return { image: { width, height, data: out }, P };
 }
 
-// 1 for the pixels of opaque dots: those on the curve, and those near it within OUTLINE_REACH of one. Outlines of
-// dark fills lie as far from the curve as black text does (bench2 gradient-opaque-stroke: a dark red outline
-// (109, 47, 45) is 0.15 off, and 0.16 from black), but only outlines touch the fills. O(pixels · reach²).
+// `dots`: 1 for the pixels of opaque dots, those on the curve, and those near it within OUTLINE_REACH of one. Outlines
+// of dark fills lie as far from the curve as black text does (bench2 gradient-opaque-stroke: a dark red outline
+// (109, 47, 45) is 0.15 off, and 0.16 from black), but only outlines touch the fills. `m1`: the scale's distance from
+// B in each pixel's direction. O(pixels · reach²).
 function dotPixels(m, cm, width, height) {
     const { dir } = cm;
     const n = width * height;
     const dist = new Float32Array(n).fill(Infinity);
+    const m1 = new Float32Array(n);
     const on = new Uint8Array(n);
     for (let p = 0; p < n; p++) {
         if (m[p] < MIN_PIXEL_OFFSET)
             continue;
-        dist[p] = oneDot(cm.points, dir[3 * p], dir[3 * p + 1], dir[3 * p + 2]).dist;
+        const curve = oneDot(cm.points, dir[3 * p], dir[3 * p + 1], dir[3 * p + 2]);
+        dist[p] = curve.dist;
+        m1[p] = curve.m1;
         on[p] = dist[p] <= OFF_CURVE ? 1 : 0;
     }
     const out = Uint8Array.from(on);
@@ -601,7 +634,7 @@ function dotPixels(m, cm, width, height) {
             }
         }
     }
-    return out;
+    return { dots: out, m1 };
 }
 
 // the smallest offset from B among (x, y) and its 8 neighbors

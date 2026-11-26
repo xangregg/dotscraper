@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createDotModel, solidImage, toRgba } from '../src/core/render.js';
-import { flatMask, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '../src/core/scan.js';
+import { flatMask, scanOf, EXACT_TOLERANCES, JPEG_TOLERANCES, backgroundColor } from '../src/core/scan.js';
 import { findColormap, rayImage, opaqueImage } from '../src/core/colormap.js';
 import { readImage } from '../tools/png.mjs';
 import { readTruthCsv, truthPixels, truthPixelsByTicks } from '../tools/truth-csv.mjs';
@@ -146,7 +146,7 @@ test('findColormap: one translucent family is not a color scale', () => {
         model.add(20 + i * 23, 40 + (i % 2) * 5);
     const rgba = toRgba(model.image);
     const image = { ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) };
-    assert.equal(findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES), null);
+    assert.ok(!findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES), 'a color scale found');
 });
 
 const OUTLINE = 2; // px: outline width of the outlined variant
@@ -217,6 +217,132 @@ for (const outline of [false, true]) {
     });
 }
 
+// Few opaque dots on viridis over light gridlines (potato): a run of colors from purple to teal that chain, and two
+// greens and a yellow each far from every other color. The gridlines hold more flat pixels than the dots' rims do,
+// dots sit on their crossings, and the axis lines are black: as far from the page as the scale's colors are. Without
+// the gridlines black is a color of its own (with them it shares their direction's cell, and their distance).
+const GRID = [235, 235, 235];
+const GRID_STEP = 40; // px
+const GRID_WIDTH = 3; // px
+const AXIS = [0, 0, 0];
+function sparseScaleImage(grid) {
+    const SW = 420;
+    const SH = 220;
+    const stops = [[68, 1, 84], [59, 82, 139], [33, 145, 140]];
+    const run = s => {
+        const k = Math.min(1, Math.floor(s * 2));
+        return stops[k].map((v, ch) => v + (stops[k + 1][ch] - v) * (s * 2 - k));
+    };
+    const bg = solidImage(SW, SH, WHITE);
+    for (let y = 0; y < SH; y++) {
+        for (let x = 0; x < SW; x++) {
+            if (grid && (x % GRID_STEP < GRID_WIDTH || y % GRID_STEP < GRID_WIDTH))
+                bg.data.set(GRID, 3 * (y * SW + x));
+            if ((x >= 5 && x < 8) || (y >= 210 && y < 213))
+                bg.data.set(AXIS, 3 * (y * SW + x));
+        }
+    }
+    const dots = [];
+    for (let i = 0; i < 16; i++)
+        dots.push({ x: 21 + 24 * i + (i % 2) * 3, y: i % 2 ? 61 : 99, color: run(i / 15) });
+    dots.push({ x: 81, y: 161, color: [94, 201, 98] }, { x: 150, y: 170, color: [144, 214, 69] },
+        { x: 241, y: 161, color: [253, 231, 37] }, { x: 330, y: 172, color: [253, 231, 37] });
+    let im = bg;
+    for (const d of dots) {
+        const model = createDotModel(im, { color: d.color, alpha: 1, radius: RADIUS });
+        model.add(d.x, d.y);
+        im = model.image;
+    }
+    const round = rgba => ({ ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) });
+    return { image: round(toRgba(im)), dots, width: SW, height: SH };
+}
+
+test('findColormap: a sparse opaque scale over light gridlines: the gridlines\' gray is passed over, colors that chain to none are the scale\'s too', () => {
+    const { image, dots, width } = sparseScaleImage(true);
+    const cm = findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES);
+    assert.ok(cm, 'a color scale');
+    assert.equal(cm.alpha, null, 'opaque');
+    const { image: v, P } = opaqueImage(image, WHITE, cm);
+    const d = P.map((c, ch) => c - WHITE[ch]);
+    const dd = d.reduce((sum, x) => sum + x * x, 0);
+    const cover = (x, y) => [0, 1, 2].reduce((sum, ch) => sum + (v.data[4 * (y * width + x) + ch] - WHITE[ch]) * d[ch], 0) / dd;
+    // every dot is covered at its center, the greens and the yellows with the rest
+    for (const q of dots)
+        assert.ok(cover(Math.floor(q.x), Math.floor(q.y)) > 0.95, `dot at ${q.x}, ${q.y}: coverage ${cover(Math.floor(q.x), Math.floor(q.y)).toFixed(2)}`);
+    // … and nothing beyond its rim is drawn as a dot's (pixels that are no dot's stay as they were): a gridline
+    // beside a dot takes the dot's direction from the window, and was drawn in the full color, a whisker at the rim
+    // that made two and three dots of one; the axis lines are no dots
+    const kept = (x, y) => [0, 1, 2].every(ch => v.data[4 * (y * width + x) + ch] === image.data[4 * (y * width + x) + ch]);
+    let worst = 0;
+    for (let y = 0; y < image.height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (!kept(x, y) && dots.every(q => Math.hypot(x + 0.5 - q.x, y + 0.5 - q.y) > RADIUS + 1.5))
+                worst = Math.max(worst, cover(x, y));
+        }
+    }
+    // (a gridline beside a yellow dot keeps its own faintness in the dot's direction: 35 from the page over 219)
+    assert.ok(worst <= 0.2, `coverage ${worst.toFixed(2)} outside every dot`);
+});
+
+test('findColormap: black lines beside a sparse opaque scale are not a color of it', () => {
+    const { image, width } = sparseScaleImage(false);
+    const cm = findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES);
+    assert.ok(cm, 'a color scale');
+    const { image: v, P } = opaqueImage(image, WHITE, cm);
+    // the axis lines' pixels away from every dot stay black, and that is not the virtual family's color (the lines
+    // hold more pixels than any color of the scale: as one of its colors, black would be the family's)
+    assert.ok(Math.hypot(...P.map((c, ch) => c - AXIS[ch])) > 100, `the virtual family's color ${P.map(Math.round)}`);
+    for (const [x, y] of [[6, 20], [6, 130], [200, 211], [400, 211]]) {
+        const p = 4 * (y * width + x);
+        assert.deepEqual([...v.data.slice(p, p + 3)], AXIS, `axis pixel ${x}, ${y}`);
+    }
+});
+
+test('findColormap: dots with edges wider than the rim reach (an enlarged raster) are read at a wider one', () => {
+    let im = solidImage(W, H, WHITE);
+    for (let i = 0; i < 24; i++) {
+        const model = createDotModel(im, { color: scaleColor(i / 23), alpha: 1, radius: 10, blur: 2.5 });
+        model.add(20 + (i % 12) * 23.5, i < 12 ? 30 : 85);
+        im = model.image;
+    }
+    const rgba = toRgba(im);
+    const image = { ...rgba, data: Uint8ClampedArray.from(rgba.data, v => Math.round(v)) };
+    const cm = findColormap(image, WHITE, flatMask(image), EXACT_TOLERANCES);
+    assert.ok(cm, 'a color scale');
+    assert.equal(cm.alpha, null, 'opaque');
+    assert.ok(cm.points.length >= 12, `${cm.points.length} colors`);
+});
+
+const pmc = name => new URL(`../bench-pmc/${name}`, import.meta.url).pathname;
+const POTATO = 'potato-10.3389-fpls.2023.1100318';
+const SHAP = 'shap-10.1021-jasms.3c00403';
+
+test('regression: potato and shap, opaque dots on a scale are one family, not one per color found', { skip: !existsSync(pmc(`${POTATO}.png`)) && 'bench-pmc absent' }, () => {
+    const truth = name => JSON.parse(readFileSync(pmc(`truth/${name}.json`), 'utf8')).dots;
+    // potato: viridis, 86 dots, light gridlines (before: 8 families by color, 80 dots, the darkest missed)
+    const potato = extractAll(readImage(pmc(`${POTATO}.png`)));
+    assert.equal(potato.length, 1);
+    assert.equal(potato[0].est.scale, 'opaque');
+    const mp = matchDots(truth(POTATO), potato[0].fit.dots, potato[0].fit.radius / 2);
+    assert.equal(potato[0].fit.dots.length, 86);
+    assert.equal(mp.recall, 1);
+    // shap: blue to red, edges about 6 px wide (before: no scale, 4 families that left colors out, 67 dots for 97)
+    const shap = extractAll(readImage(pmc(`${SHAP}.png`)));
+    assert.equal(shap.length, 1);
+    assert.equal(shap[0].est.scale, 'opaque');
+    const ms = matchDots(truth(SHAP), shap[0].fit.dots, shap[0].fit.radius / 2);
+    assert.ok(ms.recall >= 0.98 && ms.precision >= 0.96, `shap: ${shap[0].fit.dots.length} dots, P ${ms.precision.toFixed(3)} R ${ms.recall.toFixed(3)}`);
+});
+
+const PROTRUSION1 = new URL('../bench-nature/protrusion1-10.1038-s41586-026-11063-9.png', import.meta.url).pathname;
+
+test('regression: protrusion1, a few families\' colors decide (no scale), whatever lesser run of colors lies beside them', { skip: !existsSync(PROTRUSION1) && 'bench-nature absent' }, () => {
+    // the families' chain holds the most votes, most of them in three colors; passing on to the next chain found a
+    // "scale" in ten faint colors, 22 from the page, and no radius for it ("The dot radius is unknown")
+    const scan = scanOf(readImage(PROTRUSION1));
+    assert.ok(!findColormap(scan.image, scan.B, scan.flat, scan.tol), 'a color scale found');
+});
+
 const dir = set => new URL(`../${set}/`, import.meta.url).pathname;
 const absent = (set, name) => !existsSync(dir(set) + name) && `${set}/${name} absent`;
 
@@ -261,5 +387,5 @@ test('regression: a band’s edges are not an opaque color scale (bench1 smoothe
     // its band edges chain to a spread of 0.215 with no second level; the opaque scales span 0.54–0.60
     const image = restoreChroma(readImage(dir('bench1') + 'smoother-ci.jpg'));
     const B = backgroundColor(image).color;
-    assert.equal(findColormap(image, B, flatMask(image, JPEG_TOLERANCES), JPEG_TOLERANCES), null);
+    assert.ok(!findColormap(image, B, flatMask(image, JPEG_TOLERANCES), JPEG_TOLERANCES), 'a color scale found');
 });

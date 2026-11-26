@@ -124,7 +124,7 @@ test('regression: protrusion1, four hues on whiskers are no color scale, and eac
     // gave half the radius
     const image = readImage(NATURE + protrusion(1) + '.png');
     const B = backgroundColor(image).color;
-    assert.equal(findColormap(image, B, flatMask(image), EXACT_TOLERANCES), null);
+    assert.ok(!findColormap(image, B, flatMask(image), EXACT_TOLERANCES), 'a color scale found');
     const { estimates } = estimateFamilies(image);
     assert.equal(estimates.length, 4);
     for (const e of estimates) {

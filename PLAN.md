@@ -4492,3 +4492,80 @@ over a box (every dot found, RMSE under 0.2 px); bread1 itself (one translucent 
 picked the same, recall 1 with at most 40 dots). Each fails with its change taken out.
 346 tests pass (343 before). In the app: bread1 scans as one translucent family (α 0.60, r 13.5) and finds 40 dots;
 a family picked on a black dot (92) measures the same and finds the same 40; no console errors.
+
+**bench-pmc, color scales: potato and shap** (2026-11-25)
+
+Both figures color opaque dots by a continuous scale, and both were read as one family per color found: potato
+(viridis) as 8 families, 80 dots for 86, the darkest missed; shap (blue to red) as 4 families that left colors out,
+67 dots. `findColormap` returned null for each, for different reasons:
+
+- **potato: the gridlines' gray outvoted the dots.** The scale was the chain of colors with the most votes, and
+  the light gridlines' flat pixels, one direction from the page, hold more votes than every dot's rim together. A
+  one-color chain is no scale, so the answer was null.
+- **potato: viridis doesn't chain.** With 86 dots the purples to teals link (directions within `LINK_DIST` 0.15
+  of each other), but the greens and the yellow are each farther than that from every other color present. The
+  chain alone left those dots out.
+- **shap: no flat pixel within reach of the page.** The figure is an enlarged raster, its dots' edges about 6 px
+  wide. Curve points are taken from flat pixels within `RIM_REACH` 4 px of the page (where a single dot shows its
+  own color): none at 4 px, 77 points at 8.
+- **potato, once found: whiskers.** A gridline pixel beside a dot takes the dot's direction from the window, and
+  is the fullest pixel of that direction near it, so the virtual image drew it in the full color: a spur along
+  each gridline at a dot's rim, and lone dots fitted as two and three.
+
+Changes, all in `colormap.js`:
+
+1. `scaleChain` (was `largestChain`): chains of one color (fewer than `MIN_POINTS`, spread under `MIN_SPREAD`, or
+   one point with more than `MAX_POINT_SHARE` of the votes) are passed over, and the many-color chain with the
+   most votes decides: a scale, or, with most of its votes in `FEW_POINTS` colors, a few families and no scale. A
+   first form took the first chain passing every test, and on protrusion1 (bench-nature) passed from the families'
+   chain on to ten faint colors 22 from the page: "The dot radius is unknown". The top chain's verdict is final.
+2. An opaque scale's colors that chain to none are the scale's too, when they are as far from the page as its
+   chain is (within `LINK_MAX_RATIO`) and not gray (`GRAY_DIST` 0.1 from the gray direction: black text and lines
+   are as far from a white page as a dark color is).
+3. `RIM_REACHES` 4, 8, 12 px: a wider reach is tried only when the one before gave no point at all.
+4. `opaqueImage`: a dot pixel much lighter than the scale's color in its direction (`LIGHT` of it) is partial,
+   its coverage its distance over the scale's (or over the fullest pixel near it, when that is more), whatever
+   lies beside it. `dotPixels` returns the scale's distance per pixel for this.
+
+Tried and removed: sampling the dots' interiors as well as their rims for curve points, to catch colors no rim
+showed. The "missed" purple dots on shap that suggested it were not missed: they were the truth's duplicates.
+
+**The truth files rewritten** (local only; the originals are in `bench-pmc/truth-original/`). Both listed one
+family per color picked by hand, as the fit then needed. They are now one family (the first family's color, the
+median radius, a sentence added to the note). shap's truth held 22 dots twice or three times, the same dot added
+in two or three of the hand-made families (within 2 px): 119 → 97 dots. potato's 86 are unchanged.
+
+Measured (full benchmark, 201 rows; 197 the same):
+
+| image | before | after |
+|---|---|---|
+| bench-pmc potato | 80 for 86, P 0.988, R 0.919, 8 families, noisy | 86 for 86, P 1.000, R 1.000, RMSE 0.135, 1 family, exact |
+| bench-pmc shap | 67 for 119, P 0.940, R 0.529, 4 families | 99 for 97, P 0.970, R 0.990, RMSE 0.798, 1 family |
+| bench2 gradient-opaque | 192 for 204, P 0.984, R 0.926, RMSE 0.499 | 193, P 0.974, R 0.922, RMSE 0.412 |
+| bench1 gradient-opaque | 101 for 100, RMSE 0.380 | the same counts, RMSE 0.391 |
+
+potato's positions are less exact than the per-color families' were (RMSE 0.025 → 0.135 px): the virtual image is
+a rendering of the dots' union with estimated coverage at the rims, not the pixels themselves. On shap two extras
+and the one miss are in dense piles, and the third extra in the middle of three overlapping dots: places where
+the union of discs doesn't settle the count. The two gradient-opaque rows move
+by change 4 (rim pixels of light dots now partial): bench2 one more matched dot lost and two more extras, with
+the matched dots closer. protrusion1 and the other scale images are unchanged.
+
+Tests (`test/colormap.test.js`): a sparse viridis scale over light gridlines holding more flat pixels than the
+dots' rims (a scale, every dot covered, the greens and yellows too, nothing drawn beyond a rim above the
+gridline's own faintness, 0.2); the same without gridlines and with black axis lines (the lines stay black, the
+virtual family's color is not black); dots of radius 10 blurred by 2.5 px (a scale, at least 12 colors); potato
+and shap themselves; protrusion1 (no scale). Each of the six rules fails a test when taken out: the reach list
+cut to 4 px, the chain taken by votes alone, the first passing chain taken, the unchained colors left out, the
+gray test removed, the faint rule removed.
+
+A test that fails must say so briefly: `assert.equal(findColormap(…), null)` prints the whole result when it
+fails, and the result holds a direction per pixel (10.5 million floats on protrusion1). Under the mutation that
+made it fail, the run went on past ten minutes, and the machine ran out of memory while it did (how much of that
+was this run wasn't measured). The four assertions of that
+shape (three in colormap.test.js, one in families.test.js) are now `assert.ok(!findColormap(…), 'a color scale
+found')`: the same failure reports in under a second.
+
+351 tests pass (346 before). In the app: potato scans as one family "colored by a scale, opaque, r 10.8" (14 colors
+sampled) and finds 86 dots, none flagged; shap as one such family, r 16.2 (76 colors sampled), 99 dots with 1
+flagged weak, its color bar left alone; no console errors.
