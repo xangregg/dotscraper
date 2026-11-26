@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRng } from '../src/core/rng.js';
 import { houghCenters, fitDots, refitNear, flagClose, createFit, suppressNear } from '../src/core/fit.js';
 import { estimateStyle } from '../src/core/style.js';
+import { createOutlineModel } from '../src/core/outline.js';
 import { buildMask } from '../src/core/layers.js';
 import { synthGraph, scatterPoints } from '../src/core/synth.js';
 import { matchDots } from '../src/core/metrics.js';
@@ -232,4 +233,40 @@ test('suppressNear keeps what testing every kept peak keeps: random peaks, and a
     assert.deepEqual(kept, lattice);
     // the order given decides: the same points, the others first, keeps the others
     assert.deepEqual(suppressNear([...between, ...lattice], 3, 62), between);
+});
+
+test('opaque outlined dots: one hidden under another at the same place goes, though its sliver of ring pays for it', () => {
+    const S = 64;
+    const T_BLACK = 255 * Math.sqrt(3);
+    const style = { color: [0, 0, 0], alpha: 0, radius: 10, blur: 0.6, measuredLevels: 1, ring: { inner: 0.8, alpha: 1 }, layered: { fillAlpha: 1, ringT: T_BLACK } };
+    const base = new Float32Array(S * S);
+    // the image's rings reach 0.4 px farther out than the model's: a second dot 0.3 px off the first, under it,
+    // shows a sliver of ring beyond it there
+    const draw = dots => {
+        const m = createOutlineModel(base, S, S, { radius: 10.4, ring: { inner: 8 / 10.4, alpha: 1 }, fillAlpha: 1, ringT: T_BLACK, blur: 0.6 });
+        m.addAll(dots);
+        return Float32Array.from(m.image.data);
+    };
+    const input = imgT => ({
+        image: { width: S, height: S, data: new Uint8ClampedArray(4 * S * S) }, style, base, imgT,
+        line: { B: [255, 255, 255], u: [1, 1, 1].map(v => v / Math.sqrt(3)) }, mask: new Uint8Array(S * S),
+    });
+    const one = createFit(input(draw([{ x: 32, y: 32 }])));
+    const upper = one.add(32.2, 32, 2);
+    one.add(31.9, 32, 1);
+    assert.equal(one.deaths(), 1);
+    assert.deepEqual(one.ids(), [upper], 'the one on top stays');
+    // translucent rings and fills show a dot under another: two at one place stay
+    const soft = { ...style, ring: { inner: 0.8, alpha: 0.4 }, layered: { fillAlpha: 0.75, ringT: T_BLACK } };
+    const m = createOutlineModel(base, S, S, { radius: 10, ring: soft.ring, fillAlpha: 0.75, ringT: T_BLACK, blur: 0.6 });
+    m.addAll([{ x: 32, y: 32, z: 1 }, { x: 32.2, y: 32, z: 2 }]);
+    const tie = createFit({ ...input(Float32Array.from(m.image.data)), style: soft });
+    tie.add(32, 32, 1);
+    tie.add(32.2, 32, 2);
+    assert.equal(tie.deaths(), 0, 'a tie under translucent rings');
+    // two dots 4 px apart are two
+    const two = createFit(input(draw([{ x: 30, y: 32, z: 1 }, { x: 34, y: 32, z: 2 }])));
+    two.add(30, 32, 1);
+    two.add(34, 32, 2);
+    assert.equal(two.deaths(), 0);
 });

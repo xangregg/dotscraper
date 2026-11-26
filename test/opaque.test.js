@@ -940,7 +940,11 @@ test('regression: degradation1, overlapping orange dots are told apart by their 
     const orange = results.find(r => r.est.style.color[0] > 200);
     assert.ok(orange.est.style.layered, 'the orange family is fitted by its rings');
     const row = groupRow('degradation1', truth.dots, results, 0);
-    assert.ok(row.recall >= 0.83 && row.precision >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}`);
+    // (R 0.843 until a dot hidden under another at its place went with the deaths: the fit had two orange dots
+    // 0.17 px apart at 828, 157, and the second matched the truth's dot at 838, 157, which is not found)
+    assert.ok(row.recall >= 0.82 && row.precision >= 0.95, `P ${row.precision.toFixed(3)} R ${row.recall.toFixed(3)}`);
+    const dots = orange.fit.dots;
+    assert.ok(!dots.some((a, i) => dots.some((b, j) => j > i && Math.hypot(a.x - b.x, a.y - b.y) < 1)), 'no two orange dots at one place');
 });
 
 test('regression: beeswarm-boxplot, packed red and gray swarms are two families with their dots, gray not doubled', { skip: !has('beeswarm-boxplot.png') && 'local test image absent' }, () => {

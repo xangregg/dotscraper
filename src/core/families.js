@@ -5,14 +5,15 @@
 // by their rings, in drawing order, with the fill colors projected out (outline.js).
 
 import { colorDistance, sub } from './image.js';
-import { scanOf, backgroundColor, flatMask, solidRegion } from './scan.js';
+import { scanOf, backgroundColor, flatMask, solidRegion, isThin } from './scan.js';
 import { measureFamily, alongLine } from './levels.js';
-import { familyRings, siblingRadius, SIBLING_RADIUS_TOL, SPECK_RADIUS_RATIO } from './opaque.js';
+import { colorClusters, familyRings, siblingRadius, SIBLING_RADIUS_TOL, SPECK_RADIUS_RATIO } from './opaque.js';
 import { estimateStyle, NO_ISOLATED_NOTE, opaqueFamilyEstimate } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
+import { annotationBoxes } from './annotations.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
-import { findOutlines, findHueOutlines, fillFamilies, outlinesInP, findHollowRings } from './outline.js';
+import { findOutlines, findHueOutlines, findPaletteOutlines, fillFamilies, outlinesInP, findHollowRings } from './outline.js';
 
 const T_BLACK = 255 * Math.sqrt(3); // t of black from white along the gray line: the outline fit's units
 const OUTLINE_MASK_DILATE = 1; // px around what can't be read (P_bg above outline.js MASK_BG)
@@ -152,6 +153,28 @@ function outlineEstimate(image) {
     return found && outlinedEstimate(image, background, found);
 }
 
+// Outlined dots of a few fill colors that share no plane (outline.js findPaletteOutlines), or null: the fills that
+// could be are the image's colored clusters (its grays and its black are text, lines and the outlines themselves)
+// that aren't thin as a whole (healer: blue dots, 0, 0, 245, with rims in a darker blue, 6, 6, 195, which made a
+// second fill color of two dots)
+function paletteEstimate(scan, background, inside) {
+    const { image } = scan;
+    const fills = colorClusters(image, [background.color]).map(c => c.color)
+        .filter(c => Math.max(...c) - Math.min(...c) >= INK_MIN_CHROMA && !isThin(scan, c));
+    if (fills.length < 2)
+        return null;
+    // A legend's markers are no dots (the fit masks them) and may be drawn otherwise (grapes: outlined 2.8 px wide,
+    // its dots 2: seven of its twelve isolated rings, and no one ring fitted them all). The legend is read at the
+    // first ring's radius.
+    let legend = null;
+    const counted = c => {
+        legend ??= annotationBoxes(image, background.color, c.r).legend;
+        return (!inside || inside(c)) && !legend.some(b => c.x >= b[0] && c.x < b[2] && c.y >= b[1] && c.y < b[3]);
+    };
+    const found = findPaletteOutlines(image, background.color, fills, counted);
+    return found && outlinedEstimate(image, background, found);
+}
+
 // what can't be read in P (D NaN), dilated by OUTLINE_MASK_DILATE: the fit's mask for outlined dots
 function unreadMask(D, width, height) {
     const mask = new Uint8Array(width * height);
@@ -266,16 +289,18 @@ function outlinedEstimate(image, background, found) {
     const line = { B: [255, 255, 255], u: [1, 1, 1].map(v => v / Math.sqrt(3)) };
     // discrete fill colors (two groups under gray rings), for dotFamilies after the fit; null for a scale or one
     const oneColor = found.plane?.oneColor ?? false;
-    const fills = !found.plane || oneColor ? null : fillFamilies(image);
+    const fills = found.palette ?? (!found.plane || oneColor ? null : fillFamilies(image));
     const notes = [
-        !found.plane
+        found.palette
+            ? `Outlined dots of ${fills.length} fill colors (${fills.map(c => c.map(Math.round).join(', ')).join('; ')}): each pixel is read as how far it is from the fill color near it toward black, so the fills drop out, the dots are fitted by their rings in drawing order, and each dot's color is read from its fill where it shows.`
+            : !found.plane
             ? 'Outlined dots whose outlines are a darker shade of their own fills, colored by a scale: each pixel is read as how much darker it is than the fill around it, so the fills drop out, and the dots are fitted by their rings, in drawing order.'
             : fills
             ? `Outlined dots of ${fills.length} fill colors (${fills.map(c => c.map(Math.round).join(', ')).join('; ')}): the fills are projected out, the dots are fitted by their rings in drawing order, and each dot's color is read from its fill where it shows.`
             : found.plane.oneColor
             ? `Outlined dots of one fill color (${found.plane.pixels} fill pixels): the fill is projected out and the dots are fitted by their rings, in drawing order.`
             : `Outlined dots whose fills vary (${found.plane.pixels} fill pixels within ${found.plane.rms.toFixed(1)} units of one plane): the fill colors are projected out and the dots are fitted by their rings, in drawing order.`,
-        `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, ${found.plane ? `${Math.round(100 * ring.alpha)}% of the way to black` : `darker than its fill by ${Math.round(100 * ring.alpha)}% of white's distance from black (the median of the isolated rings)`}; fills ${Math.round(100 * found.fillAlpha)}% opaque${found.fillAlphaMeasured ? ` (from ${found.pairs} overlapping pairs)` : ' (assumed: too few overlapping pairs to measure)'}.`,
+        `Ring from ${(ring.inner * ring.radius).toFixed(2)} to ${ring.radius.toFixed(2)} px, ${found.plane || found.palette ? `${Math.round(100 * ring.alpha)}% of the way to black` : `darker than its fill by ${Math.round(100 * ring.alpha)}% of white's distance from black (the median of the isolated rings)`}; fills ${Math.round(100 * found.fillAlpha)}% opaque${found.fillAlphaMeasured ? ` (from ${found.pairs} overlapping pairs)` : ' (assumed: too few overlapping pairs to measure)'}.`,
     ];
     return {
         background, family: 0, flat: null, image: { width, height, data },
@@ -335,6 +360,8 @@ export function estimateFamilies(image, opts = {}) {
     const jpeg = !!opts.jpeg;
     const stage = scanStages(opts.onProgress);
     const settled = estimates => ({ image, layers: null, estimates });
+    const b = opts.bounds;
+    const inside = b ? c => (b.left === null || c.x > b.left) && (b.right === null || c.x < b.right) && (b.top === null || c.y > b.top) && (b.bottom === null || c.y < b.bottom) : undefined;
     // a dark ring off the fill plane decides for outlined dots even when the fills also read as a translucent
     // scale (their overlaps show levels too); JMP's outlines, in the fill's own hue, never pass
     stage('outlines');
@@ -349,6 +376,9 @@ export function estimateFamilies(image, opts = {}) {
         return settled([scaled.estimate]);
     let first = scaled.first ?? estimateStyle(image, { jpeg, scan, onProgress: stage('colors') });
     if (!first.candidates.length) {
+        const palette = paletteEstimate(scan, first.background, inside);
+        if (palette)
+            return settled([palette]);
         const hollow = hollowEstimates(image, first.background, []);
         return settled(hollow.length ? hollow : [{ ...first, image }]);
     }
@@ -371,8 +401,6 @@ export function estimateFamilies(image, opts = {}) {
     // … and thick-walled ones in a plain opaque family's own color (open circles beside filled ones)
     const solids = ringed.filter(e => e.style?.radius && e.familyMeasure?.kind === 'opaque' && !e.style.layered && !e.familyMeasure.outline && !e.familyMeasure.stroke)
         .map(e => ({ color: e.style.color, radius: e.style.radius }));
-    const b = opts.bounds;
-    const inside = b ? c => (b.left === null || c.x > b.left) && (b.right === null || c.x < b.right) && (b.top === null || c.y > b.top) && (b.bottom === null || c.y < b.bottom) : undefined;
     const hollow = hollowEstimates(work, first.background, known, { solids, inside });
     stage('done');
     return { image: work, layers, estimates: [...ringed, ...hollow] };

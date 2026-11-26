@@ -15,7 +15,7 @@
 
 import { pixelCoverage, gaussianKernel, blurRect, createDotModel, createDotStore, unionRect, solidImage } from './render.js';
 import { ringCenters } from './fit.js';
-import { colorDistance } from './image.js';
+import { colorDistance, colorMask } from './image.js';
 import { components8, dilate, opening } from './layers.js';
 import { upperMedian } from './stats.js';
 
@@ -45,6 +45,14 @@ const PLANE_MAX_P_NOISE = 0.03; // P units
 // OPEN_DIRECTIONS directions with a segment longer than a ring is across, which keeps lines and areas and drops
 // rings. Where P_bg is above MASK_BG (the black line, text) nothing can be read.
 const OPEN_DIRECTIONS = 12;
+// Under black rings read unmasked, a thin black line is ring ink unless an opening keeps it, and a segment a ring
+// across stays inside a line 2 px wide only within 3.7° of it: directions 7.5° apart leave no line farther from one
+// (grapes: the 2 px end of its fitted curve, 8° off the rows, drew six dots along it at 12 directions: 63 right
+// dots with 7 extras, and with 1 at 24). For the palette reading alone: more directions also keep more of a dense
+// stack of rings, which is then unread (droplet1, whose fills lie in a plane: 40 of its 57 dots at 12 directions;
+// 39 at 24, one of them 5 px off; 34 at 36). And under black rings alone: culicine's faint rings, 14% of the way to
+// black and read with dark ink masked, gave 59 dots, all right, at 12 directions and 96, half of them extras, at 24.
+const PALETTE_OPEN_DIRECTIONS = 24;
 const OPEN_EXTRA = 2; // px beyond the ring's diameter
 // relativeDarkness: a closing's segment, longer than a ring and its antialiasing are across (bench2
 // gradient-opaque-stroke: 1.5 px rings, 3 px with their edges), short enough to keep narrow slivers of a darker fill
@@ -91,6 +99,11 @@ const PAIR_DIST = [0.8, 1.5]; // × r
 const PAIR_LOW_MODE = 0.6;
 const PAIR_MIN = 5;
 const FILL_ALPHA_DEFAULT = 0.5; // when too few pairs show it
+// The palette reading (paletteValue): a fill color is tried at a pixel when a pixel of that color (within
+// PALETTE_TOL of it, a color cluster's reach) lies within PALETTE_REACH, a ring's width with its soft edges
+// (grapes: rings of 2 px, 4 px across from fill to page)
+const PALETTE_REACH = 4; // px
+const PALETTE_TOL = 40; // 0–255 units (RGB distance)
 
 /**
  * An incrementally updatable rendering of outlined dots in P (one value per pixel, scaled to t units), composited
@@ -626,20 +639,21 @@ function overSegment(a, width, height, dx, dy, sign, isMin) {
 }
 
 /**
- * What is under the rings in P: the largest of linear openings in OPEN_DIRECTIONS directions, each with a segment
- * longer than a ring is across. O(pixels · OPEN_DIRECTIONS · (2r + OPEN_EXTRA)).
+ * What is under the rings in P: the largest of linear openings in `directions` directions, each with a segment
+ * longer than a ring is across. O(pixels · directions · (2r + OPEN_EXTRA)).
  *
  * @param {Float32Array} P  width × height
  * @param {number} width
  * @param {number} height
  * @param {number} radius  px, the rings'
+ * @param {number} [directions]  evenly spaced over the half turn
  * @returns {Float32Array}  width × height, in P's units
  */
-export function underRings(P, width, height, radius) {
+export function underRings(P, width, height, radius, directions = OPEN_DIRECTIONS) {
     const len = 2 * Math.ceil(radius + OPEN_EXTRA / 2) + 1;
     const out = new Float32Array(P.length).fill(-Infinity);
-    for (let k = 0; k < OPEN_DIRECTIONS; k++) {
-        const o = lineOpening(P, width, height, Math.PI * k / OPEN_DIRECTIONS, len);
+    for (let k = 0; k < directions; k++) {
+        const o = lineOpening(P, width, height, Math.PI * k / directions, len);
         for (let p = 0; p < out.length; p++)
             out[p] = Math.max(out[p], o[p]);
     }
@@ -676,8 +690,9 @@ function ringPeak(P, width, height, rings) {
 }
 
 // A for one ring at (cx, cy) in a patch: an annulus of opacity 1, blurred; least-squares α against the image's A, or
-// the error at a given α
-function ringPatchError(A, width, height, cx, cy, st, fixedAlpha = null) {
+// the error at a given α. The error is summed within `reach` px of the center and counted per pixel of the square,
+// as the limits on a ring's rms were set (see measureRing).
+function ringPatchError(A, width, height, cx, cy, st, reach, fixedAlpha = null) {
     const half = Math.ceil(st.r + STYLE_HALF);
     const x0 = Math.round(cx) - half;
     const y0 = Math.round(cy) - half;
@@ -695,11 +710,13 @@ function ringPatchError(A, width, height, cx, cy, st, fixedAlpha = null) {
             const a = A[(y0 + j) * width + x0 + i];
             if (Number.isNaN(a))
                 continue;
+            count++;
+            if (Math.hypot(x0 + i + 0.5 - cx, y0 + j + 0.5 - cy) > reach)
+                continue;
             const mm = 1 - m.image.data[3 * (j * S + i)] / 255;
             num += a * mm;
             den += mm * mm;
             saa += a * a;
-            count++;
         }
     }
     if (fixedAlpha !== null)
@@ -711,10 +728,13 @@ function ringPatchError(A, width, height, cx, cy, st, fixedAlpha = null) {
 /**
  * The ring's style from isolated rings in A: radius, inner over radius, blur and αk, by coordinate descent on the
  * squared error over their patches, each center refined too. With `fixedAlpha`, αk is that and the rest is fitted.
+ * With a `reach` (px), the error is summed only that near each center: an isolated ring's neighbors come as near as
+ * its square patch's corners (see outlinesInP's `apart`). A reach must not follow the radius being fitted: a smaller
+ * ring would leave its neighbors' ink out, and win (thick-walled circles 19 px apart: the radius ran to nothing).
  *
  * @returns {{radius: number, inner: number, blur: number, alpha: number, rms: number, rings: number}}
  */
-function measureRing(A, width, height, rings, fixedAlpha = null) {
+function measureRing(A, width, height, rings, fixedAlpha = null, reach = Infinity) {
     const r0 = upperMedian(rings.map(c => c.r));
     let st = { r: r0, inner: Math.max(0.5, (r0 - 1.5) / r0), blur: 0.5 };
     let centers = rings.map(c => ({ x: c.x, y: c.y }));
@@ -723,7 +743,7 @@ function measureRing(A, width, height, rings, fixedAlpha = null) {
         let count = 0;
         const alphas = [];
         for (const c of centers) {
-            const e = ringPatchError(A, width, height, c.x, c.y, st, fixedAlpha);
+            const e = ringPatchError(A, width, height, c.x, c.y, st, reach, fixedAlpha);
             if (!e)
                 continue;
             sse += e.sse;
@@ -739,11 +759,11 @@ function measureRing(A, width, height, rings, fixedAlpha = null) {
                 let improved = true;
                 while (improved) {
                     improved = false;
-                    const e0 = ringPatchError(A, width, height, x, y, st, fixedAlpha);
+                    const e0 = ringPatchError(A, width, height, x, y, st, reach, fixedAlpha);
                     if (!e0)
                         return { x, y };
                     for (const [dx, dy] of [[step, 0], [-step, 0], [0, step], [0, -step]]) {
-                        const e = ringPatchError(A, width, height, x + dx, y + dy, st, fixedAlpha);
+                        const e = ringPatchError(A, width, height, x + dx, y + dy, st, reach, fixedAlpha);
                         if (e && e.sse < e0.sse - 1e-9) {
                             x += dx;
                             y += dy;
@@ -930,6 +950,68 @@ export function findOutlines(image, B) {
     // black rings around one fill color are the opaque families' (hair1: pink and page-filled dots in black outlines)
     const found = outlinesInP(planeValue(image, B, plane.n), image.width, image.height, null, { blackRings: !plane.oneColor });
     return found && { plane, ...found };
+}
+
+/**
+ * P for rings over fills of a few colors that share no plane (grapes: six saturated fills in black outlines):
+ * each pixel is read as a mix of K and one of the colors near it, the page or a fill with a pixel of its color within
+ * PALETTE_REACH, the one whose line to K it lies closest to, and P is K's share. Only the colors near are tried
+ * because a dark fill can be a lighter one's mix with K (grapes: its dark green, 9, 123, 11, is half its light green,
+ * 10, 247, 13, so on the light green's line the dark fills would read as half-drawn rings). Ink of any other color
+ * reads by the page's line.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} B  the page, 0–255
+ * @param {number[][]} fills  0–255
+ * @returns {Float32Array}  width × height: 0 for the page and the fills, 1 for K
+ */
+export function paletteValue(image, B, fills) {
+    const { width, height, data } = image;
+    const n = width * height;
+    const near = fills.map(F => dilate(colorMask(image, F, PALETTE_TOL), width, height, PALETTE_REACH));
+    const lines = [B, ...fills].map(F => {
+        const d = F.map((v, ch) => v - K[ch]);
+        return { d, dd: d[0] * d[0] + d[1] * d[1] + d[2] * d[2] };
+    });
+    const P = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+        const x = [data[4 * p] - K[0], data[4 * p + 1] - K[1], data[4 * p + 2] - K[2]];
+        let best = Infinity;
+        for (let k = 0; k < lines.length; k++) {
+            if (k > 0 && !near[k - 1][p])
+                continue;
+            const { d, dd } = lines[k];
+            const w = Math.min(1, Math.max(0, (x[0] * d[0] + x[1] * d[1] + x[2] * d[2]) / dd));
+            const off = Math.hypot(x[0] - w * d[0], x[1] - w * d[1], x[2] - w * d[2]);
+            if (off < best) {
+                best = off;
+                P[p] = 1 - w;
+            }
+        }
+    }
+    return P;
+}
+
+/**
+ * Outlined dots of a few fill colors that share no plane, if the image has them: P against the fills' own colors
+ * (paletteValue), and rings in it whose insides are fills. A label's 0 or O is a ring too, with the page inside: with
+ * three isolated rings asked around fills, text alone makes no family.
+ *
+ * @param {import('./image.js').RgbaImage} image
+ * @param {number[]} B  the page, 0–255
+ * @param {number[][]} fills  0–255, the image's colors that could be fills
+ * @param {function({x: number, y: number, r: number}): boolean} inside  whether an isolated ring (center and
+ *   radius, px) is one to measure the rings by: one of the plot's, not a legend's marker
+ * @returns {(RingReading & {plane: null, palette: number[][]})|null}  palette: the fills
+ */
+export function findPaletteOutlines(image, B, fills, inside) {
+    const { width, height, data } = image;
+    const filled = c => {
+        const p = 4 * (Math.floor(c.y) * width + Math.floor(c.x));
+        return fills.some(F => colorDistance(F, [data[p], data[p + 1], data[p + 2]]) <= PALETTE_TOL);
+    };
+    const found = outlinesInP(paletteValue(image, B, fills), width, height, null, { blackRings: true, apart: true, blackDirections: PALETTE_OPEN_DIRECTIONS, inside: c => filled(c) && inside(c) });
+    return found && { plane: null, palette: fills, ...found };
 }
 
 /**
@@ -1176,6 +1258,14 @@ export function localFill(image) {
  *   are (dark ink masked, the same fit asked): small rings in a low-resolution image
  * @param {function({x: number, y: number}): boolean} [opts.inside]  the isolated rings that count: those inside the
  *   plot (a label's 0 or O is a ring too)
+ * @param {number} [opts.blackDirections]  of the openings that tell what is under the rings, when they are black
+ *   rings read unmasked (default OPEN_DIRECTIONS, as for every other ring)
+ * @param {boolean} [opts.apart]  the isolated rings are measured within STYLE_HALF of themselves, not over their
+ *   square patches, whose corners reach 1.41 times as far and hold their neighbors' ink (grapes: rings 31–34 px from
+ *   four of its six isolated ones of r 14, an rms of 0.106 with the corners and 0.067 without). Only where the rings
+ *   are known to be dots' by other means: the corners' ink also keeps a line of text's o's from fitting (measured on
+ *   every reading: wave1's labels gave a fourth family, corneal lost a circle of 58 and droplet1 2 dots of 41,
+ *   while pathogen gained 16 of 583)
  * @returns {RingReading|null}
  */
 export function outlinesInP(P, width, height, unknown = null, opts = {}) {
@@ -1183,11 +1273,14 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     if (rings.length < ISO_MIN)
         return null;
     const r0 = upperMedian(rings.map(c => c.r));
-    const under = underRings(P, width, height, r0);
     // the most ring-like of the isolated components, of about one size (droplet1: a glyph at r 15 beside rings of
     // 9.75–10.5)
     const used = rings.slice().sort((a, b) => Math.abs(a.r - r0) - Math.abs(b.r - r0)).slice(0, ISO_MAX)
         .filter(c => Math.abs(c.r - r0) <= ISO_RADIUS_TOL * r0);
+    // (rings as dark as ink are read unmasked alone: with the ink masked their cores are, and what is left to fit is
+    // their antialiased rims, which can pass as faint rings: grapes, αk 0.24 from rings 0.86 at their cores)
+    const black = !!opts.blackRings && ringPeak(P, width, height, used) >= MASK_INK;
+    const under = underRings(P, width, height, r0, black ? opts.blackDirections ?? OPEN_DIRECTIONS : OPEN_DIRECTIONS);
     const read = (maskInk, darkness = maskInk ? null : 1) => {
         const ink = new Uint8Array(P.length);
         for (let y = 0; y < height && maskInk; y++) {
@@ -1205,11 +1298,11 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
             A[p] = under[p] > MASK_BG || ink[p] || unknown?.[p] ? NaN : (P[p] - under[p]) / (1 - under[p]);
         // (unmasked, the rings are opaque black: αk fitted freely went to 1.26, a thin blurred annulus standing in
         // for a sharp one, and the fit stacked dots to make up the difference)
-        const ring = measureRing(A, width, height, used, darkness);
+        const ring = measureRing(A, width, height, used, darkness, opts.apart ? r0 + STYLE_HALF : Infinity);
         const fits = ring.rms <= (opts.thick ? THICK_RING_MAX_RMS * ring.alpha : maskInk ? MAX_RING_RMS : BLACK_RING_MAX_RMS);
         return ring.alpha >= MIN_RING_ALPHA && fits && ring.rings >= ISO_MIN ? { A, ring } : null;
     };
-    const found = opts.thick ? read(false, null) : read(true) ?? (opts.blackRings && ringPeak(P, width, height, used) >= MASK_INK ? read(false) : null);
+    const found = opts.thick ? read(false, null) : black ? read(false) : read(true);
     if (!found)
         return null;
     const { A, ring } = found;

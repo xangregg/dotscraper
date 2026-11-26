@@ -164,3 +164,28 @@ test('regression: wages2025, its title, subtitle, legend and the median line\'s 
     for (const [x, y] of [[1500, 2800], [1800, 3000], [2000, 2600]])
         assert.ok(!covered(x, y), `a box over the dots at ${x}, ${y}`);
 });
+
+test('annotationBoxes: a legend whose labels are a letter or two is told by its markers\' column at even steps', () => {
+    // (grapes: GH, GS, BP, RP, B, R, OR, no line of text among them, so its markers were dots)
+    const R = 10;
+    const RED = [200, 40, 40];
+    const entry = (x, y, letters) => [{ x, y, r: R, color: RED }, ...word(x + 22, y + 8, 16, letters)];
+    const legend = [60, 94, 128, 162];
+    const uneven = [70, 110, 176];
+    const shapes = [
+        ...legend.flatMap((y, i) => entry(300, y, i % 2 ? 'LI' : 'L')),
+        // a column of dots before letters at uneven steps, a dot before two letters, and a column of dots at even
+        // steps with nothing after them: data
+        ...uneven.flatMap(y => entry(180, y, 'L')),
+        ...entry(60, 230, 'LI'),
+        ...legend.map(y => ({ x: 60, y, r: R, color: RED })),
+    ];
+    const image = paint(380, 270, shapes);
+    const { text, legend: boxes } = annotationBoxes(image, WHITE, R);
+    assert.equal(boxes.length, legend.length, JSON.stringify(boxes));
+    for (const y of legend) {
+        assert.ok(boxes.some(b => inside(b, 300, y)), `marker at ${y}`);
+        assert.ok(text.some(b => inside(b, 324, y)), `label at ${y}`);
+    }
+    assert.equal(text.length, legend.length, `only the legend's labels are text: ${JSON.stringify(text)}`);
+});

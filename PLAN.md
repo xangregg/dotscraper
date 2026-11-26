@@ -4896,3 +4896,137 @@ four families solved.
 under the dots; Find dots gives 80 (25 + 29 + 26, 39 flagged) in 8.7 s; the Axes line reads x and y linear, read;
 no console errors. The page check in headless Chrome doesn't start inside the sandbox this session runs
 commands in; it was run outside it for the decoded pixels.
+
+**bench-pmc, grapes: outlined dots of several fill colors that share no plane** (2026-11-26)
+
+86 dots in the truth: seven groups, six saturated fills (light and dark green, magenta, red, light and dark blue)
+and one black, all in black outlines, 8–15 a group and most overlapping, along a fitted curve; a legend of seven
+markers with labels of one or two letters; a JPEG. No family was found. What stood in the way, in the order met:
+
+1. *No reading applied.* No color has three isolated fills, so no family is found one color at a time; the fills
+   share no plane through the page (red, green and blue among them), so the reading for fills that vary
+   (`findOutlines`) has nothing to project out; and the fills are no scale. New, `outline.js paletteValue` and
+   `findPaletteOutlines`: each pixel is read as a mix of black and one color near it, the page or a fill color
+   with a pixel of its own within 4 px, the one whose line to black it lies closest to, and P is black's share.
+   The fills are the image's colored clusters (`opaque.js colorClusters`, chroma 40 or more) that aren't thin as
+   a whole. Only the colors near a pixel are tried because a dark fill can be a lighter one's mix with black:
+   grapes' dark green, 2, 127, 2, lies 6 units off the light green's line (10, 247, 13) and 12 from its own
+   cluster's color, and read 0.49 inside its fills on every line at once. In P the rings are whole circles on a
+   blank page, as for fills in a plane, and the rest is the existing ring fit in drawing order, each dot's color
+   read from its fill afterwards. It is tried where no family is found by its color (before hollow rings), and
+   asks three isolated rings with a fill color at their centers: a label's 0 or O has the page inside.
+2. *The legend.* Seven of the twelve isolated rings are the legend's markers, outlined 2.8 px wide against the
+   dots' 2.0 (radial profiles: half maximum from 10.7 to 13.5 px, and from 12.0 to 14.0), and no one ring fitted
+   all twelve (rms 0.128 against 0.1). The legend wasn't known: its labels are GH, GS, BP, RP, B, R and OR, and a
+   legend was a column of markers each before a line of three glyphs or more. Now a marker before a group of
+   fewer glyphs is a legend's when three of its column stand at even steps (within 4 px: grapes' are 44–47 px
+   apart), and those labels are text (`annotations.js`). The palette reading measures its rings from those that
+   aren't a legend's markers, which the fit masks as before.
+3. *Rings as dark as ink.* `outlinesInP` first read the rings with dark ink masked (P of 0.8 or more, and 2 px
+   around it), and only when that gave no ring read them unmasked as black ones. Grapes' rings are 0.86 at their
+   cores: masked, what was left to fit was their antialiased rims, which passed as rings 24% of the way to black,
+   and the fit then saw no ring at all. Now rings whose cores reach the mask's level are read unmasked alone
+   (for every reading that allows black rings; no other row moved).
+4. *The patch a ring is measured in.* An isolated ring's error is summed over a square 4 px larger than the
+   ring, whose corners reach 1.41 times as far: the next dots' rings, 31–34 px away for four of the six, were in
+   them (rms 0.106, over the 0.1 allowed). For this reading the error is summed within 4 px of the ring as first
+   measured (`outlinesInP`'s `apart`): 0.067. A grid over radius, width and blur finds nothing better than the
+   ring measured (r 14.0, 12.25 to 14.0 px, blur 0.6), so what is left is the JPEG's noise.
+   Tried for every reading and taken back, twice. With a disc that followed the radius being fitted, a smaller
+   ring left its neighbors' ink out and won (a test's thick-walled circles 19 px apart: the radius ran to
+   nothing). With the disc fixed: pathogen gained 16 dots of its 583 and stiffness 3 of 305 with 2 extras, but
+   wave1's labels gave a fourth family in its test (the corners' ink is also what keeps a line of text's o's from
+   fitting a ring), corneal lost a circle of 58 and droplet1 2 dots of 41.
+5. *The legend's letters and the curve's end.* Read unmasked, black text and lines are ring ink. The letters are
+   now text (2). The fitted curve is under the rings where a linear opening a ring across keeps it; its last 55
+   px are 2 px wide and 8° off the rows, where no segment of 31 px at 15° steps stays inside it, and six dots
+   lay along it, hidden under real ones but for the line. For this reading the openings are taken in 24
+   directions (7.5° apart; a 2 px line holds a segment within 3.7° of it): 63 right dots with 7 extras at 12, and
+   with 1 at 24. Not for every reading: droplet1, the other image of black rings, finds 40 of its 57 dots at 12
+   directions, 39 at 24 with one of them 5 px off, and 34 at 36, more of its two dense piles being kept by the
+   openings and so unread. And only where this reading's rings are black ones read unmasked: culicine's faint rings
+   (below) gave 59 dots, all right, at 12 directions and 96, half of them extras, at 24.
+6. *Dots stacked at one place.* 8 of the 70 dots then found lay 0.07–0.20 px from another, one under the other.
+   The lower is hidden but for a sliver of its ring, and the sliver pays: the image's rings are softer and a
+   little wider than the model's, a black ring is 442 t units, and a dot costs 20 pixels 10 units wrong. With
+   rings and fills that hide what is under them (both 0.95 opaque or more), a dot with another over it within
+   0.15 r goes with the deaths (`fit.js hiddenUnder`); the nearest real pairs here are 4.2 px apart.
+7. *A rim's color as a fill.* With every colored cluster offered as a fill, healer (blue dots, 0, 0, 245, with
+   rims in a darker blue, 6, 6, 195, found before with noisy color matching) was read as outlined dots of two
+   fill colors, the second with two of its 64 dots. A color thin as a whole (`scan.js isThin`) is an outline's.
+
+Measured (full benchmark, 206 rows; 200 the same; summed fit times 2683 s → 2739 s at 10 jobs, 43 s of it
+the two new rows):
+
+| image | before | after |
+|---|---|---|
+| bench-pmc grapes | no family | 64 for 86, P 0.984, R 0.733, RMSE 0.89 px, r 14.11, 7 flagged |
+| bench-pmc culicine | radius unknown | 59 for 64, P 1.000, R 0.922, RMSE 0.74 px, r 10.09 |
+| bench-plos droplet1 | 46 for 57, P 0.891, R 0.719, RMSE 0.64 | 40, P 1.000, R 0.702, RMSE 0.20 |
+| bench-nature wave1 | 44 for 43, P 0.955, R 0.977 | 41, P 0.951, R 0.907 |
+| bench-nature degradation1 (by hand) | 61 for 70, P 0.967, R 0.843, RMSE 2.74 | 60, P 0.967, R 0.829, RMSE 2.45 |
+
+- **grapes**: by position all 64 are right. Not found: the legend's 7 markers, which the truth counts and the fit
+  now masks; the 8 black dots, whose black outlines on black fills show no ring (their pile is one dark area,
+  read as under the rings and masked); 5 dark blue dots and a light blue one mostly under those; and a red one
+  under others where the curve crosses them. One dot is read in the wrong color (the bench's 63 right). The
+  legend's last marker is navy (0, 0, 96) where the plot's dots of that group are black (0, 0, 0): navy is no
+  fill color of the plot.
+- **culicine** was not worked on: its translucent pink and teal dots, outlined in darker shades, gave no family
+  by color, and the new reading takes them as outlined dots of four fill colors (each color on the page and over
+  its box), rings 14% of the way to black. No extras; the 5 misses are in the bottom row. The four colors are
+  two families in the truth. The result is not robust: with the openings under its rings in 24 directions
+  instead of 12 it is 96 dots, half of them extras (why wasn't looked at).
+- **droplet1** (black rings around fills in a plane): its 5 extras "beside pairs" were dots stacked on others,
+  and go with the hidden-dot rule, as does one that had matched a truth dot nearby (41 right → 40).
+- **degradation1**: the orange family had two dots 0.17 px apart at 828, 157, the second matching the truth's dot
+  at 838, 157, which is not found; its test's recall limit goes from 0.83 to 0.82, with a check that no two
+  orange dots lie within 1 px.
+- **wave1**: its legend is read now (each label begins with a lone italic H, so no marker stood before a line
+  of three glyphs), and its three markers, which the truth counts, are masked. microplastics1, step1 and shap
+  also gain a legend by the new rule, none of whose markers their truths count; their rows are the same.
+
+The truths of grapes and wave1 counted legend markers (7 and 3), where those of aerobic, viability,
+microplastics1, step1 and shap leave them out. Taken out afterwards, at the user's word (local files, in no
+commit): from grapes (1076.8, 231.03), (1077.13, 277.19), (1076.94, 323.13), (1076.69, 368.25), (1076.94, 415.13),
+(1076.56, 458.94) and (1076.73, 505.44), families 1 to 7 in that order; from wave1 (376.99, 116.73), (376.98,
+195.38) and (377.02, 273.97), families 1 to 3. Against those truths: grapes 64 for 79, P 0.984, R 0.797; wave1 41
+for 40, P 0.951, R 0.975 (44 for 43 with R 0.977 before the legend was read). The table above is against the
+truths as they were.
+
+What is not right, and left:
+- The palette reading is tried only where no family is found by its color. An image like grapes with three
+  isolated dots of one color would have that color found alone, and the rest not.
+- Black dots in black outlines, and any dot whose fill is the outline's color: no ring shows. A dot of a fill
+  that is no color cluster takes the nearest cluster's color.
+- A dot mostly hidden under others costs little and can explain other ink: the doubles at one place are gone, and
+  the six along the curve's end with the line, but nothing checks that a hidden dot shows a ring of its own.
+- Under black rings, text is ring ink unless it is a line of text or a legend's label (the plot bounds and the
+  fit are left to deal with it, as for droplet1).
+- The ring's error over a disc, and the openings in 24 directions, are right in principle for every ring reading
+  and were measured worse on the images above; they are this reading's alone for now.
+
+Tests: a scene of six fill colors in grapes' values, opaque in black rings of 2 px, isolated and in overlapping
+groups (fills read 0 in P and rings 1, the dark green read by its own cluster's color; the rings' radius, width
+and darkness; rings around the page alone, beside plain dots, are no family; a 2 px black line 8° off the rows is
+unread along its length); the same with a legend of six markers outlined 2.9 px, each before a letter or two, and
+the line (one family of rings measured from the plot's rings alone, six fill colors, recall 0.9 and precision
+0.97 or better, each sure dot its color); a legend of four markers before one or two letters, with a column of
+dots before letters at uneven steps, a dot before two letters and a column of dots at even steps before nothing
+(four markers, four labels as text, nothing else); two outlined dots 0.3 px apart, opaque (the lower goes, the
+upper stays) and translucent (both stay), and two 4 px apart (both stay); grapes itself (six colors, black rings
+1.9 ± 0.3 px wide, r 14 ± 0.3, no dot on the legend or its letters, no two dots within 2 px, precision 0.97
+and recall 0.8 or better against the truth, the legend's markers not in it); healer (one opaque family, as before); culicine
+(faint rings, precision 0.97 and recall 0.9 or better). Twenty mutations fail a test each: any fill color tried
+at any pixel; rings with the page inside counted; 12 directions (the synthetic line, and grapes); the legend's
+markers measured with the dots; no palette reading; the ring's error over no disc at all; a column at any steps;
+a legend's labels not text; no short labels; a marker with nothing after it; the hidden dot kept (the synthetic
+pair, and grapes); either dot of the pair taken; translucent dots taken too; the masked reading first (grapes);
+the square patch (grapes); thin colors as fills (healer); 24 directions under any ring (culicine). Those that
+fail only a real image's test, a local file, are said so: no scene of exact shapes showed the soft rims, the
+crowded patches, the rim's cluster or the faint rings' trouble.
+
+385 tests pass (9 new). In the app, on Chrome's decode: grapes scans as one family, "outlined, 6 fill colors, r
+14.0" (ring from 12.25 to 14.00 px, fills 100% opaque from 18 overlapping pairs); Find dots gives 62 (6 flagged
+close) in 6.9 s, each marked in its fill's color and none on the legend; the Axes line reads x and y linear, read;
+no console errors. The label benchmark was not rerun: nothing in the axes or the labels' reading changed.

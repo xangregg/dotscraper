@@ -106,6 +106,12 @@ const DOUBLED_MAX_BUMPS = 3;
 // objective 5% lower)
 const COINCIDENT_RADII = 0.15;
 const COINCIDENT_MIN_PAIRS = 3;
+// Outlined dots whose rings and fills are this opaque hide what is under them, and one under another within
+// COINCIDENT_RADII × r is hidden but for a sliver of its ring. It still pays for itself where the image's rings are
+// wider or softer than the model's, a JPEG's: the sliver widens the upper dot's ring, and a black ring is 442 t units
+// against the 10 a dot's cost is counted in (grapes: 8 of 70 dots, each 0.07–0.20 px from the one over it; the real
+// pairs there are 4.2 px apart and more). Such a dot goes with the deaths.
+const HIDING_ALPHA = 0.95;
 // flag a dot this close to another of its family (× r): in the view the two marks are one, and for opaque dots one
 // dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
 // of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
@@ -660,12 +666,20 @@ export function createFit(input) {
         return without - withDot;
     }
 
+    // outlined dots that hide what is under them: whether another lies over this one at the same place (HIDING_ALPHA)
+    function hiddenUnder(id) {
+        if (!style.layered || style.layered.fillAlpha < HIDING_ALPHA || style.ring.alpha < HIDING_ALPHA)
+            return false;
+        const p = pos.get(id);
+        return near(p.x, p.y, COINCIDENT_RADII * style.radius).some(o => model.zOf(o) > model.zOf(id));
+    }
+
     // dots whose removal costs less than λ go, and dots too hidden to report
     function deaths() {
         let removed = 0;
         for (const id of [...pos.keys()]) {
             const p = pos.get(id);
-            if (visibleFraction(p.x, p.y) < minVisible || !filled(p.x, p.y) || removalGain(id) < lambda) {
+            if (visibleFraction(p.x, p.y) < minVisible || !filled(p.x, p.y) || hiddenUnder(id) || removalGain(id) < lambda) {
                 remove(id);
                 removed++;
             }

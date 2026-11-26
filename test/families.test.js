@@ -338,3 +338,55 @@ test('regression: bread2, three translucent colors with rims over bands of their
     const m = matchDots(truth, found, 0.5 * radius);
     assert.ok(m.recall >= 0.72 && m.precision >= 0.8, `recall ${m.recall}, precision ${m.precision}, ${found.length} dots`);
 });
+
+const GRAPES = new URL('../bench-pmc/grapes-10.5344-ajev.2020.20050.jpg', import.meta.url).pathname;
+// px: the legend's markers and labels lie right of x 1040 and above y 540
+const inGrapesLegend = d => d.x > 1040 && d.y < 540;
+
+test('regression: grapes, seven fill colors in black outlines, most dots overlapping, a legend outlined heavier (a JPEG)', { skip: !existsSync(GRAPES) && 'bench-pmc absent' }, () => {
+    // before: no family (no color has three isolated fills, and the fills share no plane)
+    const results = extractAll(readImage(GRAPES), true);
+    assert.equal(results.length, 6, 'one result per fill color in the plot');
+    const est = results[0].est;
+    assert.equal(est.scale, 'outline');
+    assert.equal(est.style.ring.alpha, 1, 'opaque black rings');
+    // the dots' rings are 2 px wide, the legend's markers' 2.8
+    const width = est.style.radius * (1 - est.style.ring.inner);
+    assert.ok(Math.abs(width - 1.9) <= 0.3, `ring width ${width}`);
+    const found = results.flatMap(r => r.fit.dots);
+    const radius = results[0].fit.radius;
+    assert.ok(Math.abs(radius - 14) <= 0.3, `radius ${radius}`);
+    assert.ok(!found.some(inGrapesLegend), 'no dot on the legend or its letters');
+    for (const [i, a] of found.entries())
+        assert.ok(!found.some((b, j) => j > i && Math.hypot(a.x - b.x, a.y - b.y) < 2), `no two dots at one place: ${a.x.toFixed(1)}, ${a.y.toFixed(1)}`);
+    const truth = readTruthJson(GRAPES.replace('bench-pmc/', 'bench-pmc/truth/').replace('.jpg', '.json')).dots;
+    const m = matchDots(truth, found, 0.5 * radius);
+    // (the 8 black dots in black outlines are a silhouette no ring shows in, and 6 more lie mostly under them)
+    assert.ok(m.precision >= 0.97 && m.recall >= 0.8, `recall ${m.recall}, precision ${m.precision}, ${found.length} dots`);
+});
+
+const HEALER = new URL('../bench-pmc/healer-10.3390-medicina61030511.png', import.meta.url).pathname;
+
+test('regression: healer, blue dots with rims in a darker blue are one family, the rim\'s color no second fill', { skip: !existsSync(HEALER) && 'bench-pmc absent' }, () => {
+    // with the reading for outlined dots of several fill colors tried on every colored cluster: "2 fill colors (0, 0,
+    // 245; 6, 6, 195)", the second the rims', with two of the 64 dots
+    const results = extractAll(readImage(HEALER));
+    assert.equal(results.length, 1);
+    assert.notEqual(results[0].est.scale, 'outline', results[0].est.notes.join(' '));
+    assert.equal(results[0].est.familyMeasure.kind, 'opaque');
+});
+
+const CULICINE = new URL('../bench-pmc/culicine-10.4269-ajtmh.24-0478.png', import.meta.url).pathname;
+
+test('regression: culicine, pink and teal dots in darker rims over boxes of their colors, by their rings', { skip: !existsSync(CULICINE) && 'bench-pmc absent' }, () => {
+    // before: one family of the two and no radius. Read as outlined dots of four fill colors (each dot color on the
+    // page and over its box); with the openings under the rings in 24 directions, as under grapes' black rings, 96
+    // dots, half of them extras
+    const results = extractAll(readImage(CULICINE));
+    assert.equal(results[0].est.scale, 'outline');
+    assert.ok(results[0].est.style.ring.alpha < 0.3, `faint rings: ${results[0].est.style.ring.alpha}`);
+    const found = results.flatMap(r => r.fit.dots);
+    const truth = readTruthJson(CULICINE.replace('bench-pmc/', 'bench-pmc/truth/').replace('.png', '.json')).dots;
+    const m = matchDots(truth, found, 0.5 * results[0].fit.radius);
+    assert.ok(m.precision >= 0.97 && m.recall >= 0.9, `recall ${m.recall}, precision ${m.precision}, ${found.length} dots`);
+});

@@ -68,6 +68,11 @@ const LEGEND_GAP_HEIGHTS = 2;
 const LEGEND_CENTER_TOL = 0.35;
 const LEGEND_MIN_ENTRIES = 3;
 const LEGEND_COLUMN_TOL = 3; // px
+// A legend whose labels are a letter or two has no line of text (grapes: GH, GS, BP, RP, B, R, OR). Its markers are
+// those before a group of fewer glyphs than a line has, placed as before a line, when LEGEND_MIN_ENTRIES of them in a
+// column are evenly spaced: their steps within LEGEND_STEP_TOL of each other (grapes: 44–47 px). Those labels are
+// then text.
+const LEGEND_STEP_TOL = 4; // px
 const BOX_PAD = 2; // px around each box, the antialiasing
 
 /**
@@ -91,7 +96,7 @@ export function annotationBoxes(image, page, radius) {
         return h >= GLYPH_MIN_HEIGHT && w <= GLYPH_MAX_ASPECT * h && c.n >= GLYPH_MIN_PIXELS && c.n >= GLYPH_MIN_FILL * w * h
             && c.r <= TEXT_MAX_STROKE * h && c.r <= maxStroke;
     });
-    const lines = textLines(glyphs);
+    const { lines, short } = textLines(glyphs);
     const pad = b => [b[0] - BOX_PAD, b[1] - BOX_PAD, b[2] + BOX_PAD, b[3] + BOX_PAD];
     // markers before lines
     const markers = [];
@@ -101,16 +106,31 @@ export function annotationBoxes(image, page, radius) {
         if (c.n < GLYPH_MIN_PIXELS || Math.max(w, h) > MARKER_ASPECT * Math.min(w, h) || c.r < MARKER_MIN_FILL * h)
             continue;
         const cy = (c.y0 + c.y1) / 2;
-        const line = lines.find(l => {
+        // [x0, y0, x1, y1) of a line or a glyph: whether the marker is just before it
+        const before = l => {
             const lh = l[3] - l[1];
             return h <= LEGEND_GAP_HEIGHTS * lh && l[0] >= c.x1 && l[0] - c.x1 <= LEGEND_GAP_HEIGHTS * lh
                 && Math.abs((l[1] + l[3]) / 2 - cy) <= LEGEND_CENTER_TOL * lh;
-        });
-        if (line)
-            markers.push({ box: [c.x0, c.y0, c.x1, c.y1], cx: (c.x0 + c.x1) / 2 });
+        };
+        const label = lines.some(before) ? null : short.find(before);
+        if (label !== undefined)
+            markers.push({ box: [c.x0, c.y0, c.x1, c.y1], cx: (c.x0 + c.x1) / 2, cy, label });
     }
-    const legend = markers.filter(m => markers.filter(o => Math.abs(o.cx - m.cx) <= LEGEND_COLUMN_TOL).length >= LEGEND_MIN_ENTRIES);
-    return { text: lines.map(pad), legend: legend.map(m => pad(m.box)) };
+    const legend = markers.filter(m => {
+        const column = markers.filter(o => Math.abs(o.cx - m.cx) <= LEGEND_COLUMN_TOL);
+        if (!m.label)
+            return column.filter(o => !o.label).length >= LEGEND_MIN_ENTRIES;
+        return evenlySpaced(m, column);
+    });
+    // (a short label is text once its marker is a legend's)
+    return { text: [...lines, ...legend.filter(m => m.label).map(m => m.label)].map(pad), legend: legend.map(m => pad(m.box)) };
+}
+
+// whether marker m is one of three of its column at even steps (LEGEND_STEP_TOL): the middle one or an end one
+function evenlySpaced(m, column) {
+    const steps = column.filter(o => o !== m).map(o => o.cy - m.cy);
+    return steps.some(a => steps.some(b => a !== b && Math.abs(a) > LEGEND_STEP_TOL
+        && (Math.abs(a + b) <= LEGEND_STEP_TOL || Math.abs(b - 2 * a) <= LEGEND_STEP_TOL)));
 }
 
 // 8-connected pieces of ink: bounding box, pixel count, inscribed radius (the largest distance from one of its pixels
@@ -143,7 +163,8 @@ function inkPieces(image, page) {
     });
 }
 
-// glyphs joined into lines (union-find over neighbors along a row); lines of TEXT_MIN_GLYPHS or more, as boxes
+// glyphs joined into lines (union-find over neighbors along a row), as boxes: `lines` of TEXT_MIN_GLYPHS or more, and
+// the `short` groups of fewer, which are text only as a legend's labels
 function textLines(glyphs) {
     const order = glyphs.map((_, i) => i).sort((a, b) => glyphs[a].x0 - glyphs[b].x0);
     const parent = glyphs.map((_, i) => i);
@@ -180,9 +201,13 @@ function textLines(glyphs) {
         groups.get(k).push(g);
     });
     const lines = [];
+    const short = [];
+    const box = gs => [Math.min(...gs.map(g => g.x0)), Math.min(...gs.map(g => g.y0)), Math.max(...gs.map(g => g.x1)), Math.max(...gs.map(g => g.y1))];
     for (const gs of groups.values()) {
-        if (gs.length < TEXT_MIN_GLYPHS)
+        if (gs.length < TEXT_MIN_GLYPHS) {
+            short.push(box(gs));
             continue;
+        }
         const h = upperMedian(gs.map(g => g.y1 - g.y0));
         const w = upperMedian(gs.map(g => g.x1 - g.x0));
         const bottom = upperMedian(gs.map(g => g.y1));
@@ -193,7 +218,7 @@ function textLines(glyphs) {
             && Math.abs(g.n - n) <= TEXT_SAME_PIXELS * n).length;
         if (onBase < TEXT_BASELINE_SHARE * gs.length || same >= TEXT_MAX_SAME_SHARE * gs.length)
             continue;
-        lines.push([Math.min(...gs.map(g => g.x0)), Math.min(...gs.map(g => g.y0)), Math.max(...gs.map(g => g.x1)), Math.max(...gs.map(g => g.y1))]);
+        lines.push(box(gs));
     }
-    return lines;
+    return { lines, short };
 }

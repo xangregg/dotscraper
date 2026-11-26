@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { pixelCoverage, createDotModel, solidImage } from '../src/core/render.js';
-import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness, findHollowRings, lineOpening } from '../src/core/outline.js';
+import { createOutlineModel, fillPlane, findOutlines, fillFamilies, relativeDarkness, findHollowRings, lineOpening, paletteValue, findPaletteOutlines } from '../src/core/outline.js';
 import { estimateFamilies } from '../src/core/families.js';
 import { matchDots } from '../src/core/metrics.js';
 import { createRng } from '../src/core/rng.js';
@@ -640,4 +640,157 @@ test('thick-walled rings in a solid family\'s color: not the o\'s of text in tha
     const rings = estimates.filter(e => e.candidates?.[0]?.hollow);
     assert.ok(rings.every(e => Math.max(...e.style.color) - Math.min(...e.style.color) < 30), `ring families: ${rings.map(e => e.style.color).join('; ')}`);
     assert.equal(estimates.filter(e => e.familyMeasure?.kind === 'opaque').length, 2);
+});
+
+// grapes' fills as its color clusters give them: saturated colors that share no plane through white. The dark green
+// is half the light one, and its pixels (DARK_DRAWN: the legend marker's) lie nearer the light green's line to black,
+// 6 units off, than to their own cluster's color, 12.
+const DARK = [9, 123, 11];
+const DARK_DRAWN = [2, 127, 2];
+const PALETTE = [[10, 247, 13], [243, 5, 10], [246, 7, 243], DARK, [4, 2, 181], [68, 127, 243]];
+const DRAWN = PALETTE.map(c => (c === DARK ? DARK_DRAWN : c));
+const PW = 560;
+const PH = 380;
+const PR = 10; // px, the dots' radius to the ring's outer edge
+const PRING = 2; // px, their rings
+const LEGEND_RING = 2.9; // px, the legend markers' (heavier, and still under half their box: isolated rings)
+const LEGEND_X = 480;
+const LINE = { x0: 30, y0: 322, x1: 330, y1: 364, width: 2 }; // 8° off the rows
+
+// Opaque fills in opaque black rings, in drawing order: dots { x, y, k (its color's index), ring? }; then black
+// rectangles and a thin black line
+function paletteImage(dots, { rects = [], line = null } = {}) {
+    const img = new Float32Array(3 * PW * PH).fill(255);
+    for (const d of dots) {
+        const ring = d.ring ?? PRING;
+        const c = d.k === null ? WHITE : DRAWN[d.k];
+        for (let y = Math.floor(d.y - PR - 1); y <= d.y + PR + 1; y++) {
+            for (let x = Math.floor(d.x - PR - 1); x <= d.x + PR + 1; x++) {
+                const mf = d.hollow ? 0 : pixelCoverage(d.x, d.y, PR - ring / 2, x, y);
+                const mr = pixelCoverage(d.x, d.y, PR, x, y) - pixelCoverage(d.x, d.y, PR - ring, x, y);
+                for (let ch = 0; ch < 3; ch++) {
+                    const p = 3 * (y * PW + x) + ch;
+                    img[p] = (1 - mr) * (img[p] + mf * (c[ch] - img[p]));
+                }
+            }
+        }
+    }
+    for (const [x0, y0, x1, y1] of rects) {
+        for (let y = y0; y < y1; y++)
+            img.fill(0, 3 * (y * PW + x0), 3 * (y * PW + x1));
+    }
+    if (line) {
+        const len = Math.hypot(line.x1 - line.x0, line.y1 - line.y0);
+        const ux = (line.x1 - line.x0) / len;
+        const uy = (line.y1 - line.y0) / len;
+        for (let y = 0; y < PH; y++) {
+            for (let x = 0; x < PW; x++) {
+                const dx = x + 0.5 - line.x0;
+                const dy = y + 0.5 - line.y0;
+                const along = dx * ux + dy * uy;
+                const m = along < 0 || along > len ? 0 : Math.min(1, Math.max(0, line.width / 2 + 0.5 - Math.abs(dx * uy - dy * ux)));
+                for (let ch = 0; ch < 3; ch++)
+                    img[3 * (y * PW + x) + ch] *= 1 - m;
+            }
+        }
+    }
+    const data = new Uint8ClampedArray(4 * PW * PH);
+    for (let p = 0; p < PW * PH; p++) {
+        for (let ch = 0; ch < 3; ch++)
+            data[4 * p + ch] = Math.round(img[3 * p + ch]);
+        data[4 * p + 3] = 255;
+    }
+    return { width: PW, height: PH, data };
+}
+
+// one isolated dot of each color, and overlapping groups in mixed colors
+function paletteDots() {
+    const dots = PALETTE.map((_, k) => ({ x: 40 + 60 * k, y: 40.5, k }));
+    for (let g = 0; g < 6; g++) {
+        const cx = 50 + 70 * g;
+        const cy = 110 + 70 * (g % 3);
+        for (let j = 0; j < 4; j++)
+            dots.push({ x: cx + 9 * Math.cos(1.7 * j + g) + 0.3 * j, y: cy + 9 * Math.sin(2.3 * j + g) + 0.2 * g, k: (g + (j >> 1)) % PALETTE.length });
+    }
+    return dots;
+}
+
+// a legend: a marker for each color, of the dots' size and outlined heavier, at even steps, each before a letter or
+// two (blocks 3 px wide). With it each color has two isolated fills: one more, and it would be found by its color.
+function legend(n = PALETTE.length) {
+    const markers = [];
+    const rects = [];
+    for (let i = 0; i < n; i++) {
+        const y = 60 + 34 * i;
+        markers.push({ x: LEGEND_X, y: y + 0.5, k: i, ring: LEGEND_RING });
+        // an L, and for every other entry an I after it
+        rects.push([LEGEND_X + 22, y - 8, LEGEND_X + 25, y + 8], [LEGEND_X + 22, y + 5, LEGEND_X + 31, y + 8]);
+        if (i % 2)
+            rects.push([LEGEND_X + 35, y - 8, LEGEND_X + 38, y + 8]);
+    }
+    return { markers, rects };
+}
+
+test('paletteValue: fills of colors that share no plane read 0 and black rings 1; a dark fill half a lighter one is no ring', () => {
+    const dots = paletteDots();
+    const image = paletteImage(dots);
+    assert.equal(fillPlane(image, WHITE), null, 'no fill plane');
+    const P = paletteValue(image, WHITE, PALETTE);
+    const at = (x, y) => P[Math.floor(y) * PW + Math.floor(x)];
+    for (const d of dots.slice(0, PALETTE.length)) {
+        assert.ok(Math.abs(at(d.x, d.y)) < 0.05, `fill ${d.k} reads ${at(d.x, d.y)}`);
+        assert.ok(at(d.x + PR - PRING / 2, d.y) > 0.9, `ring of ${d.k} reads ${at(d.x + PR - PRING / 2, d.y)}`);
+    }
+    assert.ok(at(300, 300) === 0, 'the page');
+});
+
+test('findPaletteOutlines: black rings around fills are read at full darkness; rings around the page alone are none', () => {
+    const dots = paletteDots();
+    const found = findPaletteOutlines(paletteImage(dots), WHITE, PALETTE, () => true);
+    assert.ok(found, 'found');
+    assert.ok(Math.abs(found.ring.radius - PR) <= 0.3, `radius ${found.ring.radius}`);
+    assert.ok(Math.abs(found.ring.radius * (1 - found.ring.inner) - PRING) <= 0.4, `ring width ${found.ring.radius * (1 - found.ring.inner)}`);
+    assert.equal(found.ring.alpha, 1);
+    // plain dots of two colors and four letter o's: rings, with the page inside
+    const plain = [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({ x: 40 + 50 * i, y: 200.5, k: i % 2, ring: 0 }));
+    const os = [0, 1, 2, 3].map(i => ({ x: 60 + 40 * i, y: 60.5, k: null, hollow: true }));
+    assert.equal(findPaletteOutlines(paletteImage([...plain, ...os]), WHITE, PALETTE.slice(0, 2), () => true), null);
+});
+
+test('black rings read unmasked: a thin black line off the rows and columns is under the rings, not ring ink', () => {
+    const found = findPaletteOutlines(paletteImage(paletteDots(), { line: LINE }), WHITE, PALETTE, () => true);
+    assert.ok(found, 'found');
+    let unread = 0;
+    let total = 0;
+    for (let s = 0.15; s <= 0.85; s += 0.01) {
+        const x = Math.floor(LINE.x0 + s * (LINE.x1 - LINE.x0));
+        const y = Math.floor(LINE.y0 + s * (LINE.y1 - LINE.y0));
+        total++;
+        if (Number.isNaN(found.D[y * PW + x]))
+            unread++;
+    }
+    assert.ok(unread >= 0.95 * total, `${unread} of ${total} points along the line unread`);
+});
+
+test('outlined dots of six fill colors off any plane, with a legend outlined heavier: one family of rings, each dot its color', () => {
+    const dots = paletteDots();
+    const { markers, rects } = legend();
+    const image = paletteImage([...dots, ...markers], { rects, line: LINE });
+    const { estimates } = estimateFamilies(image);
+    assert.equal(estimates.length, 1);
+    const est = estimates[0];
+    assert.equal(est.scale, 'outline', est.notes?.join(' '));
+    assert.equal(est.fillFamilies.length, PALETTE.length);
+    const width = est.style.radius * (1 - est.style.ring.inner);
+    assert.ok(Math.abs(width - PRING) <= 0.4, `ring width ${width}: the dots', not the legend's`);
+    assert.ok(est.isolated.length >= 3 && !est.isolated.some(c => Math.abs(c.cx - LEGEND_X) < PR), `measured from the plot's rings alone: ${JSON.stringify(est.isolated)}`);
+    const results = extractAll(image);
+    const found = results.flatMap(r => r.fit.dots.map(d => ({ ...d, color: r.est.style.color })));
+    const m = matchDots(dots, found, PR / 2);
+    assert.ok(m.recall >= 0.9, `recall ${m.recall} (${found.length} found of ${dots.length})`);
+    assert.ok(m.precision >= 0.97, `precision ${m.precision}: extras ${m.extra.map(i => `${found[i].x.toFixed(0)},${found[i].y.toFixed(0)}`)}`);
+    for (const d of found.filter(q => q.familySure)) {
+        const t = dots.reduce((a, b) => (Math.hypot(b.x - d.x, b.y - d.y) < Math.hypot(a.x - d.x, a.y - d.y) ? b : a));
+        assert.ok(Math.hypot(...DRAWN[t.k].map((v, ch) => v - d.color[ch])) < 12, `dot at ${d.x.toFixed(1)}, ${d.y.toFixed(1)} read as ${d.color.map(Math.round)}`);
+    }
 });
