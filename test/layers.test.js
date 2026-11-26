@@ -415,6 +415,18 @@ test('regression: prot-cath-chris, few dots fitted on the dashed curves in the d
     assert.ok(missed <= 3, `${missed} missed`);
 });
 
+const WAVE1 = new URL('../bench-nature/wave1-10.1038-s41586-026-11145-8.png', import.meta.url).pathname;
+
+test('regression: wave1, a dot where a solid line of its color leaves it is not doubled', { skip: !existsSync(WAVE1) && 'bench-nature wave1 absent' }, () => {
+    // before: a purple dot at (1411.5, 555.5) had a second 0.9 px off, explaining the line's pixels the opening kept
+    // beside it (the line's two long pieces were not bridged across the dot, so as not to mask it whole)
+    const results = extractAll(readImage(WAVE1), false);
+    const close = results.flatMap(r => r.fit.dots.filter(d => d.flags.includes('close')).map(d => [Math.round(d.x), Math.round(d.y)]));
+    assert.equal(close.length, 0, `close pairs at ${JSON.stringify(close)}`);
+    const n = results.reduce((s, r) => s + r.fit.dots.length, 0);
+    assert.ok(n >= 37 && n <= 38, `${n} dots for 38`);
+});
+
 test('bounds: pixels more than a dot radius beyond the axes are masked, nothing nearer changes', () => {
     const { image } = synthGraph(SYNTH_PRESETS.sparse(1));
     const est = estimateStyle(image);

@@ -62,6 +62,11 @@ const DASH_REACH_GAPS = 3;
 // starts only at a piece filling its ends this much (prot-cath-chris: 8 extras without the test, 5 at 0.65, 11 at
 // 0.7, 32 at 0.8, where its own dashes stop starting chains)
 const DASH_END_FILL = 0.65;
+// Between two long pieces (a solid line through a dot of its color) only the stubs are bridged, this far into the gap
+// from each end: the line's pixels the opening kept beside the dot, which a second dot explained (wave1: a purple dot
+// doubled 0.9 px off where its line leaves it; none at 0.2, 0.35 or 0.5; bridged all the way, shannon's dots on a
+// median line 6 px wide, r 6.2, were masked whole and lost)
+const DASH_STUB_RADII = 0.2;
 // A pixel at count ≥ 1.5 is inside at least one dot, so a disc of nearly the dot's radius around it lies in the
 // family's pixels (or under other marks). Text in a translucent family's own color fails that: JMP's 50% black dots
 // share their line with black text, whose antialiased strokes read as counts 1–8, too short for the length test,
@@ -486,10 +491,8 @@ function pieceFrame(c, width) {
  * by a dot is ragged where the dot was, and fills no box), and following each dash it takes in that turns no more
  * than DASH_ANGLE_TOL. A chain of two pieces or more that reaches the length test is a line: its pieces are marked,
  * and so are its deep pixels in the strip between them and on to a thin mark just past its ends (the line goes on
- * under the dots), except between two long
- * pieces: a solid line through a dot of its color, which the length test takes as it always did, unbridged (shannon:
- * a dot on a median line 6 px wide, r 6.2, was masked whole and lost). In place. O(pieces² + pieces · radius ·
- * thickness).
+ * under the dots), except between two long pieces, a solid line through a dot of its color: there only the first
+ * DASH_STUB_RADII of the gap from each end. In place. O(pieces² + pieces · radius · thickness).
  *
  * @param {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]} pieces  short components
  * @param {{pixels: number[], x0: number, y0: number, x1: number, y1: number}[]} long  the components long enough to be
@@ -629,8 +632,7 @@ function dashPieces(pieces, long, leaning, deep, thin, width, height, radius) {
                 }
                 const { q, e } = best;
                 chain.push(q);
-                if (!(q.long && prev.long))
-                    bridges.push([point(f, edge), point(f, side > 0 ? e.a0 : e.a1), (f.b1 - f.b0) / 2]);
+                bridges.push([point(f, edge), point(f, side > 0 ? e.a0 : e.a1), (f.b1 - f.b0) / 2, q.long && prev.long]);
                 prev = q;
                 const farEdge = side > 0 ? e.a1 : e.a0;
                 if (q.dash && turn(f, q) <= DASH_ANGLE_TOL) {
@@ -653,8 +655,20 @@ function dashPieces(pieces, long, leaning, deep, thin, width, height, radius) {
             for (const p of f.c.pixels)
                 thin[p] = 1;
         }
-        for (const [a, b, h] of bridges)
-            bridge(a, b, h);
+        for (const [a, b, h, solid] of bridges) {
+            if (!solid) {
+                bridge(a, b, h);
+                continue;
+            }
+            const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+            if (len === 0)
+                continue;
+            const reach = Math.min(DASH_STUB_RADII * radius, len / 2);
+            const ux = (b[0] - a[0]) / len;
+            const uy = (b[1] - a[1]) / len;
+            bridge(a, [a[0] + reach * ux, a[1] + reach * uy], h);
+            bridge([b[0] - reach * ux, b[1] - reach * uy], b, h);
+        }
     }
 }
 

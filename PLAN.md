@@ -5112,3 +5112,17 @@ swarms (pathogen 30 → 51, bench2 gradient-opaque 16 → 27, solid-opaque 15 �
 default, for images whose extras are doubles. prot-cath-chris, with its dashes masked, is not one: 5 extras → 6 at 4
 (4 at 10); in the app (Chrome's decode) 188 found with it off and on, for 187. Test: dots on an unmasked dashed line of their color, doubled without it, not with it, a
 pair 1.25 r apart kept (fails with the price at 0).
+
+**wave1's doubles** (2026-11-26). The truth had two near-coincident pairs, each 0.9 px apart: purple at (1411, 555)
+and yellow at (556, 1449). Both sat exactly where a line of the dots' color touches the dot, and both matched an older
+fit's doubled dot to 0.03 px. The yellow blob measures 30.0 px tall by 29.8 wide (a lone dot 29.75 both ways), where a
+pair that far apart would add 0.9 px. The user confirmed they are one dot each, so one of each pair left the truth
+(now 38): (1411.13, 554.69) in family 1 and (555.5, 1449.25) in family 3, the one farther from where a single fitted
+dot settles.
+
+The fit still doubled the purple dot: the second explained the line's pixels that the mask's opening keeps beside
+the dot where the line leaves it. The line is solid, two long pieces with the dot between, and those were left
+unbridged (bridged all the way, shannon's dots on a median line were masked whole). Now the first 0.2 r of such a gap
+from each end is bridged (`DASH_STUB_RADII`): no double at 0.2, 0.35 or 0.5; shannon, prot-cath-chris and adults1
+unchanged at each. Full benchmark: only wave1 changes, 37 found for 38, P 1.000, R 0.974 (the miss, at (430, 1549),
+is a yellow dot half under the x axis, as before). Test: wave1 has no close pair (fails with the stubs at 0).
