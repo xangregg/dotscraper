@@ -18,6 +18,13 @@ export const ISOLATED_MAX_MOMENT_RATIO = 1.03; // r(moment) / r(area); 1 for a u
 // dot passes as a crisp one: counted always, round specks of text passed too and outvoted the dots (adults1: no
 // family), and four more images' counts moved.
 const ISOLATED_HALF_LEVEL = 0.5; // counts
+// A square's second moments are a disc's within 2.3%, under ISOLATED_MAX_MOMENT_RATIO, but its corners reach 1.25 r
+// from its middle (r the radius of a disc of its area): a component with pixels farther out than ISOLATED_MAX_REACH
+// toward each of the four corners of its box is no dot. aerobic: a legend of squares 23 px wide in the dots' colors;
+// four of its seven colors had no other isolated shape, took 13.8 px for their radius (the dots: 8.6), and were no
+// families. All four: far pixels to one side or two are a bump on a dot, which the moments judge. A square under
+// 12 px or so can't be told from a disc this way.
+const ISOLATED_MAX_REACH = [1.05, 0.75]; // × r, plus px
 const ISOLATED_BLUR_RADIUS_TOL = 0.05; // × r, between the radius of the soft area and of the area at half coverage
 // Outlined dots (bench1 stroked-dots: a light gray fill, a darker ring 2 px wide at the rim) read deeper than one dot
 // at the ring, so none passed as isolated. A component above ISOLATED_MAX_LEVEL is still one dot if every such pixel
@@ -165,8 +172,18 @@ export function isolatedDots(D, width, height, tol = EXACT_TOLERANCES, blurred =
         const aspect = Math.sqrt((tr / 2 + disc) / (tr / 2 - disc));
         const r = Math.sqrt(a / Math.PI);
         const halfR = Math.sqrt(halfArea / Math.PI);
+        // the component's own pixels: the box's margin can hold a neighbor's rim (curve preset: dots a pixel apart)
+        const reach = ISOLATED_MAX_REACH[0] * r + ISOLATED_MAX_REACH[1];
+        const corners = [false, false, false, false];
+        for (const p of comp) {
+            const x = p % width;
+            const dx = x + 0.5 - cx;
+            const dy = (p - x) / width + 0.5 - cy;
+            if (Math.hypot(dx, dy) > reach)
+                corners[(dx > 0 ? 1 : 0) + (dy > 0 ? 2 : 0)] = true;
+        }
         const blurredDisc = blurred && Math.sqrt(2 * halfTr / halfArea) / halfR <= ISOLATED_MAX_MOMENT_RATIO && Math.abs(r - halfR) <= ISOLATED_BLUR_RADIUS_TOL * r;
-        if (aspect > ISOLATED_MAX_ASPECT || (Math.sqrt(2 * tr) / r > ISOLATED_MAX_MOMENT_RATIO && !blurredDisc))
+        if (aspect > ISOLATED_MAX_ASPECT || (Math.sqrt(2 * tr) / r > ISOLATED_MAX_MOMENT_RATIO && !blurredDisc) || corners.every(Boolean))
             continue;
         let ringed = false;
         if (maxD > ISOLATED_MAX_LEVEL) {

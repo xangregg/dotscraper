@@ -1277,7 +1277,7 @@ test('regression: a family drawn first, nearly every dot partly under another fa
     // too little of a dot is none: 8 px from the blue dot over it, most of its edge shows and under half its disc
     const slivers = drawnInOrder(520, 370, scene(8, 0));
     assert.equal(measureOpaque(scanOf(slivers), ORANGE).dotsUnder, 0);
-    assert.equal(familyOf(estimateStyle(slivers).candidates, ORANGE), undefined);
+    assert.ok(!familyOf(estimateStyle(slivers).candidates, ORANGE), 'the orange slivers are a family');
     // nor is a dot with a bite of the page out of it one partly under other ink: the page is no ink, and with a
     // line of other ink through what is left, what the line doesn't hold is still not filled
     for (const line of [false, true]) {
@@ -1293,6 +1293,149 @@ test('regression: a family drawn first, nearly every dot partly under another fa
         }
         assert.equal(measureOpaque(scanOf(bites), ORANGE).dotsUnder, 12, `with bitten dots${line ? ' and lines' : ''}`);
     }
+});
+
+const GREEN = [77, 175, 74];
+const TEAL = [8, 176, 175];
+const INK = [7, 7, 7];
+
+// `n` dots of one color in a grid, each a third under a dot of another 10.8 px away: [x, y] of the lower ones
+function underPairs(n, lower, upper) {
+    const dots = [];
+    for (let i = 0; i < n; i++) {
+        const x = 60 + 110 * (i % 4);
+        const y = 50 + 80 * Math.floor(i / 4);
+        dots.push({ x, y, color: lower }, { x: x + 10, y: y + 4, color: upper });
+    }
+    return dots;
+}
+
+function fillRect(image, x0, y0, x1, y1, color) {
+    for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++)
+            image.data.set([...color, 255], 4 * (y * image.width + x));
+    }
+}
+
+// the dots of a color among those fitted for it, matched within 5 px
+function foundOf(results, dots, color) {
+    const truth = dots.filter(d => d.color === color);
+    const r = familyOf(results, color);
+    return { r, truth: truth.length, matched: r ? matchDots(truth, r.fit.dots, 5).pairs.length : 0 };
+}
+
+test('regression: a family with no whole dot keeps the dots\' radius when it is measured again for the fit', () => {
+    // 12 green dots, each a third under a blue one, and 4 blue dots alone. before: found as a sibling at 9.9 px, the
+    // green was measured again beside the blue at 5.9, the depth of what shows of it, and fitted as 60 dots
+    const dots = [...underPairs(12, GREEN, BLUE), ...[0, 1, 2, 3].map(i => ({ x: 60 + 110 * i, y: 290, color: BLUE }))];
+    const results = extractAll(drawnInOrder(520, 340, dots));
+    const green = foundOf(results, dots, GREEN);
+    // the radius of the blue, which has whole dots
+    near(green.r.est.familyMeasure.siblingRadius, 10, 0.05, 'radius taken');
+    near(green.r.est.style.radius, 10, 0.05, 'radius');
+    assert.ok(green.r.est.notes.some(n => /10\.0 px, is that of the image's other families; the dots' own shapes gave 9\.9 px, at which 12 of these dots show/.test(n)), green.r.est.notes.join(' '));
+    assert.equal(green.matched, 12);
+    assert.equal(green.r.fit.dots.length, 12);
+    assert.equal(foundOf(results, dots, BLUE).matched, 16);
+    // with no whole blue dot either (those alone touch in pairs), each keeps the radius it was found at
+    const touching = [...underPairs(12, GREEN, BLUE), ...[0, 1, 2, 3].flatMap(i => [{ x: 60 + 110 * i, y: 290, color: BLUE }, { x: 79 + 110 * i, y: 290, color: BLUE }])];
+    const both = extractAll(drawnInOrder(520, 340, touching));
+    for (const [color, what, count] of [[GREEN, 'green', 12], [BLUE, 'blue', 20]]) {
+        const f = foundOf(both, touching, color);
+        assert.equal(f.r.est.isolated.length, 0, what);
+        assert.equal(f.r.est.familyMeasure.siblingRadius, undefined, what);
+        near(f.r.est.style.radius, 10, 0.2, `${what}'s radius`);
+        assert.equal(f.matched, count, what);
+        assert.equal(f.r.fit.dots.length, count, what);
+    }
+});
+
+test('a color whose shapes give another radius is measured at the found families\' (after aerobic)', () => {
+    // 8 green dots, each a third under a blue one, 6 blue dots alone, and a legend with an oblong key of each color:
+    // the green's thickest shape is its key, 27 px high, and at 14.5 px it shows no dot
+    const dots = [...underPairs(8, GREEN, BLUE), ...[0, 1, 2, 3, 4, 5].map(i => ({ x: 60 + 70 * i, y: 290, color: BLUE }))];
+    const image = drawnInOrder(560, 340, dots);
+    fillRect(image, 470, 40, 515, 67, GREEN);
+    fillRect(image, 470, 90, 515, 117, BLUE);
+    const alone = measureOpaque(scanOf(image), GREEN);
+    near(alone.radius, 14.5, 0.3, 'radius from its shapes');
+    assert.equal(alone.dots + alone.dotsUnder, 0);
+    // at the blue dots' 10 px its 8 dots show, while the blue is ink not known to be dots
+    const results = extractAll(image);
+    const green = foundOf(results, dots, GREEN);
+    assert.ok(green.r, 'the green is a family');
+    near(green.r.est.style.radius, 10, 0.05, 'radius');
+    near(green.r.est.familyMeasure.siblingRadius, 10, 0.05, 'radius taken');
+    assert.ok(green.r.est.notes.some(n => /10\.0 px, is that of the image's other families, at which 8 of these dots show/.test(n)), green.r.est.notes.join(' '));
+    // (the keys are fitted too: this scene has no legend a mask would find)
+    assert.equal(green.matched, 8);
+    assert.equal(foundOf(results, dots, BLUE).matched, 14);
+});
+
+test('dots in the color of the figure\'s text, at a found family\'s radius with whole dots of their own, are a family (after reward)', () => {
+    // 12 dark dots, each a third under a teal one, 2 alone, 16 teal dots, and 12 strokes 4 px thick in the dark color:
+    // a tenth of the dark pixels is in the dots
+    const scene = whole => {
+        const dots = [...underPairs(12, INK, TEAL), ...[0, 1, 2, 3, 4, 5].map(i => ({ x: 60 + 80 * i, y: 290, color: i < whole ? INK : TEAL }))];
+        const image = drawnInOrder(520, 470, dots);
+        for (let k = 0; k < 12; k++)
+            fillRect(image, 40, 330 + 10 * k, 480, 334 + 10 * k, INK);
+        return { dots, image };
+    };
+    const { dots, image } = scene(2);
+    const dark = measureOpaque(scanOf(image), INK);
+    assert.equal(dark.isolated.length, 2);
+    assert.equal(dark.dots + dark.dotsUnder, 14);
+    assert.ok(dark.coverageUnder < 0.2, `coverage ${dark.coverageUnder}`);
+    assert.ok(!isDotFamily(dark));
+    // … but of its pixels in pieces as thick as a dot, all are
+    const results = extractAll(image);
+    for (const [color, what, count] of [[INK, 'dark', 14], [TEAL, 'teal', 16]]) {
+        const f = foundOf(results, dots, color);
+        assert.ok(f.r, `${what} is a family`);
+        near(f.r.fit.radius, 10, 0.1, `${what}'s radius`);
+        assert.equal(f.matched, count, what);
+        assert.equal(f.r.fit.dots.length, count, what);
+    }
+    // with no whole dot of its own the dark color stays text: three centers at a family's radius are in letters too
+    assert.ok(!familyOf(extractAll(scene(0).image), INK), 'the dark color is a family with no whole dot');
+});
+
+const AEROBIC = 'aerobic-10.1371-journal.pcbi.1012736.png';
+const REWARD = 'reward-10.1523-JNEUROSCI.0020-24.2024.png';
+
+test('regression: aerobic, seven colors of dots and a legend of squares in them', { skip: !existsSync(PMC + AEROBIC) && 'bench-pmc aerobic absent' }, () => {
+    // before: 95 found for 222 in 3 families. The legend's 23 px squares passed as whole dots, the only ones of blue,
+    // yellow, green and red, whose radius they set to 13.8 px for 8.6; at that no dot showed
+    const results = extractAll(readImage(PMC + AEROBIC));
+    // (red, nearly every dot under a blue one, shows no three: it is left to be picked by hand)
+    assert.equal(results.length, 6);
+    for (const r of results)
+        near(r.fit.radius, 8.61, 0.1, `radius of ${r.est.style.color.map(Math.round)}`);
+    const truth = readTruthJson(PMC + 'truth/' + AEROBIC.replace('.png', '.json')).dots;
+    const found = results.flatMap(r => r.fit.dots);
+    const m = matchDots(truth, found, 0.5 * 8.61);
+    assert.ok(found.length >= 170 && m.precision >= 0.97, `${found.length} found, precision ${m.precision}`);
+});
+
+test('regression: reward, black dots at the teal dots\' radius beside large black text', { skip: !existsSync(PMC + REWARD) && 'bench-pmc reward absent' }, () => {
+    // before: the teal family alone, 308 found for 342. 0.11 of the black pixels lie in the 15 black centers
+    const { estimates } = estimateFamilies(restoreChroma(readImage(PMC + REWARD)), { jpeg: true });
+    assert.equal(estimates.length, 2);
+    const black = estimates.find(e => e.style.color.every(v => v < 40));
+    assert.ok(black, 'a black family');
+    near(black.style.radius, 12.3, 0.3, 'its radius');
+    assert.equal(black.isolated.length, 2);
+});
+
+const TSNE = 'tsne-10.1371-journal.pone.0362839';
+
+test('regression: tsne, the gray where two gray dots lie on each other is no family of its own', { skip: plosSkip(TSNE) }, () => {
+    // gray dots of 154 and, where one lies on another, 127: past the family's color on its line from the page. With
+    // 5 such stacks whole, the 127 passed as a sibling by its thick pixels, got 3 dots, and cost the gray family 7
+    const { estimates } = estimateFamilies(readImage(`${PLOS}${TSNE}.png`));
+    assert.equal(estimates.length, 5);
+    assert.ok(!estimates.some(e => e.style.color.every(v => Math.abs(v - 127) < 10)), 'a family of 127');
 });
 
 test('regression: stroked dots of a color with none alone: the whole dots among the cut ones give its radius', () => {

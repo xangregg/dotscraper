@@ -39,6 +39,21 @@ test('isolatedDots: whole single dots with their centers and radius; touching an
     }
 });
 
+test('regression: a square is no isolated dot, by its four corners (aerobic\'s legend)', () => {
+    // a square's second moments are a disc's within 2.3%. before: a legend's 23 px squares were the only whole "dots"
+    // of four colors, at 13.8 px for the dots' 8.6
+    const D = discs([{ x: 60.4, y: 40.3, r: 9 }]);
+    for (let y = 8; y < 31; y++) {
+        for (let x = 10; x < 33; x++)
+            D[y * W + x] = 1;
+    }
+    const found = isolatedDots(D, W, H);
+    assert.equal(found.length, 1);
+    assert.ok(Math.hypot(found[0].cx - 60.4, found[0].cy - 40.3) < 0.1, `center ${found[0].cx}, ${found[0].cy}`);
+    // (the far pixels are a component's own: a neighbor 4 px off, inside the ring sampled around a dot, is none)
+    assert.equal(isolatedDots(discs([{ x: 20, y: 30, r: 9 }, { x: 42, y: 30, r: 9 }]), W, H).length, 2);
+});
+
 test('regression: a dot two layers deep in a ring inside its rim is one whole dot, ringed; one doubled over its middle is not (lung-tumor)', () => {
     // matplotlib's edge on a translucent dot, half of it over the fill: here deeper from 0.5 to 0.75 of the radius.
     // before: the deeper pixels had to lie beyond 0.6 of it, and no dot of lung-tumor's was whole

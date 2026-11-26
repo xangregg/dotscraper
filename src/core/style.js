@@ -100,6 +100,8 @@ export const NO_ISOLATED_NOTE = 'No isolated whole dot found, so the radius and 
  * @param {number[][]} [opts.others]  the other families' fills, 0–255
  * @param {boolean} [opts.ringsToOthers]
  * @param {boolean} [opts.jpeg]
+ * @param {number} [opts.radius]  px, the radius of the image's other families, for a family with no whole dot of
+ *   its own (families.js pickedEstimate)
  * @returns {Estimate}  style.radius is null when no dot shape shows
  */
 export function opaqueFamilyEstimate(image, seed, opts = {}) {
@@ -108,8 +110,8 @@ export function opaqueFamilyEstimate(image, seed, opts = {}) {
     const stroke = opts.stroke ?? null;
     const rings = opts.ringsToOthers && others.length ? others.map(fill => ({ fill, reach: STROKE_RING })) : null;
     const fam = measureOpaque(scan, seed, others, stroke ? null : opts.outline ?? null,
-        { stroke: stroke?.color ?? null, fillRadius: stroke?.fillRadius, rings });
-    const measured = { ...fam, fillRadius: stroke?.fillRadius ?? fam.fillRadius };
+        { stroke: stroke?.color ?? null, fillRadius: stroke?.fillRadius, rings, radius: opts.radius });
+    const measured = { ...fam, fillRadius: stroke?.fillRadius ?? fam.fillRadius, siblingRadius: opts.radius };
     return opaqueEstimate(scan, measured, [measured], 0);
 }
 
@@ -489,7 +491,11 @@ function opaqueEstimate(scan, fam, candidates, familyIndex) {
     }
     else {
         edge = boundaryBlur(fam.D, width, height);
-        notes.push('No isolated whole dot: the radius comes from the dots’ shapes and is refit by Find dots.');
+        const shown = `${fam.dots + fam.dotsUnder} of these dots show, whole or partly under other ink`;
+        const others = fam.siblingRadius ? `No isolated whole dot: the radius, ${fam.siblingRadius.toFixed(1)} px, is that of the image's other families` : null;
+        notes.push(!others ? 'No isolated whole dot: the radius comes from the dots’ shapes and is refit by Find dots.'
+            : fam.foundRadius ? `${others}; the dots' own shapes gave ${fam.foundRadius.toFixed(1)} px, at which ${shown}.`
+            : `${others}, at which ${shown}.`);
     }
     const blur = Math.sqrt(Math.max(0, edge.sigma ** 2 - 1 / 12));
     const count = fam.background.every((v, ch) => v === pageBackground.color[ch]) ? pageBackground.fraction : null;

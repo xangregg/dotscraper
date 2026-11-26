@@ -4643,3 +4643,96 @@ regression asserted that no family with a radius shows with exact colors; its re
 the app: funnel scans as one family "opaque, outlined, r 5.5" (a fill of 3.7 px inside a stroke) and finds 75
 dots, none on the frame; cycle as "hollow rings, r 6.5" and finds 160; no console errors. Shown but not right:
 cycle's family color is the text's gray, not the rings' slate blue (above).
+
+**bench-pmc, families missed beside found ones: aerobic and reward; a picked color's radius** (2026-11-25)
+
+Two figures gave fewer families than they show (item 4 of the list above), each for a reason of its own.
+
+- **aerobic**: seven colors of opaque dots at 8.6 px, and a legend of squares 23 px wide in the same colors;
+  three families were found (95 dots for 222).
+  1. *The legend's squares passed as whole dots.* A square's second moments are a disc's within 2.3%, under the
+     isolated-dot test's limit, so for blue, yellow, green and red, which have no dot alone, the square was the
+     only "whole dot": radius 13.8 px, at which no dot shows. Now a component with pixels farther from its middle
+     than 1.05 r + 0.75 px toward each of the four corners of its box is no dot (`shape.js isolatedDots`; r is the
+     radius of a disc of its area, and a square's corners reach 1.25 r). Squares of 13 px and more are told apart
+     this way; smaller ones aren't.
+  2. *Without the square, the radius from the shapes is still not the dots'*: 9.6–11.1 px (the square is the
+     thickest piece), more than 10% from 8.6, so the sibling rule didn't apply. Now a color that was no family is
+     measured again at each radius of the families found (`opaque.js siblingsAtFoundRadii`), and is a family there
+     on a sibling's evidence (3 centers showing half their edge, those partly under other ink included, and 0.35
+     of its pixels inside them). Each radius is tried without and with the found families' colors as other dots,
+     because neither is always the better: known, they free the color's own edge (yellow: 0.30 of its pixels in
+     its discs alone, 0.34 with three families known, 0.37 with six), but a dot under one of them counts as under
+     other ink only while that ink is unknown (red: 5 such dots without, 1 with). The radius is kept for the
+     fit's measure.
+
+  Six families, all at 8.61–8.62 px: 172 found, P 0.983, R 0.761. Red, 28 dots of which nearly every one lies
+  under a blue dot, shows no three centers (5–6 under other ink, 0.23–0.26 of its pixels) and is no family.
+- **A color picked by hand** (the app's Add family by color) with no whole dot of its own now takes a found
+  family's radius when its dots show at it: `pickedEstimate` gets the found radii, measures the color at each,
+  and takes the one where the most dots show, if any shows and no fewer than at its own radius. The measures are
+  the color's alone, as its own estimate is. aerobic's red: 8.62 px in place of 9.56, 24 dots fitted (as at 9.56,
+  where the fit's radius ended at 9.40), 196 found in all, P 0.985, R 0.869. The note says where the radius came
+  from and how many dots show at it.
+- **reward**: teal and black dots at 12.3–12.8 px, and large black text; only the teal was found. The black has 2
+  whole dots and 15 centers at the teal dots' radius, but 0.11 of the black pixels lie inside them (0.35 is
+  asked): the rest are letters, axes and the dashed line. Among the black pixels where a disc of half the radius
+  fits, 0.47 are in the dots. Now a sibling with at least 2 whole dots of its own passes with that share
+  (`siblingEvidence`, `thickCoverage`). Two families, 365 found for 342, R 0.807 → 0.933, P 0.896 → 0.874. The
+  black family finds 57 dots, 7 of them extras (5 are dots with blurred edges fitted twice, as the teal family
+  has them too: the open item 6); about 7 teal dots that had matched black truth dots are now extras as well (by
+  the counts: the teal family's extras went from 32 to 39).
+
+  The first version let any sibling pass by its thick pixels, and the full benchmark showed three false families:
+  fanc2's black text (3 centers, 0.05 of its pixels), a second color on bench2's ellipse (223, 163, 112: 4 centers),
+  and tsne's 127 gray, which is where two of its gray dots (154) lie on each other (5 whole, 9 centers; as a
+  family of its own it got 3 dots and cost the gray family 7). Hence the 2 whole dots, and the thick pixels don't
+  count for a color past a found family's on its line from the page (`beyondFound`). That last rule also keeps
+  the path from black dots beside gray ones with black text. Nothing that worked is lost by it: in a scene of
+  black dots a third under light gray ones, none of the black dots is seen as under other ink, with or without
+  the rule.
+- **A family with no whole dot, measured again for the fit**: found while writing the tests, and in the
+  committed code before this work. A family found as a sibling with every dot a third under another family's
+  was measured again beside the others at the depth of what shows of it (5.9 px for 10) and fitted as 60 dots
+  for 12. kite1 showed the same once its cyan was found at the found radius (below). Now, when the fit's measure
+  has no whole dot and its radius leaves the one the family was found at by more than 10%, the family takes the
+  radius of a family with whole dots that was within 10% of its own, else keeps the one it was found at
+  (`measuredForFit`). The note then gives both radii, and the count of dots that show belongs to the family's
+  own. Applied always, not only on that drift, it moved rvat (blue at 6.72 px beside orange at
+  6.93: rmse 0.004 → 0.058 px) and nicest language (0.048 → 0.056): a family's own shapes place its dots best.
+  This is as far as the "affinity for aligning dot sizes" goes here: a radius is taken from another family only
+  where the family's own isn't usable.
+- **kite1** changed with this: its cyan dots sit on a cyan line, the color's own radius is the line's (3.5 px),
+  and the scan now finds cyan at the red dots' 12.3 px in the first pass. With cyan known, the cyan band over
+  the dots is divided out as the red one is (before: the red one only). All 25 dots are found (the cyan dot 8 px
+  from another was missed before); it is placed 3.7 px off and flagged hidden, which is all of the rmse's rise
+  (0.22 → 0.77 px; 0.23 without that dot). Extras 2 → 3: doubles 5 px off at the bands' edges and a hidden one.
+
+Measured (full benchmark, 203 rows; 198 the same):
+
+| image | before | after |
+|---|---|---|
+| bench-pmc aerobic | 95 for 222, 3 families, P 0.989, R 0.423 | 172, 6 families, P 0.983, R 0.761, RMSE 0.327 |
+| bench-pmc reward | 308 for 342, 1 family, P 0.896, R 0.807 | 365, 2 families, P 0.874, R 0.933, RMSE 0.787 |
+| bench-nature kite1 (hand; data alike) | 26 for 25, P 0.923, R 0.960, RMSE 0.224 | 28, P 0.893, R 1.000, RMSE 0.769 |
+| bench-pmc shannon | 67 for 111, radius column 5.93 | the same dots; the two families with no dots are fitted at 7.0 px (4.7 and 6.9 before) |
+
+Time: the benchmark's summed fit times rose 6% at 10 jobs (2458 s → 2610 s): the colors that are no family are
+measured again at the found radii, twice each. Most on beeswarm-boxplot (90 → 108 s), reward (48 → 62 s),
+crimson (45 → 56 s) and aerobic (8 → 18 s).
+
+Tests: a square beside a disc (one whole dot); green dots each a third under a blue one, with whole blue dots
+(the green takes their radius, 12 fitted for 12) and with none (each keeps the radius it was found at); the same
+with oblong legend keys, where the green's shapes give 14.5 px (a family at 10 px, its 8 dots found, the note
+says 8 show); dark dots under teal ones beside strokes of their color, with 2 whole dots (a family, 14 for 14)
+and with none (no family); a picked color beside found radii (taken where its dots show, not where none does);
+aerobic, reward and tsne themselves, and red picked on aerobic. Each rule fails a test when taken out (14
+mutations: the corners, the measure at found radii, each of its two readings, the thick pixels, the 2 whole
+dots, the color past a found family's, the drift rule, the like family's radius, the counts carried into the
+note, the picked color's measure, its radius passed on, its evidence, the radius kept for the fit).
+
+365 tests pass (9 new). In the app: aerobic scans as six families, each "opaque, r 8.6"; red added by its legend
+square's color comes in as "Picked 228, 26, 28: opaque, r 8.6" with the note that the radius is the other
+families' and 5 of its dots show at it; Find dots gives 196 (24 red, 17 of them flagged); no console errors.
+Not exercised there: the picked family's radius kept when the families are measured again for an outline
+(`remeasureOpaque` passes it; aerobic has no outlined family).

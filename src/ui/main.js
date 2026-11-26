@@ -977,8 +977,10 @@ function clickAt(x, y, { alt = false, point = null } = {}) {
 async function addPickedFamily(rgb) {
     setMode(null);
     let estimate;
+    // the families found: a color with no whole dot of its own takes their radius when its dots show at it
+    const radii = state.families.map(f => f.estimate.style?.radius).filter(Boolean);
     try {
-        estimate = await runScan('seed', { image: state.base ?? state.work, seed: rgb, jpeg: state.jpeg }, `Measuring dots of color ${rgb.join(', ')}…`);
+        estimate = await runScan('seed', { image: state.base ?? state.work, seed: rgb, jpeg: state.jpeg, radii }, `Measuring dots of color ${rgb.join(', ')}…`);
     }
     catch (err) {
         showMessage('');
@@ -1045,6 +1047,7 @@ async function remeasureOpaque() {
         jobs.push({ j, seed: seedOf(j), opts: {
             stroke, outline: !stroke && f.outlineEdit === undefined ? fm.outline : null,
             others: opaque.filter(q => q !== j).map(seedOf), ringsToOthers: anyOutline, jpeg: state.jpeg,
+            radius: fm.siblingRadius,
         } });
     });
     if (jobs.length) {

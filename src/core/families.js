@@ -7,8 +7,8 @@
 import { colorDistance, sub } from './image.js';
 import { scanOf, backgroundColor, flatMask, solidRegion } from './scan.js';
 import { measureFamily, alongLine } from './levels.js';
-import { familyRings, siblingRadius, SPECK_RADIUS_RATIO } from './opaque.js';
-import { estimateStyle, NO_ISOLATED_NOTE } from './style.js';
+import { familyRings, siblingRadius, SIBLING_RADIUS_TOL, SPECK_RADIUS_RATIO } from './opaque.js';
+import { estimateStyle, NO_ISOLATED_NOTE, opaqueFamilyEstimate } from './style.js';
 import { backgroundRegions, removeOverlays } from './background.js';
 import { unmixEstimates } from './unmix.js';
 import { findColormap, rayImage, opaqueImage, colormapCandidate } from './colormap.js';
@@ -378,16 +378,45 @@ export function estimateFamilies(image, opts = {}) {
     return { image: work, layers, estimates: [...ringed, ...hollow] };
 }
 
+// A picked opaque family with no whole dot of its own, measured at each radius of the families found: the estimate
+// at the one where the most of its dots show (whole or partly under other ink), if any shows and no fewer than at
+// its own radius. Null otherwise, and for a family read with an outline or a stroke (its ring gives its radius).
+// The measures are the picked color's alone, as its own estimate is: with the found families' colors as other dots,
+// aerobic's red shows 1 dot at 8.6 px for 5 without (and none for 5 at its own 9.6), so the two wouldn't compare.
+function atSiblingRadius(image, seed, est, opts) {
+    const fam = est.familyMeasure;
+    if (est.isolated.length || fam.outline || fam.stroke)
+        return null;
+    const radii = [];
+    for (const r of opts.radii ?? []) {
+        if (r > 0 && !radii.some(q => Math.abs(q - r) <= SIBLING_RADIUS_TOL * q))
+            radii.push(r);
+    }
+    const shown = e => e.familyMeasure.dots + e.familyMeasure.dotsUnder;
+    let best = null;
+    for (const radius of radii) {
+        const e = opaqueFamilyEstimate(image, seed, { radius, jpeg: !!opts.jpeg });
+        if (shown(e) > 0 && shown(e) >= shown(est) && (!best || shown(e) > shown(best)))
+            best = e;
+    }
+    return best;
+}
+
 /**
  * The estimate for a family picked by its color (the app's Add family by color): estimateStyle's for that seed, and
  * a translucent family read against the shaded regions under its dots, as the scan's own families are (unmix.js).
  * Without that, a picked family's dots over a box or a panel were read against the page, where they are no level of
  * the family (bread1: gray dots at α 0.6, most of them over a red or a blue box).
  *
+ * An opaque color with no whole dot of its own takes the radius of the families already found, when its dots show
+ * at it: figures draw every group with one marker size, and the radius its own shapes give can be anything (aerobic's
+ * red, every dot under a blue one, and its thickest piece the legend's square: 9.6 px beside six families at 8.6).
+ *
  * @param {import('./image.js').RgbaImage} image  the image as analyzed, with any overlays divided out
  * @param {number[]} seed  0–255, the color picked
  * @param {object} [opts]
  * @param {boolean} [opts.jpeg]  noisy color matching
+ * @param {number[]} [opts.radii]  px, the radii of the families found
  * @param {(fraction: number) => void} [opts.onProgress]  the share of the measuring done (0–1)
  * @returns {import('./style.js').Estimate}  with the `image` to fit it on when it is read against regions
  */
@@ -395,7 +424,9 @@ export function pickedEstimate(image, seed, opts = {}) {
     const jpeg = !!opts.jpeg;
     const scan = scanOf(image, { jpeg });
     const est = estimateStyle(image, { seed, jpeg, scan, onProgress: opts.onProgress });
-    if (!est.style || est.familyMeasure.kind === 'opaque')
+    if (est.style && est.familyMeasure.kind === 'opaque')
+        return atSiblingRadius(image, seed, est, opts) ?? est;
+    if (!est.style)
         return est;
     const layers = backgroundRegions(image, scan.B, [candidateStyle(est.familyMeasure)], est.flat, est.style.radius ?? DEFAULT_RADIUS);
     return unmixEstimates(image, [est], scan.tol, layers)[0];

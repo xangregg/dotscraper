@@ -36,11 +36,16 @@ import { alongLine, colorLine } from './levels.js';
  * @property {number} coverage  0–1, the share of the family's pixels inside those dots
  * @property {number} dotsUnder  more centers at that radius: dots partly under other ink (DOT_MIN_SEEN)
  * @property {number} coverageUnder  0–1, the share of the family's pixels inside the dots, those included
+ * @property {{x: number, y: number}[]} centersUnder  px, those centers
  * @property {number} pixels  pixels of the fill's color (and the outline's within reach)
  * @property {Uint8Array} edgeInk  per pixel, other ink read as the dots' background: 1 + its index in inkColors
  * @property {number[][]} inkColors  0–255
  * @property {{x: number, y: number}[]} centers  px, the centers found
  * @property {number} [fillRadius]  px, the fill inside an outline or stroke
+ * @property {number} [siblingRadius]  px, a radius taken from the image's other families, for a family with no whole
+ *   dot of its own
+ * @property {number} [foundRadius]  px, with siblingRadius: the radius of its own shapes that the family was found
+ *   at, which `dots` and `dotsUnder` are counted at
  * @property {boolean} [pageFill]  the fill is the page's color, inside an outline; then fitColor (the outline's,
  *   0–255) and fillCenters (px, the fills' centers, for the fit to start from)
  * @property {import('./levels.js').Level[]} levels  one: the fit color, at its distance from the background
@@ -94,7 +99,8 @@ const DOT_MANY_ISOLATED = 10;
 // group with one marker size, and a small group can be all touching dots crossed by lines (myeloid1's teal: 9 dots
 // in pairs and a stack, gray pair lines reaching each, arcs at most 0.72; 5 filled centers at its radius, coverage
 // 0.64, radius 13.84 as the orange family's). It still needs DOT_MIN_STRONG centers of DOT_MIN_ARC and coverage.
-const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
+export const SIBLING_RADIUS_TOL = 0.1; // × the found family's radius
+const SIBLING_MIN_ISOLATED = 2; // whole dots of its own, for its thick pixels alone to count (siblingEvidence)
 // … and a color that is all dots of that size needs only two of them, one seen whole or by a strong arc: a group can be
 // two points (bench-plos synthetic's teal: 2 dots of 16, one alone and one touching a salmon dot, radius 11.5 beside the
 // translucent families' 11.7, 0.99 of the color inside the two discs, one strong arc). FEW_MIN_COVERAGE of the color lies in the discs: a glyph or
@@ -971,6 +977,7 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
     let dotsUnder = 0;
     let coverageUnder = 0;
     let found = [];
+    let under = [];
     if (radiusPlausible(radius, isolated.length)) {
         const strong = cs => cs.filter(c => c.arc >= DOT_STRONG_ARC).length;
         const at = dotCenters(scan, ground, cover, shape, opts.fillRadius);
@@ -985,13 +992,14 @@ export function measureOpaque(scan, color, others = [], outline = null, opts = {
         const ofFamily = stroke ? fillW : byFill ? (outline ? opening(own, width, height, THICK_FILL_RADII * byFill.fillRadius) : own) : D;
         coverage = shareInDiscs(ofFamily, at.centers, radius, width, height);
         dotsUnder = at.under.length;
+        under = at.under.map(c => ({ x: c.x, y: c.y }));
         coverageUnder = dotsUnder ? shareInDiscs(ofFamily, [...at.centers, ...at.under], radius, width, height) : coverage;
     }
     const pixels = mask.reduce((t, v) => t + v, 0);
     return {
         kind: 'opaque', seed: color, outline, stroke, line, background: B, table, D, isolated, radius, dots, strongDots, coverage, pixels,
         dotsUnder, coverageUnder,
-        edgeInk, inkColors: ground.others, centers: found,
+        edgeInk, inkColors: ground.others, centers: found, centersUnder: under,
         ...(byFill ? { fillRadius: byFill.fillRadius } : {}),
         ...(paged ? { pageFill: true, fitColor, fillCenters: paged.centers } : {}),
         levels: [{ t: colorDistance(B, fitColor), color: fitColor, count: pixels }],
@@ -2111,8 +2119,87 @@ function siblingFills(search) {
     const { out } = search;
     const sibling = f => f.radius && out.some(g => !g.pageFill && Math.abs(f.radius - g.radius) <= SIBLING_RADIUS_TOL * g.radius) && !throughLayer(search, f.seed);
     for (const f of search.rejected) {
-        if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && f.dots + f.dotsUnder >= DOT_MIN_STRONG && f.coverageUnder >= DOT_MIN_COVERAGE)
+        if (sibling(f) && radiusPlausible(f.radius, f.isolated.length) && siblingEvidence(search, f))
             out.push(f);
+    }
+    siblingsAtFoundRadii(search);
+}
+
+// a color's measure at the first of the radii where it shows a sibling's evidence, without or with the found
+// families' colors as other dots; null when at none
+function atFoundRadius(search, seed, radii) {
+    const ink = [...search.levelColors, ...otherInk(search, seed)];
+    const found = search.out.map(g => g.seed);
+    for (const radius of radii) {
+        for (const others of [ink, [...ink, ...found]]) {
+            const m = measureOpaque(search.scan, seed, others, null, { radius });
+            if (siblingEvidence(search, m))
+                return m;
+        }
+    }
+    return null;
+}
+
+// A sibling's evidence: DOT_MIN_STRONG centers at the radius, those partly under other ink included, and
+// DOT_MIN_COVERAGE of its pixels inside them. With SIBLING_MIN_ISOLATED whole dots of its own, that share is asked
+// of its pixels in pieces as thick as a dot: the color of a figure's text and axes can be a family of dots too, and
+// then most of its pixels are letters (reward: black dots at the teal ones' radius, 2 of them whole, 15 centers
+// holding 0.11 of the black pixels and 0.47 of those where a disc of half the radius fits). Not without whole dots:
+// three centers at a found radius are in black text too (fanc2: 0.05 of its pixels; bench2's ellipse: 4 centers of
+// a second color with 0.12 of its pixels). Nor for a color past a found family's on its line from the page (tsne:
+// gray dots of 154 and, where two lie on each other, of 127, 5 of those whole; as a family of its own the 127 got
+// 3 dots and cost the gray 7).
+function siblingEvidence(search, m) {
+    if (m.dots + m.dotsUnder < DOT_MIN_STRONG)
+        return false;
+    return m.coverageUnder >= DOT_MIN_COVERAGE
+        || (m.isolated.length >= SIBLING_MIN_ISOLATED && !beyondFound(search, m.seed) && thickCoverage(search.scan, m) >= DOT_MIN_COVERAGE);
+}
+
+// whether a color lies past a found family's on its line from the page: where that family's dots lie over each other
+// it is read as theirs (fillSaturatedOverlaps)
+function beyondFound(search, c) {
+    const page = search.scan.backgrounds[0];
+    return search.out.some(g => {
+        const { m, off } = alongLine(c.map((v, ch) => v - page[ch]), g.seed.map((v, ch) => v - page[ch]));
+        return m > 1 && off <= CLUSTER_ON_LINE_TOL;
+    });
+}
+
+// the share of a measured color's thick pixels (a disc of THICK_FILL_RADII × the radius fits) inside its dots, 0–1
+function thickCoverage(scan, m) {
+    const { width, height } = scan.image;
+    const own = Uint8Array.from(m.D, v => v > 0.5 ? 1 : 0);
+    return shareInDiscs(opening(own, width, height, THICK_FILL_RADII * m.radius), [...m.centers, ...m.centersUnder], m.radius, width, height);
+}
+
+// A rejected color measured again at the radius of the families found: a color whose own shapes gave another radius
+// can still be dots of the size the image's other dots have (aerobic: seven colors of dots at 8.6 px; four had no
+// whole dot alone, and their thickest piece was the legend's square, 9.6–11.1 px; at 8.6 px blue shows 12 centers).
+// The same evidence is asked as of a sibling. Each radius is tried without and with the found families' colors as
+// other dots: known, they free the color's own edge (aerobic's yellow: 0.30 of it in its discs alone, 0.34 with
+// three families known, 0.37 with six), but a dot under one of them is seen as under other ink only while that ink
+// is unknown (every green dot a third under a blue one: 8 dots without, none with). Again while a family is added.
+// O(rejected colors · radii · passes) measures, twice each.
+function siblingsAtFoundRadii(search) {
+    const { out, rejected } = search;
+    for (let added = true; added;) {
+        added = false;
+        const radii = [];
+        for (const g of out) {
+            if (!g.pageFill && g.radius && !radii.some(r => Math.abs(r - g.radius) <= SIBLING_RADIUS_TOL * r))
+                radii.push(g.radius);
+        }
+        for (const f of rejected) {
+            if (out.some(g => sameCluster(g.seed, f.seed) || (g.outline && sameCluster(g.outline, f.seed))) || throughLayer(search, f.seed))
+                continue;
+            const m = atFoundRadius(search, f.seed, radii);
+            if (m) {
+                // (kept for the fit's measure: measured again without it, the radius is the shapes' again)
+                out.push({ ...m, interior: f.interior, siblingRadius: m.radius });
+                added = true;
+            }
+        }
     }
 }
 
@@ -2147,8 +2234,28 @@ function measuredForFit(search, families) {
         const inOutlineColor = !f.outline && families.some(g => g.outline && g.fillRadius && sameCluster(g.outline, f.seed));
         const rings = f.solidRings ?? (inOutlineColor ? outlineRings(families)
             : stroked ? families.filter(g => g !== f).map(g => ({ fill: g.seed, reach: STROKE_RING })) : null);
-        const g = measureOpaque(scan, f.seed, [...colors.filter(c => c !== f.seed), ...search.levelColors, ...otherInk(search, f.seed), ...search.blendInk], f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius: f.solidRadius });
-        return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage };
+        const others = [...colors.filter(c => c !== f.seed), ...search.levelColors, ...otherInk(search, f.seed), ...search.blendInk];
+        const measure = radius => measureOpaque(scan, f.seed, others, f.outline, { stroke: f.stroke, fillRadius: f.fillRadius, rings, radius });
+        const given = f.solidRadius ?? f.siblingRadius;
+        let g = measure(given);
+        let { siblingRadius } = f;
+        let foundRadius;
+        // With no whole dot the radius comes from the shapes, and among the other colors the shapes can be other
+        // ones. When it leaves the radius the family was found at by more than SIBLING_RADIUS_TOL, the family takes
+        // the radius of one with whole dots that was within that of its own (figures draw every group with one
+        // marker size), else keeps the one it was found at. kite1, cyan dots on a line of their color: found at
+        // 11.4 px, where 10 centers show, and measured again at 4.5, the line's (194 dots fitted for 15); the red
+        // dots' 12.3 px is the cyan ones' too. A family with every dot a third under another's: 5.9 px for 10 from
+        // what shows between, and 60 dots fitted for 12. Not otherwise: a family's own shapes place its dots best
+        // (rvat: blue at 6.72 px beside orange at 6.93; started at the orange's, rmse 0.004 → 0.058 px).
+        if (given === undefined && !g.isolated.length && !f.outline && !f.stroke && !f.pageFill && f.radius && Math.abs(g.radius - f.radius) > SIBLING_RADIUS_TOL * f.radius) {
+            const like = f.isolated.length ? null : families.find(h => h !== f && !h.pageFill && h.isolated.length && Math.abs(f.radius - h.radius) <= SIBLING_RADIUS_TOL * h.radius);
+            siblingRadius = like?.radius;
+            // (for the note: the counts are those it was found with, at its own radius)
+            foundRadius = like ? f.radius : undefined;
+            g = measure(siblingRadius ?? f.radius);
+        }
+        return { ...g, radius: g.radius ?? f.radius, fillRadius: f.fillRadius, dots: f.dots, strongDots: f.strongDots, coverage: f.coverage, dotsUnder: f.dotsUnder, coverageUnder: f.coverageUnder, siblingRadius, foundRadius };
     });
 }
 

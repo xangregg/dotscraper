@@ -265,3 +265,49 @@ test('regression: bread1, grey15 dots on ggplot2\'s gray panel with black dots a
     assert.equal(m.recall, 1);
     assert.ok(found.length <= 40, `${found.length} dots`);
 });
+
+const AEROBIC = new URL('../bench-pmc/aerobic-10.1371-journal.pcbi.1012736.png', import.meta.url).pathname;
+
+test('pickedEstimate: an opaque color with no whole dot takes the found families\' radius when its dots show at it', () => {
+    // 8 green dots of 10 px, each a third under a blue one, and an oblong legend key in green, 27 px high: the green's
+    // shapes give 14.5 px, at which no dot shows
+    const GREEN = [77, 175, 74];
+    const BLUE = [58, 111, 165];
+    let rgb = solidImage(560, 340, [255, 255, 255]);
+    for (let i = 0; i < 8; i++) {
+        const x = 60 + 110 * (i % 4);
+        const y = 50 + 80 * Math.floor(i / 4);
+        for (const d of [{ x, y, color: GREEN }, { x: x + 10, y: y + 4, color: BLUE }]) {
+            const model = createDotModel(rgb, { color: d.color, alpha: 1, radius: 10 });
+            model.addAll([d]);
+            rgb = model.image;
+        }
+    }
+    const image = toRgba(rgb);
+    for (let y = 40; y < 67; y++) {
+        for (let x = 470; x < 515; x++)
+            image.data.set([...GREEN, 255], 4 * (y * image.width + x));
+    }
+    const alone = pickedEstimate(image, GREEN);
+    assert.ok(Math.abs(alone.style.radius - 14.5) <= 0.3, `radius alone ${alone.style.radius}`);
+    assert.equal(alone.familyMeasure.siblingRadius, undefined);
+    const beside = pickedEstimate(image, GREEN, { radii: [10, 10.3] });
+    assert.equal(beside.style.radius, 10);
+    assert.equal(beside.familyMeasure.siblingRadius, 10);
+    assert.equal(beside.familyMeasure.dots + beside.familyMeasure.dotsUnder, 8);
+    assert.ok(beside.notes.some(n => /10\.0 px, is that of the image's other families/.test(n)), beside.notes.join(' '));
+    // not a radius at which none shows
+    const far = pickedEstimate(image, GREEN, { radii: [20] });
+    assert.ok(Math.abs(far.style.radius - 14.5) <= 0.3, `radius beside 20 px dots ${far.style.radius}`);
+    assert.equal(far.familyMeasure.siblingRadius, undefined);
+});
+
+test('regression: aerobic, red picked by hand takes the six found families\' radius', { skip: !existsSync(AEROBIC) && 'bench-pmc absent' }, () => {
+    // nearly every red dot lies under a blue one, and the scan finds no red family. before: picked, its radius was
+    // 9.6 px from its shapes (the legend's square among them) beside six families at 8.6
+    const image = readImage(AEROBIC);
+    const alone = pickedEstimate(image, [228, 26, 28]);
+    assert.ok(alone.style.radius > 9.3, `radius alone ${alone.style.radius}`);
+    const beside = pickedEstimate(image, [228, 26, 28], { radii: [8.61, 8.62] });
+    assert.equal(beside.style.radius, 8.61);
+});
