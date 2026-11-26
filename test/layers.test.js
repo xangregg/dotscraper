@@ -427,6 +427,32 @@ test('regression: wave1, a dot where a solid line of its color leaves it is not 
     assert.ok(n >= 37 && n <= 38, `${n} dots for 38`);
 });
 
+test('clip: at a line\'s end, a border across it in the family\'s ink is inside the cut', () => {
+    // a 2 px border at columns 40 and 41 down the whole edge, read as the family (D 0.6 and 1), white beyond
+    const width = 60;
+    const height = 100;
+    const D = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+        D[y * width + 40] = 0.6;
+        D[y * width + 41] = 1;
+    }
+    const edge = { dir: 'v', pos: 42, out: 1, thickness: 0, from: 0, to: height };
+    const [[clip]] = plotClips([{ D, radius: 5 }], width, height, [edge]);
+    assert.equal(clip.cut, 40);
+});
+
+const LOESS_GROUPS = new URL('../bench-r2/gg-loess-groups.png', import.meta.url).pathname;
+
+test('regression: bench-r2 gg-loess-groups, no dots fitted beyond the panel\'s border', { skip: !existsSync(LOESS_GROUPS) && 'bench-r2 absent' }, () => {
+    // before: theme_bw's gray border (x 573 to 574) read as both translucent families over each other, the cut fell
+    // at 575, and 51 teal dots centered at x 578 explained the border
+    const results = extractAll(readImage(LOESS_GROUPS), false);
+    const beyond = results.flatMap(r => r.fit.dots.filter(d => d.x > 572)).length;
+    assert.equal(beyond, 0, `${beyond} dots right of the border`);
+    const n = results.reduce((s, r) => s + r.fit.dots.length, 0);
+    assert.ok(n >= 138 && n <= 143, `${n} dots for 140`);
+});
+
 test('bounds: pixels more than a dot radius beyond the axes are masked, nothing nearer changes', () => {
     const { image } = synthGraph(SYNTH_PRESETS.sparse(1));
     const est = estimateStyle(image);

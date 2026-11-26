@@ -5149,3 +5149,15 @@ the set, and RESULTS.md has a table for it. As drawn, before any change for them
 Label bench: 122 of 123 labels read right, 27 of 28 axes solved, none wrong; gg-ellipse's y label 60 isn't read.
 The 28 axes are 14 images' two each: gg-dense-alpha's are left out, their detected ticks not matching the header's.
 The bench's `--verbose` now prints the missed and extra dots of CSV-truth images too, as it did for bench1–3.
+
+**gg-loess-groups' column** (2026-11-26). The 51 extras at x 578 were teal dots centered past the plot's clip. The
+panel's border (theme_bw, gray 165 and 167 at x 573 and 574) is what the two translucent families make over each
+other, so unmixing gave teal 0.61 and 0.97 dots there, and red 1.99 and 0.64. Red's share was deep enough to be masked
+as a thin line; teal's wasn't. The clip at the x axis line's end (`clipAt`, a line's end has no thickness) took the
+border's own columns as the cut dots' last full ones and cut at 575, masking only from there. Each dot centered at
+578 explained the unmasked border pixels with its left edge, and paid nothing for the rest, all masked. Now the cut
+moves in over columns just inside it that have the family's ink in 90% of the edge's rows (`CLIP_BORDER_SHARE`), up
+to `CLIP_SEARCH` px: a line along the edge, not dots, which fill no column that evenly. The cut is at 573, and no dot
+lies right of the border. Full benchmark: only gg-loess-groups changes, 192 found → 141 for 140, P 0.719 → 0.979, R
+0.986, flagged 82 → 31; in the app the same 141 (72 and 69). Tests: a synthetic 2 px border at a line's end is
+inside the cut (cut 42 without the change, 40 with it), and gg-loess-groups has no dot past x 572 (51 without it).

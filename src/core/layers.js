@@ -100,6 +100,12 @@ const CLIP_GAP = 1.5; // px
 const CLIP_SEARCH = 3; // px either side of a line's end for the cut's column
 const CLIP_MIN_SHARE = 0.7;
 const CLIP_MIN_RADII = 2;
+// At a line's end the panel may have a border across it that reads as the family's ink (bench-r2 gg-loess-groups:
+// theme_bw's gray border, 2 px, is what translucent red and teal over each other make, and unmixing gave each family
+// 0.6 to 2 dots of it). Its columns then pass as the cut dots' last full ones, the cut fell just beyond it, and dots
+// centered past the cut explained the border, 51 of them in a column. Columns just inside a cut with the family's ink
+// in this share of the edge's rows are a line, not dots, and the cut moves in over them, CLIP_SEARCH px at most.
+const CLIP_BORDER_SHARE = 0.9;
 // Stand-in for an infinite distance in the transform: finite so the parabola intersections stay exact (q² ≤ ~10⁷
 // px² is far below the precision of FAR), and far beyond any real squared distance.
 const FAR = 1e12; // px²
@@ -819,6 +825,18 @@ function clipAt(D, width, height, edge, radius) {
             if (!best || k.cut > best.cut || (k.cut === best.cut && (c - best.at) * edge.out > 0))
                 best = { ...k, at: c };
         }
+        const inked = c => {
+            if (c < 0 || c >= acrossMax)
+                return false;
+            let rows = 0;
+            for (let a = a0; a < a1; a++) {
+                if (D[at(a, c)] > CLIP_EMPTY)
+                    rows++;
+            }
+            return rows >= CLIP_BORDER_SHARE * (a1 - a0);
+        };
+        for (let k = 0; k < CLIP_SEARCH && inked(best.at - edge.out); k++)
+            best.at -= edge.out;
     }
     return best.cut >= CLIP_MIN_RADII * radius && best.cut >= CLIP_MIN_SHARE * best.full ? best.at : null;
 }
