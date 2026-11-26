@@ -64,6 +64,9 @@ bench-pmc/              figures from CC BY 4.0 articles found through PubMed Cen
 bench-r/                R's renderings with tick labels in scientific notation, and of ggplot2's gray theme, drawn by
                         bench-r/make.R, each with a CSV of its points and tick values: for both benchmarks and
                         tests (which skip without it)
+bench-r2/               R's renderings, drawn by bench-r2/make.R, of the dots figures commonly have: translucent, overlapping,
+                        a thousand or more, several colors (a group column in the CSV), outlined, with fitted lines,
+                        loess curves, confidence bands and ellipses under or over them; a CSV of points and ticks each
 tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
 tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
 tools/mem-guard.mjs     preload that kills a node process past a memory limit (runaway tests and mutation checks)
@@ -100,7 +103,7 @@ test/*.test.js          node:test + node:assert/strict
   count image D to `dir`).
 - Benchmark: `npm run bench [-- --seeds n --preset name --set bench1 --only name --verbose --jobs n]` runs style, mask and
   fit on the synthetic presets, every image with truth placed by hand (`<set>/truth/<name>.json`), and every image of the truth
-  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-pmc` the PubMed Central ones, `--set bench-r` R's renderings, `--only` filters by `set/file`, `--seeds 0` skips the presets, `--fewer-doubles` fits with the app's Fewer doubles), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
+  sets (bench1–3; `--set` picks one, `--set bench-local` the test images with a CSV of their own, `--set bench-nature` the Nature figures, `--set bench-plos` the PLOS ONE figures, `--set bench-pmc` the PubMed Central ones, `--set bench-r` R's renderings in scientific notation, `--set bench-r2` R's renderings of translucent, overlapping, colored dots with fitted lines and bands, `--only` filters by `set/file`, `--seeds 0` skips the presets, `--fewer-doubles` fits with the app's Fewer doubles), printing precision, recall, count error, position RMSE, Hough-only precision/recall, flags and
   time. `--set none` runs the synthetic presets alone. It fits 10 images at a time in worker threads (`--jobs n`
   for another count, `--jobs 1` for one at a time): the rows are the same, each image's time is longer than alone
   (14% in all at 10), so compare times only between runs at one job count.

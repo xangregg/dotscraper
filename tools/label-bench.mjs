@@ -1,5 +1,5 @@
 // Benchmark the reading of tick labels (src/core/labels.js) against the tick values the truth files list: bench1–3's
-// data.csv for every rendering, each real figure's own CSV, and bench-r's (R's renderings in scientific notation). Per set: the labels read right one at a time, and
+// data.csv for every rendering, each real figure's own CSV, bench-r's (R's renderings in scientific notation) and bench-r2's. Per set: the labels read right one at a time, and
 // the axes, which is what a user sees:
 //   solved     a scale found, and every labeled tick's value right
 //   wrong      a scale found that gives a wrong value: the failure that matters, a wrong number offered as checked
@@ -24,7 +24,7 @@ import { readTickLabels } from '../src/core/labels.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
-const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r'];
+const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r', 'bench-r2'];
 const VALUE_TOL = 1e-9; // relative: a value is right when it is the header's
 
 // the header's tick values as written, or null when one isn't a number

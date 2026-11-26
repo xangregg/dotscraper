@@ -70,7 +70,8 @@ Residual are for everyone). It is on for a local server and off on the deployed 
 `?dev` turns it on anywhere and `?dev=0` off, to see the public view locally. A "dev" badge by the title shows it.
 
 `npm run bench` scores the detector against ground truth: synthetic presets, and the renderings in `bench1/`–`bench3/`
-with their exact data, and figures from PLOS ONE articles in `bench-plos/` and from other articles in PubMed Central
+with their exact data, R's renderings in `bench-r/` and `bench-r2/` (drawn by their `make.R` from random points),
+and figures from PLOS ONE articles in `bench-plos/` and from other articles in PubMed Central
 in `bench-pmc/`, which are CC BY 4.0 and credited in each folder's README. The other real-world test images
 (`bench-local/`, `bench-nature/`) are third-party figures that are not cleared for redistribution, so they stay local
 and out of the repository; the benchmark and the tests skip them when they're absent.

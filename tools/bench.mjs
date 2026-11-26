@@ -2,7 +2,7 @@
 // in bench-local/truth/, bench-nature/truth/, bench-plos/truth/ or bench-pmc/truth/ (<name>.json, the app's Save truth in px, tools/truth-json.mjs; every
 // family fitted, scored by truth family and fill), and every PNG and JPEG of a
 // truth set (a directory with data.csv in data units, tools/truth-csv.mjs; bench1–3/), and every test image with a
-// CSV of its own (bench-local/<name>.csv, bench-nature/<name>.csv, bench-plos/<name>.csv and bench-r/<name>.csv, mapped through the detected ticks; lane data
+// CSV of its own (bench-local/<name>.csv, bench-nature/<name>.csv, bench-plos/<name>.csv, bench-r/<name>.csv and bench-r2/<name>.csv, mapped through the detected ticks; lane data
 // scored by lane, "(J)" after a name when JPEG noise turned JPEG mode on). Prints precision, recall,
 // count error, position RMSE and time; tolerance r/2 for matching.
 //
@@ -33,7 +33,7 @@ import { pixelHash } from '../src/core/image.js';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 // directories of images with a CSV each (data units, ticks in the header), mapped through the detected ticks
-const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r'];
+const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r', 'bench-r2'];
 const MATCH_TOL_RADII = 0.5;
 // Images fitted at a time unless --jobs says otherwise. Measured on 12 performance cores, the full bench: 1,115 s one
 // at a time, 269 s at 6, 207 s at 10, where the slowest image (about 2 minutes) begins to set the time.
@@ -408,8 +408,12 @@ function runJob(job, opts) {
             if (!px.laneCenters)
                 return fail(meta, 'fewer dots found than lanes');
         }
-        record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
+        const r = record(px.laneCenters ? laneRow(label, px.dots, px.laneCenters, results, ms)
             : px.jitter ? jitterRow(label, px.dots, results, ms) : groupRow(label, px.dots, results, ms), { ...meta, mode: modeOf(results, jpeg) });
+        if (opts.verbose && r.missed) {
+            lines.push(`${label} ${results.map(q => `${q.est.style.alpha < 1 ? 'translucent' : 'opaque'} ${q.est.style.color.map(Math.round)} r ${q.fit.radius.toFixed(2)}`).join('; ')}`);
+            lines.push(`   missed ${r.missed.map(t => `${t.x.toFixed(1)},${t.y.toFixed(1)}`).join(' ')}  extra ${r.extra.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' ')}`);
+        }
         return out;
     }
     const { set, file } = job;

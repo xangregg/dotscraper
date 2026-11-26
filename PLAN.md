@@ -5126,3 +5126,26 @@ unbridged (bridged all the way, shannon's dots on a median line were masked whol
 from each end is bridged (`DASH_STUB_RADII`): no double at 0.2, 0.35 or 0.5; shannon, prot-cath-chris and adults1
 unchanged at each. Full benchmark: only wave1 changes, 37 found for 38, P 1.000, R 0.974 (the miss, at (430, 1549),
 is a yellow dot half under the x axis, as before). Test: wave1 has no close pair (fails with the stubs at 0).
+
+**bench-r2** (2026-11-26). A second set drawn by R (`bench-r2/make.R`, R 4.6.0, ggplot2 4.0.3), of what bench-r's
+40 dots apiece leave out: translucent dots, dots overlapping each other, 1000 and 2000 dots, several colors (a group
+column in each CSV, scored by `groupRow` as the other CSV sets are), outlined fills, and fitted lines, loess curves,
+confidence bands and ellipses drawn under or over the dots. 15 images, 5710 dots; the bench and the label bench list
+the set, and RESULTS.md has a table for it. As drawn, before any change for them:
+
+| image | truth | found | P | R | what fails |
+|---|---|---|---|---|---|
+| gg-alpha, base-alpha, gg-lm, base-lm, gg-outlined | 300, 400, 80, 150, 150 | all | 1.000 | 1.000 | |
+| gg-alpha-groups | 450 | 452 | 0.993 | 0.998 | |
+| gg-lm-under | 100 | 102 | 0.980 | 1.000 | two extras near the line under the dots, in their color |
+| base-colors, gg-colors | 150, 240 | 146, 236 | 1.000 | 0.973, 0.983 | four dots each half covered by a later dot of another color, 0.8 to 1.2 r away |
+| gg-many | 1000 | 988 | 0.997 | 0.985 | likely ties in the dense middle (the missed are near the center) |
+| gg-overlap | 250 | 240 | 0.983 | 0.944 | likely runs of large dots along the line, overlapping most of their area (not checked one by one) |
+| gg-ellipse | 180 | 193 | 0.922 | 0.989 | three extras are the legend's keys; the others are likely on the ellipses' outlines in the dots' colors (not checked one by one) |
+| gg-loess-groups | 140 | 192 | 0.719 | 0.986 | 51 extras in a column at x 578, about every 9 px, on white 4 px right of the panel's gray border (cause not diagnosed) |
+| gg-loess | 120 | 87 | 0.989 | 0.717 | 34 missed, under the gray band drawn over the dots (gray 54 instead of black) or under the blue curve: the band over dots of pathogen, seen again |
+| gg-dense-alpha | 2000 | – | | | the axes: 12 x and 8 y ticks found inside the dot cloud, for 4 and 4 |
+
+Label bench: 122 of 123 labels read right, 27 of 28 axes solved, none wrong; gg-ellipse's y label 60 isn't read.
+The 28 axes are 14 images' two each: gg-dense-alpha's are left out, their detected ticks not matching the header's.
+The bench's `--verbose` now prints the missed and extra dots of CSV-truth images too, as it did for bench1–3.
