@@ -1,5 +1,5 @@
 // RESULTS.md: the benchmark's result for every test and bench image, one table per set. Runs tools/bench.mjs (every
-// set it finds: the synthetic presets, bench1–3, bench-plos, bench-r, and the local-only bench-local and bench-nature images) with --json, and
+// set it finds: the synthetic presets, bench1–3, bench-plos, bench-pmc, bench-r, and the local-only bench-local and bench-nature images) with --json, and
 // writes the tables. The numbers are regenerated each time; the Notes column is hand-written and kept, matched by
 // set, image and kind of truth, so notes can be edited in RESULTS.md directly.
 //
@@ -25,7 +25,7 @@ const SET_TITLES = {
     'bench-local': 'bench-local: real figures (local only)',
     'bench-nature': 'bench-nature: Nature figures (local only)',
     'bench-plos': 'bench-plos: PLOS ONE figures (CC BY)',
-    'bench-pmc': 'bench-pmc: figures from articles in PubMed Central (local only)',
+    'bench-pmc': 'bench-pmc: figures from articles in PubMed Central (CC BY)',
     'bench-r': 'bench-r: R renderings, 40 dots (scientific notation, ggplot2\'s gray theme)',
 };
 const TRUTH = { exact: 'exact', data: 'data', hand: 'by hand' };

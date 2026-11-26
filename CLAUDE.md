@@ -57,9 +57,10 @@ bench1/ bench2/ bench3/  the user's own JMP renderings (PNG and JPEG) of one dat
                         with scale, tick and plot-area header lines (bench1: 100 dots, bench2: 204 with more ties,
                         bench3: 204 as beeswarms, x a lane). Exact ground truth; the user's to commit or not.
                         Tests using them skip when they're absent.
-bench-pmc/              figures from articles found through PubMed Central, most of them screenshots of a PDF's embedded
-                        raster image, with truth placed by hand in truth/<name>.json: LOCAL ONLY (git ignores the
-                        folder; the licenses vary and aren't checked). Tests using them skip when they're absent.
+bench-pmc/              figures from CC BY 4.0 articles found through PubMed Central, most of them screenshots of a PDF's
+                        embedded raster image, with truth placed by hand in truth/<name>.json, credited in its README
+                        (keep it current when adding one; a figure under another license stays local, listed in
+                        .gitignore, as reading is). Tests using them skip when they're absent.
 bench-r/                R's renderings with tick labels in scientific notation, and of ggplot2's gray theme, drawn by
                         bench-r/make.R, each with a CSV of its points and tick values: for both benchmarks and
                         tests (which skip without it)

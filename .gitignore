@@ -10,5 +10,6 @@ bench-local/*
 !bench-local/README.md
 # real-world test set from Nature figures (third-party, not cleared for redistribution): local only for now
 bench-nature/
-# figures from articles found through PubMed Central, under various licenses not yet checked: local only for now
-bench-pmc/
+# the one figure from PubMed Central that isn't CC BY (bench-pmc/README.md): local only
+bench-pmc/reading-10.1523-JNEUROSCI.1153-24.2024.png
+bench-pmc/truth/reading-10.1523-JNEUROSCI.1153-24.2024.json

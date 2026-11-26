@@ -4530,7 +4530,7 @@ Changes, all in `colormap.js`:
 Tried and removed: sampling the dots' interiors as well as their rims for curve points, to catch colors no rim
 showed. The "missed" purple dots on shap that suggested it were not missed: they were the truth's duplicates.
 
-**The truth files rewritten** (local only; the originals are in `bench-pmc/truth-original/`). Both listed one
+**The truth files rewritten** (the originals are in `bench-pmc/truth-original/`). Both listed one
 family per color picked by hand, as the fit then needed. They are now one family (the first family's color, the
 median radius, a sentence added to the note). shap's truth held 22 dots twice or three times, the same dot added
 in two or three of the hand-made families (within 2 px): 119 → 97 dots. potato's 86 are unchanged.
@@ -5030,3 +5030,19 @@ crowded patches, the rim's cluster or the faint rings' trouble.
 14.0" (ring from 12.25 to 14.00 px, fills 100% opaque from 18 overlapping pairs); Find dots gives 62 (6 flagged
 close) in 6.9 s, each marked in its fill's color and none on the legend; the Axes line reads x and y linear, read;
 no console errors. The label benchmark was not rerun: nothing in the axes or the labels' reading changed.
+
+**bench-pmc committed, with its credits** (2026-11-26)
+
+The figures were chosen from PubMed Central's search results filtered to CC BY, so bench-pmc goes into the
+repository like bench-plos, credited in `bench-pmc/README.md` (authors, title, journal, DOI, license, and the change:
+captured and cropped). Each license was checked in the article's own statement, not only the metadata: the PMC full
+text through Europe PMC and NCBI, the publisher's page for grapes (not in PMC), and bioRxiv's API for amino (the
+preprint's version 1). Titles and authors are Crossref's. Two disagreed with their metadata:
+
+- reward: Crossref records CC BY-NC-SA 4.0; the article states CC BY 4.0. Committed, with a note in the credits.
+- reading: Crossref and Europe PMC record CC BY-NC-SA 4.0, and the article's text names the Society for
+  Neuroscience's exclusive license. Not CC BY, so its image and truth stay local (`.gitignore` lists the two files);
+  no test uses it, and the bench runs it where it's present.
+
+The screenshots' metadata (an EXIF and an XMP chunk in each PNG) holds macOS's "Screenshot" comment and the pixel
+size, nothing else, so the files are committed as they were.

@@ -205,7 +205,7 @@ bench-plos: PLOS ONE figures (CC BY)
 
 ## bench-pmc
 
-bench-pmc: figures from articles in PubMed Central (local only)
+bench-pmc: figures from articles in PubMed Central (CC BY)
 
 | Image | Truth | Mode | Dots | Found | Precision | Recall | Count | RMSE px | Flagged | r px | Time s | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -223,7 +223,7 @@ bench-pmc: figures from articles in PubMed Central (local only)
 | mortality | by hand | exact | 65 | 64 | 1.000 | 0.985 | -1 | 0.65 | 8 | 13.7 | 32.6 | Teal dots in rows along a dose-response curve with a gray band, x a log scale. One dot missed, in a blob hard to make out by eye. |
 | oxygen | by hand | exact | 89 | 89 | 1.000 | 1.000 | 0 | 0.00 | 4 | 11.2 | 62.7 | Purple dots on ggplot2's gray panel with a blue regression line. All 89, no extras. y ticks found, their labels not read. |
 | potato | by hand | exact | 86 | 86 | 1.000 | 1.000 | 0 | 0.13 | 0 | 10.8 | 24.9 | Dots colored on the viridis scale over light gridlines, with two red reference lines. One family on a color scale, every dot found (before: 8 families by color, 80 dots; the gridlines' gray outvoted the dots' colors, and viridis's greens and yellow are too far apart to chain). The truth rewritten as one family. |
-| reading | by hand | exact | 77 | 78 | 0.987 | 1.000 | +1 | 0.11 | 9 | 13.6 | 54.2 | Pale green and orange dots in four columns, with means and error bars in darker shades. All found; the extra is a double the truth counts once. x is categorical, not read as that. |
+| reading | by hand | exact | 77 | 78 | 0.987 | 1.000 | +1 | 0.11 | 9 | 13.6 | 54.2 | Pale green and orange dots in four columns, with means and error bars in darker shades. Local only: the article is not CC BY (bench-pmc/README.md). All found; the extra is a double the truth counts once. x is categorical, not read as that. |
 | reward | by hand | noisy (auto) | 342 | 365 | 0.874 | 0.933 | +23 | 0.79 | 92 | 12.6 | 64.2 | Teal and black dots under a gray regression line, large black text; JPEG-noisy. Both families found (black: 57 dots; 0.11 of the black pixels are dots, 0.47 of those in pieces as thick as one). Extras: dots with blurred edges fitted twice, in both families (the teal's as before), and about 7 teal dots that had matched black truth dots. |
 | rvat | by hand | exact | 166 | 166 | 1.000 | 1.000 | 0 | 0.00 | 15 | 6.8 | 26.2 | Light blue and orange swarms over two bars with error bars. All 166, no extras. x is categorical, not read as that. |
 | shannon | by hand | exact | 111 | 117 | 0.949 | 1.000 | +6 | 0.42 | 9 | 6.1 | 12.0 | Four colors of small dots over box plots outlined in their colors; the figure is cut off above its x labels. Four families, every dot found: the whiskers' pale edges are no gridlines (the plot was clipped to them), and the frame's gray is no family. No x axis (tick marks without labels). Extras: dots fitted twice, a pixel or two apart: four purple ones touching a line of their color or each other (flagged close), two navy ones at the box's lines. |
