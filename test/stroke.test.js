@@ -84,8 +84,8 @@ test('a white stroke around opaque dots: its width, and the dots under it are fo
     // read from opaque families only: a translucent family's overlaps show in its levels, and rings are fitted in
     // their drawing order
     const translucent = prepared.estimates.map(e => ({ ...e, style: { ...e.style, alpha: 0.6 } }));
-    assert.equal(pageStroke(work, translucent).mask, null);
-    assert.equal(pageStroke(work, prepared.estimates.map(e => ({ ...e, outlineMask: new Uint8Array(1) }))).mask, null);
+    assert.ok(!pageStroke(work, translucent).mask, 'no stroke mask');
+    assert.ok(!pageStroke(work, prepared.estimates.map(e => ({ ...e, outlineMask: new Uint8Array(1) }))).mask, 'no stroke mask');
     assert.ok(stroke.gaps >= 100 && stroke.share >= 0.9, `${stroke.gaps} gaps, ${stroke.share} of one width`);
     // from the fill's edge to the ink beyond, the edges' pixels by their coverage
     assert.ok(Math.abs(stroke.width - 2.5) <= 0.25, `width ${stroke.width}`);
@@ -112,7 +112,7 @@ test('a white stroke around opaque dots: its width, and the dots under it are fo
 
 test('no stroke: plain overlapping dots, dots that only come near, and outlines of another color', () => {
     // the same piles without strokes: the dots meet with no page between
-    assert.equal(scan(draw(520, 370, piles(11))).mask, null);
+    assert.ok(!scan(draw(520, 370, piles(11))).mask, 'no stroke mask');
     // dots packed side by side, 2 px apart at the nearest (a beeswarm): the page between them widens along the gap
     const packed = [];
     for (let row = 0; row < 8; row++) {
@@ -120,10 +120,10 @@ test('no stroke: plain overlapping dots, dots that only come near, and outlines 
             packed.push({ x: 60 + (2 * R + 2) * (col + (row % 2) / 2), y: 60 + (2 * R + 2) * Math.sqrt(3) / 2 * row, color: BLUE });
     }
     const swarm = scan(draw(400, 280, packed));
-    assert.equal(swarm.mask, null);
+    assert.ok(!swarm.mask, 'no stroke mask');
     assert.equal(swarm.gaps, 0, 'whole dots beside whole dots tell nothing');
     // dark outlines as wide as the stroke was: one width all round, and not the page's color
-    assert.equal(scan(draw(520, 370, piles(11), 2.5, [30, 30, 30])).mask, null);
+    assert.ok(!scan(draw(520, 370, piles(11), 2.5, [30, 30, 30])).mask, 'no stroke mask');
 });
 
 // a rectangle [x0, y0, x1, y1) of other ink, or of `color`
@@ -141,7 +141,7 @@ test('too little to tell a stroke by: one pair of dots, and gaps of many widths 
         pair.push({ x: 60 + 70 * i, y: 200, color: BLUE });
     const one = scan(draw(520, 300, pair, 2.5));
     assert.ok(one.gaps > 0 && one.gaps < 40 && one.share === 1, `${one.gaps} gaps`);
-    assert.equal(one.mask, null);
+    assert.ok(!one.mask, 'no stroke mask');
     // no strokes: dots cut by bars of other ink that touch them, each with a whole dot 1 to 4 px from what is left
     // of it. The page between those is of every width, and widens along each gap.
     const dots = [];
@@ -160,7 +160,7 @@ test('too little to tell a stroke by: one pair of dots, and gaps of many widths 
     const near = scan(image);
     assert.ok(near.gaps >= 40, `${near.gaps} gaps`);
     assert.ok(near.share < 0.6, `${near.share} of one width`);
-    assert.equal(near.mask, null);
+    assert.ok(!near.mask, 'no stroke mask');
 });
 
 test('a dash in the dots\' color beside each whole dot is no cut dot', () => {
@@ -174,7 +174,7 @@ test('a dash in the dots\' color beside each whole dot is no cut dot', () => {
         bar(image, [d.x - 5, d.y + R + 2, d.x + 5, d.y + R + 5], BLUE);
     const stroke = scan(image);
     assert.equal(stroke.gaps, 0);
-    assert.equal(stroke.mask, null);
+    assert.ok(!stroke.mask, 'no stroke mask');
 });
 
 test('the stroke\'s pixels: beside a sliver of a dot too, and not other ink between two dots', () => {

@@ -270,7 +270,7 @@ test('findOutlines: fills without a dark ring are not outlined dots', () => {
     // the same scene with white rings: the fills still lie in their plane, but nothing in P is a ring
     const image = outlinedImage(scene(), { ringColor: WHITE });
     assert.ok(fillPlane(image, WHITE), 'the fill plane is still found');
-    assert.equal(findOutlines(image, WHITE), null);
+    assert.ok(!findOutlines(image, WHITE), 'no outlined dots');
 });
 
 test('truthPixelsByTicks: values through detected ticks, interpolated in log(v + 1)', () => {
@@ -754,7 +754,7 @@ test('findPaletteOutlines: black rings around fills are read at full darkness; r
     // plain dots of two colors and four letter o's: rings, with the page inside
     const plain = [0, 1, 2, 3, 4, 5, 6, 7].map(i => ({ x: 40 + 50 * i, y: 200.5, k: i % 2, ring: 0 }));
     const os = [0, 1, 2, 3].map(i => ({ x: 60 + 40 * i, y: 60.5, k: null, hollow: true }));
-    assert.equal(findPaletteOutlines(paletteImage([...plain, ...os]), WHITE, PALETTE.slice(0, 2), () => true), null);
+    assert.ok(!findPaletteOutlines(paletteImage([...plain, ...os]), WHITE, PALETTE.slice(0, 2), () => true), 'no outlined dots');
 });
 
 test('black rings read unmasked: a thin black line off the rows and columns is under the rings, not ring ink', () => {

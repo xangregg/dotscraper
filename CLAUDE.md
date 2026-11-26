@@ -65,6 +65,7 @@ bench-r/                R's renderings with tick labels in scientific notation, 
                         tests (which skip without it)
 tools/check-page.mjs    headless-Chrome page check (copied from lafspline)
 tools/png.mjs           PNG read/write and JPEG read for tools and tests (pngjs, jpeg-js)
+tools/mem-guard.mjs     preload that kills a node process past a memory limit (runaway tests and mutation checks)
 tools/measure-dots.mjs  phase 0 measurement of a translucent dot family (levels, alpha, radius, blur)
 tools/truth-csv.mjs     truth sets in data units (benchN/data.csv) and their pixel positions through the plot area
 tools/truth-json.mjs    truth placed by hand (Save truth JSON, px, in bench-local/truth/ and bench-nature/truth/); run
@@ -78,6 +79,10 @@ test/*.test.js          node:test + node:assert/strict
 ## Commands
 
 - Tests: `npm test` (runs `node --test`). Node 22+ (`tools/check-page.mjs` uses Node's built-in WebSocket).
+- Memory guard for long runs (tests, mutation checks, the bench): `NODE_OPTIONS="--import=$PWD/tools/mem-guard.mjs"
+  npm test` kills any node process past 16 GB resident (`MEM_GUARD_GB` for another limit) and says so on stderr.
+  Clean runs stay far below it (each test file under 0.75 GB, the bench at 10 jobs 9 GB); a failing assertion that
+  prints image-sized arrays doesn't.
 - Serve locally: `npm run serve` (python3 on port **8003**, leaving 8000–8002 to related projects), then open
   http://localhost:8003/. Dev mode (test image list, `#image=` URL state, Save truth, the Count, Mask, Classes and
   Model views) is on for a local host and off on the deployed site (https://xangregg.github.io/dotscraper/, GitHub
