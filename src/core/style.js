@@ -4,7 +4,7 @@
 // the dots' own levels; scan.js has the Scan they pass around, shape.js the measures of dots as shapes.
 
 import { distanceTransform } from './layers.js';
-import { nearColor, colorDistance } from './image.js';
+import { nearColor, colorDistance, sub } from './image.js';
 import { LEVEL_SEPARATION, CLUSTER_TOL, BOX_COLOR_TOL, isThin, scanOf, solidRegion, straightShare } from './scan.js';
 import { components, isolatedDots, measureRing, edgeBlur, boundaryBlur } from './shape.js';
 import { median } from './stats.js';
@@ -57,6 +57,15 @@ const RINGED_MIN_SHARE = 0.5; // of the isolated dots, for the family to be outl
 // blends' levels within 1.3 of a stack, the real families' 86 or more away.
 const BLEND_TOL = 12; // 0–255 units
 const OVER_BAND_Q = [0.05, 0.95]; // 1 − α for a family's dots over a band of their hue (overBand)
+// A figure's lines are drawn in its dots' full color. An opaque plateau beyond the dots on their line is that color
+// when, as the color, it puts the dots over the band where they are found (bread2: a JPEG, α 0.5; the blue dots' 438
+// and 191 flat pixels on the page and over the band gave α 0.53 and the red's 74 and 64 gave 0.61, with the lines, of
+// 1518 and 690 pixels, at 0.507 and 0.510 of the way; the dots over the bands 1.5 and 3.6 units from where the lines'
+// colors put them, and 10.3 from where the next nearest plateau would).
+const PLATEAU_TOL = 6; // 0–255 units (RGB distance)
+// … and a color line with no dots over a band to measure is a family at the α of one found, when a plateau beyond
+// its first fill gives that α (bread2's purple, 0.496: two dots clear of the pile, none over its band)
+const SIBLING_ALPHA_TOL = 0.05;
 const BLEND_DEPTH = 4; // dots in a stack
 // findCandidates' progress: the share of the work before the opaque clusters (measured 0.07–0.28 on five bench
 // images, 0.73 on protrusion1, whose four translucent families each test their colors for a box)
@@ -192,6 +201,12 @@ export function estimateStyle(image, opts = {}) {
     }
     if (!isolated.length)
         notes.push(NO_ISOLATED_NOTE);
+    if (fam.plateau) {
+        const ink = `the solid ink in their hue (${fam.plateau.color.map(Math.round).join(', ')}, ${fam.plateau.count} flat pixels: a line or a key drawn in the dots' color)`;
+        notes.push(fam.plateau.sibling
+            ? `No overlap of these dots shows how opaque they are: their full color is taken to be ${ink}, which gives them the opacity of the image's other families, ${Math.round(100 * fam.fit.alpha)}%.`
+            : `The dots' full color is taken to be ${ink}, which makes them ${Math.round(100 * fam.fit.alpha)}% opaque; the dots over the band of their hue agree with it.`);
+    }
     const inferredLevels = fam.levels.flatMap((L, i) => L.inferred ? [i + 1] : []);
     if (inferredLevels.length)
         notes.push(`Too few flat pixels show ${inferredLevels.length > 1 ? 'levels' : 'level'} ${inferredLevels.join(', ')} (overlap count), so its color was inferred from the levels around it.`);
@@ -260,7 +275,9 @@ function translucentFamilies(scan) {
 // stay other ink for the opaque families, as when it was dropped later as text (engagement1: black text and the
 // blues' strokes; without them the blues' fit gave 55 dots for 49, P 0.873)
 function levelCandidates(scan) {
-    const nesting = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c)
+    const banded = familyCandidates(scan).map(c => beyondBox(scan, c) ?? overBand(scan, c) ?? c);
+    const alphas = banded.filter(c => c.translucent && c.plateau).map(c => c.fit.alpha);
+    const nesting = banded.map(c => (c.translucent ? c : atSiblingAlpha(scan, c, alphas) ?? c))
         .filter(c => c.translucent && firstLevelFills(scan, c))
         .map(c => withoutBand(scan, c));
     const measured = [];
@@ -347,11 +364,14 @@ function withoutBand(scan, c) {
 // candidate has X₁ as its one level and the band recorded (background.js reads it as a region under the dots).
 function overBand(scan, c) {
     const { image, B } = scan;
-    if (c.levels.length !== 1 || c.beyond.length < 2 || isThin(scan, c.levels[0].color))
+    if (c.levels.length !== 1 || isThin(scan, c.levels[0].color))
         return null;
     const band = c.levels[0].color;
+    const beyond = beyondBand(scan, c);
+    if (beyond.length < 2)
+        return null;
     const d = band.map((v, ch) => v - B[ch]);
-    const [X1, ...rest] = c.beyond;
+    const [X1, ...rest] = beyond;
     let best = null;
     for (const X2 of rest) {
         const e = X2.color.map((v, ch) => v - X1.color[ch]);
@@ -363,15 +383,70 @@ function overBand(scan, c) {
         const alpha = 1 - q;
         const color = X1.color.map((v, ch) => B[ch] + (v - B[ch]) / alpha);
         if (color.every(v => v >= -FIT_C_TOL && v <= 255 + FIT_C_TOL) && (!best || X2.count > best.count))
-            best = { alpha, color, count: X2.count };
+            best = { alpha, color, count: X2.count, over: X2.color };
     }
     if (!best)
         return null;
+    // the plateau beyond that, as the full color, best puts the dots over the band where they are (landing1's orange:
+    // of three colors past the dots, the first is 3.7 units off at α 0.80, the last, the dots' own, 0.4 off at 0.753)
+    const full = rest.map(P => {
+        const { m, off } = alongLine(sub(X1.color, B), sub(P.color, B));
+        return { P, m, off, miss: colorDistance(X1.color.map((v, ch) => v + (1 - m) * d[ch]), best.over) };
+    }).filter(f => f.m > 1 - OVER_BAND_Q[1] && f.m < 1 - OVER_BAND_Q[0] && f.off <= CLUSTER_ON_LINE_TOL && f.miss <= PLATEAU_TOL)
+        .sort((a, b) => a.miss - b.miss)[0];
+    const fit = full ? { alpha: full.m, c: [...full.P.color] } : { alpha: best.alpha, c: best.color };
     const line = colorLine(B, X1.color);
     return {
         kind: 'translucent', seed: X1.color, line, proj: projectOnLine(image, line), levels: [X1], beyond: rest,
-        fit: { alpha: best.alpha, c: best.color, rms: 0, maxAbs: 0 }, pixels: X1.count, translucent: true, band,
+        fit: { ...fit, rms: 0, maxAbs: 0 }, pixels: X1.count, translucent: true, band,
+        ...(full ? { plateau: { color: [...full.P.color], count: full.P.count } } : {}),
     };
+}
+
+// The colors beyond a candidate's one level, a band: as measured when two or more show. A band that is a solid area
+// can hold a hundred times the pixels of the dots over it, and a level's peak must hold a share of the line's flat
+// pixels (levels.js PEAK_MIN_FRACTION), so the dots' own colors made no peak (bread2: the blue band's 129,883 flat
+// pixels set the bar at 520, and the dots' fills, 438 on the page and 191 over the band, were not seen). Then the line
+// is measured again without the band's pixels, aimed at the first color found: the band's own color lies up to 2° off
+// the dots' (its few units from the page are rounded), which at the line's far end is past the tolerance.
+// Only colors past the band count: nearer the page are its antialiased rims (nicest language: a panel of 241, 240, 233
+// with 61 pixels of 244, 243, 237 and 9 of 238, 238, 229 around it, which made a "family" at α 0.69).
+function beyondBand(scan, c) {
+    const { B, tol } = scan;
+    const band = c.levels[0].color;
+    if (c.beyond.length >= 2 || !solidRegion(scan, band, BOX_MIN_HALF_WIDTH))
+        return c.beyond;
+    const past = L => colorDistance(L.color, B) >= colorDistance(band, B) + LEVEL_SEPARATION;
+    const first = measureWithout(scan, band, band, tol.minLevelT).levels.find(past);
+    if (!first)
+        return c.beyond;
+    const again = measureWithout(scan, first.color, band, tol.minLevelT);
+    return [...again.levels, ...again.beyond].filter(past);
+}
+
+// A candidate that is no translucent family as measured, read as one at a found family's α: its first color X₁ that
+// lies at that share (SIBLING_ALPHA_TOL) of the way from the page to a plateau beyond it is one dot, the plateau the
+// full color. Figures draw their groups alike, and a group with too few dots clear of the others shows no second
+// level and no dot over a band to measure α by. `alphas` are those of the families whose own full color is a plateau
+// in their hue (overBand): what this one is assumed to share with them. Null when no color does.
+function atSiblingAlpha(scan, c, alphas) {
+    const { image, B } = scan;
+    const colors = [...c.levels, ...c.beyond];
+    for (let i = 0; i < colors.length && alphas.length; i++) {
+        const X1 = colors[i];
+        for (const P of colors.slice(i + 1)) {
+            const { m, off } = alongLine(sub(X1.color, B), sub(P.color, B));
+            if (off > CLUSTER_ON_LINE_TOL || !alphas.some(a => Math.abs(a - m) <= SIBLING_ALPHA_TOL))
+                continue;
+            const line = colorLine(B, X1.color);
+            return {
+                kind: 'translucent', seed: X1.color, line, proj: projectOnLine(image, line), levels: [X1], beyond: colors.slice(i + 1),
+                fit: { alpha: m, c: [...P.color], rms: 0, maxAbs: 0 }, pixels: X1.count, translucent: true,
+                plateau: { color: [...P.color], count: P.count, sibling: true },
+            };
+        }
+    }
+    return null;
 }
 
 // Whether a translucent candidate's level 2 lies in its level 1 (NEST_REACH). Pixels are a level's when flat and
@@ -442,11 +517,11 @@ function beyondBox(scan, c) {
     return alt.translucent && alt.levels.length >= 2 ? { ...alt, band: box, box: true } : null;
 }
 
-// a family measured from seed with the pixels of one color (a box's) taken out of the flat mask
-function measureWithout(scan, seed, color) {
+// a family measured from seed with the pixels of one color (a box's or a band's, within `tol`) taken out of the flat mask
+function measureWithout(scan, seed, color, tol = BOX_COLOR_TOL) {
     const { data } = scan.image;
     const rest = scan.flat.slice();
-    const isBox = nearColor(data, color, BOX_COLOR_TOL);
+    const isBox = nearColor(data, color, tol);
     for (let p = 0; p < rest.length; p++) {
         if (isBox(p))
             rest[p] = 0;

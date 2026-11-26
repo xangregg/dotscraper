@@ -251,3 +251,39 @@ test('regression: ink a little off a dark region\'s color is no dot under a laye
     assert.ok(regions[0].votes.over >= 20, JSON.stringify(regions[0].votes));
     assert.equal(regions[0].mode, 'unknown');
 });
+
+test('regression: two families\' own bands, one over the other: the overlap is a third region under the dots (bread2)', () => {
+    // before: the upper band was a layer over everything by the overlap's color, whose s (0.78 for 0.85) undid the
+    // dots under it a tenth too deep; then, in the app alone, when the dots' votes on the upper band weren't "under"
+    const PANEL = [229, 229, 229];
+    const W2 = 600;
+    const H2 = 300;
+    const blue = { color: [52, 137, 188], alpha: 0.5, band: [202, 214, 222] };
+    const red = { color: [225, 74, 52], alpha: 0.5, band: [228, 205, 201] };
+    // (as measured there: 2 units lighter than the blue band over the red at the 0.85 it lets through)
+    const overlap = [203, 196, 200];
+    const im = solidImage(W2, H2, PANEL);
+    const bg = (x, y) => (y < 60 ? PANEL : x < 260 ? blue.band : x < 400 ? overlap : red.band);
+    for (let y = 0; y < H2; y++) {
+        for (let x = 0; x < W2; x++)
+            im.data.set(bg(x, y), 3 * (y * W2 + x));
+    }
+    // each family's dots over the overlap and the red band, drawn over them; none over the blue band, which the dots'
+    // votes then leave unknown (and a band in the dots' own hue can't be told by them: bread2's was under by 1887 to
+    // 129 as Node decodes the JPEG, over by 1194 to 840 as Chrome does)
+    for (const [f, y0] of [[blue, 110], [red, 200]]) {
+        for (let k = 5; k < 11; k++) {
+            const cx = 40 + 52 * k;
+            for (let y = y0 - 11; y <= y0 + 11; y++) {
+                for (let x = cx - 11; x <= cx + 11; x++) {
+                    if (Math.hypot(x + 0.5 - cx, y + 0.5 - y0) <= 10)
+                        im.data.set(bg(x, y).map((v, ch) => f.color[ch] + (v - f.color[ch]) * 0.5), 3 * (y * W2 + x));
+                }
+            }
+        }
+    }
+    const image = toRgba(im);
+    const layers = backgroundRegions(image, PANEL, [blue, red], flatMask(image), 10);
+    assert.deepEqual(layers.regions.map(r => r.mode), ['under', 'under', 'under'], JSON.stringify(layers.regions.map(r => [r.color.map(Math.round), r.mode, r.votes])));
+    assert.ok(layers.regions.some(r => r.color.every((v, ch) => Math.abs(v - overlap[ch]) <= 2)), 'the overlap is a region');
+});

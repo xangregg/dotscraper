@@ -4788,3 +4788,111 @@ Full benchmark: shannon's row alone changed (203 rows, 202 the same); summed fit
 (28 + 31 + 30 + 28) across the whole plot; the Axes line reads "x not found · y linear, read"; the mask view
 shows only the left of the y axis, the lines and the labels masked. That check was made before the 10-unit
 margin went in, which changes nothing on shannon (the benchmark row is the same after it).
+
+**bench-pmc, bread2: three translucent colors over bands of their hues, with lines in their colors** (2026-11-26)
+
+A JPEG of a seaborn figure on ggplot2's gray panel: red, blue and purple dots at α 0.5 with rims (the edge is
+stroked at the fill's α, so its inner half is a second level 2.5 px wide), a regression line in each color and a
+confidence band at 15% of it, two of the bands 160,000 and 29,000 px and overlapping; 75 of the 96 dots lie in a
+pile along the bottom, under the purple line and across a gridline. No family was found. What stood in the way,
+in the order met:
+
+1. *The dots' colors were no levels.* A level's peak must hold 0.4% of its line's flat pixels, and the blue band
+   has 129,883 of them: the bar was 520, the dots' fills 438 on the page and 191 over the band. The red, whose
+   band is a tenth the size, was read (`style.js overBand`: the band as the one level, a dot on the page and one
+   over the band giving α); the blue was no family, and the purple, with no dot over its sliver of a band, had no
+   α to measure. Now a one-level candidate whose level is a solid area is measured again without that area's
+   pixels, aimed at the first color found past it (`beyondBand`: the band's own color is up to 2° off the dots'
+   line, past the tolerance at the line's far end). Only colors past the band count: nearer the page are its
+   rims (nicest language: 61 and 9 pixels around a beige panel made a "family" at α 0.69, and with it two of the
+   five real families were not found; how it cost them wasn't traced).
+2. *α from a few noisy pixels.* The dots on the page and over the band gave 0.53 (blue) and 0.61 (red) for 0.5,
+   and at 0.61 two dots read as 2.7. The lines are in the dots' full colors, of 1518 and 690 flat pixels, at 0.507
+   and 0.510 of the way from the panel. So a plateau beyond the dots is taken for the full color when, as the
+   color, it puts the dots over the band where they are found, within 6 units (`PLATEAU_TOL`; here 1.5 and 3.6,
+   and 10.3 for the next nearest plateau); of several, the one that puts them nearest (landing1's orange has
+   three colors past its dots: the first is 3.7 off at α 0.80, the dots' own 0.4 off at 0.753). The estimate's
+   note says the color is the solid ink's and that the dots over the band agree.
+3. *The purple family* has two dots clear of the pile and none over its band. A candidate that is no family as
+   measured is one at a found family's α when a plateau beyond its first fill gives that α within 0.05
+   (`atSiblingAlpha`: 0.496 beside 0.507 and 0.510), and only families whose own color is a plateau lend theirs:
+   it is the figure's drawing lines in its dots' colors that is assumed shared. The note says no overlap shows
+   the opacity and where it is from.
+4. *A band divided out.* With three families the blue band, lying over the red, was a layer over everything
+   (`background.js`, the rule from step1), with s from the overlap's color: 0.78, where the band lets 0.85
+   through (the overlap is 2 units lighter than the two bands' colors predict, and the red band's offset is
+   only 37 units long). Undone with it, the dots under the band came out a tenth too deep, and the scan of the
+   undone image found one family, at α 0.81. Where both bands are found families' own, they and the overlap are
+   now three regions under the dots, the overlap in the color it shows: nothing is divided, and the three
+   families are read against the page, the two bands and the overlap as measured. A family's dots compose with
+   its own band in either order; another family's dots under a band are then read as over it, which here is 17
+   units off for the red dots in the blue band (0.075 of the two colors' distance). The dots' votes on the bands
+   are not asked: on a band of their own hue they are noise, and they differed between Node and the app (below).
+5. *Stacks of three colors.* Pixels are given to one family when they lie on its line, else to a pair
+   (`unmix.js`). With three colors, stacks of two of them fall on the third's line: two purple dots over a blue
+   and a red, 149, 145, 199, are 13 units off the purple line 119 along it, and read as eight purple dots; purple
+   had 41 dots in the pile for 18. Three families whose offsets from the page span color space give each pixel
+   three weights by a 3 × 3 solve, and each of the six drawing orders turns them into transmittances; the order
+   nearest whole counts is taken, as for a pair. It is asked where no line or pair explains the pixel, and of a
+   pixel on one family's line when it gives another family 0.08 or more. Three limits:
+   - *Exactly three families*: more leave the weights undetermined.
+   - *Weights a stack can have* (none below zero, no more than 1 in all). In tsne a blue dot at α 0.8 over a
+     brown one of an opaque family, 57, 119, 166, lies 23 units off the blue line, and the solve read the brown
+     as another of the three: asked of every pixel, four dots that the truth has at such places were no longer
+     found (recall 0.981 → 0.969). Two thirds of tsne's blue pixels with weight elsewhere have weights no stack
+     has (736 of 1110, against 4 of bread2's 1250 purple ones), and those stay the one family's.
+   - *Not nearly in one plane*: with the third color 6 units off the plane of the other two, noise of 3 units
+     made a dot of it a mix of the others a quarter of the time (`TRIPLE_MIN_VOLUME`; bread2's colors are at
+     0.26, tsne's 0.12).
+
+*Node and Chrome decode this JPEG a unit apart* in a sixth of its pixels (280,474 of 1,630,800 by 1, 4,128 by 2
+to 4): the blue band is 202, 214, 222 in the benchmark and 202, 215, 223 in the app. The first version of rule
+4 asked that each band read as under its dots, which the blue band did in Node by 1887 votes to 129 and did not
+in Chrome (840 to 1194): the benchmark had three families and the app two, with the band divided out. Found by
+the app check, and traced on Chrome's own pixels (`tools/check-page.mjs --eval-file` returning the decoded
+canvas as a PNG). On them the fit finds 80 dots, 86 on Node's: the app's numbers for a JPEG are near the
+benchmark's, not the same.
+
+bread2: 86 found for 96 in three families, P 0.860, R 0.771, RMSE 1.71 px, 45 flagged (no family before). Each
+family at α 0.50–0.51 with its line's color, radius 10.3–10.4 px, the rim read as a ring from 7.2 to 9.0 px.
+Clear of the pile (y < 920) every dot is found and nothing else. In the pile, by family: blue 15 of 22 with 1
+extra, red 19 of 35 with 3, purple 13 of 18 with 14 extras, most of them where the truth has a blue and a red
+dot and the pixels are more purple than those two make (at 178, 1007 the truth has one blue dot, 139, 183, 208;
+the pixel is 148, 154, 206). The truth's pile is uncertain, as its note says, so the pile's numbers measure
+agreement with a guess; they were not tuned against. Without the three-way solve: P 0.800, R 0.708, with 20
+purple extras.
+
+What is not right, and left:
+- A dot beside a band's edge can take the wrong region where its own rim passes through another region's color
+  (a red dot in the blue band is read against the overlap's color in a star of its pixels: 14 units off).
+- The white gridlines, 3 px wide, are no region (too thin for seeds): their pixels are off every family's line
+  and masked, a strip across each dot on one; and the opaque lines are masked with what lies under them. Half the
+  pile's dots are centered within a few px of the y = 0 gridline and the purple line.
+- A band in a family's own hue that overlaps no other still takes its mode from the dots' votes.
+- A color picked by hand (Add family by color) is measured without these rules: on bread2 it is not needed.
+
+Other images: landing1 74 found for 70 (75), P 0.946 (0.933), RMSE 0.555 (0.421): its orange family's color is
+now its darkest plateau's, at α 0.753. tsne 257 for 257 (256), P 0.981 (0.984), R 0.981 as before: one more
+dot, an extra. The other 201 rows are the same; summed fit times 2635 s → 2683 s at 10 jobs, 33 s of it bread2.
+The label benchmark was not rerun: nothing in the axes or the labels changed.
+
+Tests: flat shapes in bread2's colors (dots on the page and over a band of 200,000 pixels, a line in the full
+color: α 0.51 and the line's color, with the note; a second color with dots and a line and no band: a family
+at α 0.50, with its note); light gray dots and black text beside a translucent family at the gray's share of
+the way to black (no translucent gray); two families' bands with an overlap in bread2's measured colors and no
+dot over the upper band (three regions under); one pixel each for two purple over a blue and a red, one of each
+family, one family alone, the same with a fourth family, tsne's blue over brown, and a third color 6 units off the
+plane of two others under every noise of ±3 units; bread2 itself (three translucent families at α 0.5 ± 0.02
+with rims, every dot clear of the pile and nothing else, recall 0.72 and precision 0.8 or better). Fourteen
+mutations fail a test each: the band's pixels kept; colors nearer the page than the band counted (nicest
+language's test, a local image: a scene of flat shapes didn't lose a family as that image does); the plateau
+not taken; the first plateau within tolerance taken (landing1); no family at a sibling's α; any translucent
+family lending its α; the stack rule for own bands taken out, and asked of the votes again; single-family
+pixels never refused; no three-way reading; weights no stack has accepted; the plane test taken out; three of
+four families solved.
+
+376 tests pass (8 new). In the app, on Chrome's decode: bread2 scans as three translucent families (α 0.51, 0.50,
+0.50, r 10.4), each with the notes on its rim, its color from the solid ink in its hue, and the three regions
+under the dots; Find dots gives 80 (25 + 29 + 26, 39 flagged) in 8.7 s; the Axes line reads x and y linear, read;
+no console errors. The page check in headless Chrome doesn't start inside the sandbox this session runs
+commands in; it was run outside it for the decoded pixels.

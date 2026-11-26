@@ -202,7 +202,21 @@ export function backgroundRegions(image, B, families, flat, radius) {
                 labelByColor(image, B, r, families, seeds, near, label, sure, i + 1, LABEL_REACH * radius);
         });
     }
+    const ownBand = c => families.some(f => f.band && !f.box && colorDistance(f.band, c) <= BAND_COLOR_TOL);
     for (const st of stacks) {
+        // Two families' own bands: both are regions under the dots, and the overlap a third, in the color it shows. A
+        // family's dots compose with a band of their own color in either order, so their votes on it are noise
+        // (bread2's blue band: under by 1887 to 129 as Node decodes the JPEG, not so as Chrome does, a unit apart in a
+        // sixth of the pixels). Dividing the upper band out needs its s, which the overlap's color gives poorly when
+        // the lower band is faint (0.78 from an overlap 2 units lighter than the bands' colors predict, where 0.85
+        // lets through the 15% the bands are drawn at; undone with it, the dots under the band came out a tenth too
+        // deep, and the scan of the undone image found one family of the three, at α 0.81 for 0.51).
+        if (ownBand(colors[st.top]) && ownBand(colors[st.bottom])) {
+            for (const k of [st.top, st.bottom])
+                regions[k] = { ...regions[k], mode: 'under', s: null };
+            regions.push({ color: st.color, mode: 'under', s: null, pixels: 0 });
+            continue;
+        }
         regions[st.top] = { ...regions[st.top], mode: 'over', s: st.s, stackedOver: st.bottom };
         const low = regions[st.bottom];
         // under both: what is under the lower band too if it is a layer, else the lower band with the dots over it

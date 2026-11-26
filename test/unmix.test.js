@@ -149,3 +149,59 @@ test('regionLevels: a family\'s levels over a box are measured there, where the 
     near(levels.ts[0], dist(boxed[1]), 1, 'one dot');
     near(levels.ts[1], dist(boxed[2]), 1, 'two dots');
 });
+
+test('regression: three families\' stacks are read by their three weights, on another family\'s line or off every pair\'s (bread2)', () => {
+    const PANEL = [229, 229, 229];
+    const FAMS = [{ color: [225, 74, 52], alpha: 0.5 }, { color: [52, 137, 188], alpha: 0.5 }, { color: [152, 142, 211], alpha: 0.5 }];
+    const over = stack => stack.reduce((u, k) => u.map((v, ch) => FAMS[k].color[ch] * 0.5 + v * 0.5), PANEL);
+    const pixel = c => ({ width: 1, height: 1, data: Uint8ClampedArray.from([...c.map(Math.round), 255]) });
+    // two purple dots over a blue over a red: 12 units off the purple line 121 along it, where one family alone read
+    // eight purple dots
+    const deep = unmixFamilies(pixel(over([0, 1, 2, 2])), PANEL, FAMS);
+    assert.equal(deep.mixed[0], 1);
+    near(deep.T[2][0], 0.25, 0.05, 'two purple dots');
+    near(deep.T[1][0], 0.5, 0.08, 'one blue dot');
+    near(deep.T[0][0], 0.5, 0.12, 'one red dot');
+    // one of each
+    const one = unmixFamilies(pixel(over([0, 1, 2])), PANEL, FAMS);
+    assert.equal(one.mixed[0], 1, 'explained');
+    for (let k = 0; k < 3; k++)
+        near(one.T[k][0], 0.5, 0.06, `family ${k}`);
+    // one family's own pixel is its own as before
+    const alone = unmixFamilies(pixel(over([2])), PANEL, FAMS);
+    assert.equal(alone.mixed[0], 0);
+    near(alone.T[2][0], 0.5, T_TOL, 'one purple dot');
+    assert.ok(alone.T[0][0] === 1 && alone.T[1][0] === 1);
+    // a fourth family leaves the weights undetermined: the pixel is read as before, as purple dots alone (it is 23
+    // units off their line 124 along it)
+    const four = unmixFamilies(pixel(over([0, 1, 2])), PANEL, [...FAMS, { color: [40, 160, 60], alpha: 0.5 }]);
+    assert.ok(four.T[2][0] < 0.1 && four.T[0][0] === 1 && four.T[1][0] === 1, `T ${four.T.map(t => t[0])}`);
+});
+
+test('regression: a pixel on one family\'s line whose three weights no stack has is that family\'s alone (tsne)', () => {
+    // tsne's cyan, green and blue at α 0.8, and the color of a blue dot over a brown one, an opaque family's, 23 units
+    // off the blue line: read by the three weights, it was one blue dot over a tenth of another of the three
+    const TSNE = [{ color: [24, 190, 206], alpha: 0.8 }, { color: [45, 160, 44], alpha: 0.8 }, { color: [31, 119, 180], alpha: 0.8 }];
+    const two = unmixFamilies({ width: 1, height: 1, data: Uint8ClampedArray.from([57, 119, 166, 255]) }, WHITE, TSNE);
+    assert.equal(two.mixed[0], 0);
+    assert.ok(two.T[2][0] < 0.1 && two.T[0][0] === 1 && two.T[1][0] === 1, `T ${two.T.map(t => t[0])}`);
+});
+
+test('three families whose colors lie nearly in one plane with the page are read as before, by lines and pairs', () => {
+    // the third family's offset from white is the mean of the other two's, less 6 units of blue: one of its dots is
+    // on its own line, and as nearly a mix of the other two, which the three-way solve makes of it for a quarter of
+    // the noise of ±3 units (84 of 343)
+    const third = { color: RED.color.map((v, ch) => Math.round((v + BLUE.color[ch]) / 2) - (ch === 2 ? 6 : 0)), alpha: 0.5 };
+    let misread = 0;
+    for (let a = -3; a <= 3; a++) {
+        for (let b = -3; b <= 3; b++) {
+            for (let c = -3; c <= 3; c++) {
+                const one = third.color.map((v, ch) => Math.round(v * 0.5 + 255 * 0.5) + [a, b, c][ch]);
+                const { T, mixed } = unmixFamilies({ width: 1, height: 1, data: Uint8ClampedArray.from([...one, 255]) }, WHITE, [RED, BLUE, third]);
+                if (mixed[0] !== 0 || Math.abs(T[2][0] - 0.5) > 0.05 || T[0][0] !== 1 || T[1][0] !== 1)
+                    misread++;
+            }
+        }
+    }
+    assert.equal(misread, 0);
+});

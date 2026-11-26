@@ -81,6 +81,9 @@ const THIN_FILL_MIN_DOTS = 10;
  * @property {number[]} [band]  0–255: a band or box in the family's own hue that was read as a level, and set apart
  *   (style.js withoutBand, overBand, boxBand)
  * @property {boolean} [box]  the band is a box under the dots (style.js boxBand)
+ * @property {{color: number[], count: number, sibling?: boolean}} [plateau]  the solid ink in the family's hue that
+ *   its full color was taken from (0–255, and its flat pixels); sibling: with α as another family's, no measure of
+ *   its own (style.js overBand, atSiblingAlpha)
  */
 
 /**

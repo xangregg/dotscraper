@@ -311,3 +311,30 @@ test('regression: aerobic, red picked by hand takes the six found families\' rad
     const beside = pickedEstimate(image, [228, 26, 28], { radii: [8.61, 8.62] });
     assert.equal(beside.style.radius, 8.61);
 });
+
+const BREAD2 = new URL('../bench-pmc/bread2-10.1128-jcm.01578-22.jpg', import.meta.url).pathname;
+const BREAD2_PILE_TOP = 920; // px: below it most dots lie in a pile under the lines, and the truth is uncertain
+
+test('regression: bread2, three translucent colors with rims over bands of their hues and lines in their colors (a JPEG)', { skip: !existsSync(BREAD2) && 'bench-pmc absent' }, () => {
+    // before: no family (the bands' 130,000 flat pixels hid the dots' levels, and a band was divided out as a layer)
+    const results = extractAll(readImage(BREAD2), true);
+    assert.equal(results.length, 3);
+    for (const line of [[52, 137, 188], [225, 74, 52], [152, 142, 211]]) {
+        const r = results.find(q => q.est.style.color.every((v, ch) => Math.abs(v - line[ch]) <= 4));
+        assert.ok(r, `a family of color ${line}: ${results.map(q => q.est.style.color.map(Math.round)).join('; ')}`);
+        assert.equal(r.est.familyMeasure.kind, 'translucent');
+        assert.ok(Math.abs(r.est.style.alpha - 0.5) <= 0.02, `α ${r.est.style.alpha}`);
+        assert.ok(Math.abs(r.fit.radius - 10.4) <= 0.3, `radius ${r.fit.radius}`);
+        assert.ok(r.est.style.ring, 'read with its rim');
+    }
+    const truth = readTruthJson(BREAD2.replace('bench-pmc/', 'bench-pmc/truth/').replace('.jpg', '.json')).dots;
+    const found = results.flatMap(r => r.fit.dots);
+    const radius = Math.max(...results.map(r => r.fit.radius));
+    // clear of the pile, every dot and nothing else
+    const clear = d => d.y < BREAD2_PILE_TOP;
+    const above = matchDots(truth.filter(clear), found.filter(clear), 0.5 * radius);
+    assert.equal(above.recall, 1);
+    assert.equal(above.precision, 1);
+    const m = matchDots(truth, found, 0.5 * radius);
+    assert.ok(m.recall >= 0.72 && m.precision >= 0.8, `recall ${m.recall}, precision ${m.precision}, ${found.length} dots`);
+});

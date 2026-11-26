@@ -19,6 +19,14 @@
 // Stacks of three or more dots in both colors (red, blue, red) fit no single order. bench2 group's last 5 misses
 // were such stacks within 4 px; they were found once flat pixels had to be whole counts (FLAT_MAX_FRACTION), which
 // masks the stacks' fractional plateaus. Why that let the fit place them wasn't examined.
+//
+// Three families whose colors' offsets from B span color space give each pixel one set of three weights, by a 3 × 3
+// solve with nothing left over, and each of the six orders turns them into transmittances (the top one's is 1 − w,
+// each one's below 1 − w over what the ones above let through); the order nearest whole counts is taken, as for a
+// pair. It is asked where no one family or pair explains the pixel, and of a pixel on one family's line: with three
+// colors, stacks of two of them fall on the third's line (bread2's pile: two purple dots over a blue and a red, 149,
+// 145, 199, are 13 units off the purple line 119 along it, and read as eight purple dots; the solve gives weights of
+// 0.69, 0.15 and 0.06). More families than three leave the weights undetermined, and are read as before.
 
 import { colorDistance, dot } from './image.js';
 import { flatMask, EXACT_TOLERANCES } from './scan.js';
@@ -39,6 +47,14 @@ const WEIGHT_SLACK = 0.03; // weights may fall this far outside [0, 1] (rounding
 // changed nothing on the bench.)
 const FLAT_MAX_FRACTION = 0.3; // dots
 const MIN_T = 1e-3;
+// With three families, a pixel on one's line is that family's alone unless the three-way solve puts this much weight
+// on another: a dot at α 0.5 under one dot of another family weighs 0.25, JPEG noise of 4 units on bread2's colors 0.05
+const THIRD_MIN_WEIGHT = 0.08;
+const TRIPLE_MIN_VOLUME = 0.05; // |det| of the three unit offsets: flatter than this, the solve amplifies noise
+// … and only when the three weights are ones a stack can have, none below zero and no more than 1 in all: ink of a
+// fourth color under a dot is no stack of the three (tsne: a blue dot at α 0.8 over a brown one of an opaque family,
+// 57, 119, 166, lies 23 units off the blue line. Two thirds of its blue pixels with weight on another family had
+// weights no stack has, and read by them, four dots that the truth has at such places were no longer found).
 // A family's dots over a box under them are read against levels measured there (regionLevels): renderers that
 // don't composite in sRGB put a dot over a box in its own hue far from c + (B₂ − c)(1 − α) (protrusion3: 116, 163,
 // 122 against 128, 167, 127 predicted, which read as 1.56 dots and was masked as fractional). The first level is the
@@ -67,7 +83,7 @@ function fractional(T, q) {
  *   default B everywhere. levels[k][j]: family j's levels measured over colors[k] (regionLevels), read instead of
  *   the geometric model there
  * @returns {{T: Float32Array[], mixed: Uint8Array}}  T per family (1 where it has no dot); mixed = 1 where a pair
- *   explained the pixel, 2 where nothing did (the pixel is left to each family's mask)
+ *   or, of three families, all three explained the pixel, 2 where nothing did (the pixel is left to each family's mask)
  */
 export function unmixFamilies(image, B, families, flat = null, under = null) {
     const { width, height, data } = image;
@@ -93,12 +109,12 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
                     pairs.push({ a, b, aa, bb, ab, det });
             }
         }
-        return { Bk, dirs, span, unit, measured, pairs };
+        return { Bk, dirs, span, unit, measured, pairs, inverse: F === 3 ? inverse3(dirs, span) : null };
     };
     const geometries = (under?.colors ?? [B]).map(geometry);
     const e = [0, 0, 0];
     for (let p = 0; p < n; p++) {
-        const { Bk, dirs, span, unit, measured, pairs } = geometries[under ? under.index[p] : 0];
+        const { Bk, dirs, span, unit, measured, pairs, inverse } = geometries[under ? under.index[p] : 0];
         e[0] = data[4 * p] - Bk[0];
         e[1] = data[4 * p + 1] - Bk[1];
         e[2] = data[4 * p + 2] - Bk[2];
@@ -118,7 +134,9 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
                 bestPerp = perp;
             }
         }
-        if (best >= 0) {
+        const solved = inverse ? inverse.map(row => dot(row, e)) : null;
+        const w3 = solved && solved.every(w => w >= -WEIGHT_SLACK) && solved[0] + solved[1] + solved[2] <= 1 + WEIGHT_SLACK ? solved : null;
+        if (best >= 0 && !(w3 && w3.some((w, k) => k !== best && w >= THIRD_MIN_WEIGHT))) {
             const m = measured[best];
             const Tb = m ? q[best] ** countAt(dot(e, unit[best]), m.ts, q[best]) : Math.max(0, 1 - dot(e, unit[best]) / span[best]);
             if (flat && flat[p] && fractional(Tb, q[best]) > FLAT_MAX_FRACTION) {
@@ -144,7 +162,14 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
                 pick = { pr, wa: Math.max(0, wa), wb: Math.max(0, wb), r2 };
         }
         if (!pick) {
-            mixed[p] = 2;
+            if (!w3) {
+                mixed[p] = 2;
+                continue;
+            }
+            const whole = tripleCounts(w3, q);
+            for (let k = 0; k < 3; k++)
+                T[k][p] = whole[k];
+            mixed[p] = 1;
             continue;
         }
         const { pr, wa, wb } = pick;
@@ -166,6 +191,38 @@ export function unmixFamilies(image, B, families, flat = null, under = null) {
         mixed[p] = 1;
     }
     return { T, mixed };
+}
+
+// The rows that give three families' weights from a pixel's offset: the inverse of the matrix whose columns are the
+// families' offsets from the background. Null when the offsets are too nearly in one plane (TRIPLE_MIN_VOLUME).
+function inverse3(dirs, span) {
+    const [a, b, c] = dirs;
+    const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const bc = cross(b, c);
+    const det = dot(a, bc);
+    if (Math.abs(det) < TRIPLE_MIN_VOLUME * span[0] * span[1] * span[2])
+        return null;
+    return [bc, cross(c, a), cross(a, b)].map(row => row.map(v => v / det));
+}
+
+const ORDERS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]; // top first
+
+// Three families' transmittances from their weights, in the drawing order that puts them nearest whole dot counts.
+function tripleCounts(w, q) {
+    let best = null;
+    for (const order of ORDERS) {
+        const T = [1, 1, 1];
+        let through = 1;
+        let score = 0;
+        for (const k of order) {
+            T[k] = Math.min(1, Math.max(MIN_T, 1 - Math.max(0, w[k]) / through));
+            through = Math.max(MIN_T, through * T[k]);
+            score += fractional(T[k], q[k]);
+        }
+        if (!best || score < best.score)
+            best = { T, score };
+    }
+    return best.T;
 }
 
 /**

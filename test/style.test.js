@@ -317,3 +317,87 @@ test('small blurred translucent dots with a ring inside the rim: α, radius and 
     near(est.style.ring.outer, 0.76, 0.03, 'ring outer');
     near(est.style.ring.alpha, 0.246, 0.04, 'ring opacity');
 });
+
+// bread2's colors as flat shapes: dots at α 0.5 on ggplot2's gray panel and over a band of their hue far larger than
+// they are, with a line in their full color (red), and dots with a line and no band (purple)
+const PANEL = [229, 229, 229];
+const BANDED = { line: [225, 74, 52], dot: [226, 150, 139], band: [228, 205, 201], overBand: [227, 140, 128] };
+const UNBANDED = { line: [152, 142, 211], dot: [191, 185, 221] };
+
+function bandScene() {
+    const W = 1000;
+    const H = 520;
+    const im = solidImage(W, H, PANEL);
+    const rect = (x0, y0, x1, y1, c) => {
+        for (let y = y0; y < y1; y++) {
+            for (let x = x0; x < x1; x++)
+                im.data.set(c, 3 * (y * W + x));
+        }
+    };
+    const disc = (cx, cy, c) => {
+        for (let y = cy - 11; y <= cy + 11; y++) {
+            for (let x = cx - 11; x <= cx + 11; x++) {
+                if (Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= 10)
+                    im.data.set(c, 3 * (y * W + x));
+            }
+        }
+    };
+    // the band holds 200,000 pixels, the two dots on the page 500
+    rect(20, 250, 820, 500, BANDED.band);
+    rect(20, 400, 820, 409, BANDED.line);
+    rect(20, 130, 500, 139, UNBANDED.line);
+    for (let k = 0; k < 2; k++) {
+        disc(60 + 50 * k, 40, BANDED.dot);
+        disc(60 + 50 * k, 300, BANDED.overBand);
+        disc(400 + 50 * k, 40, UNBANDED.dot);
+    }
+    return toRgba(im);
+}
+
+test('regression: dots over a band of their hue a hundred times their size, a line in their full color: α and the color from the line (bread2)', () => {
+    // before: no family, the dots' colors too few beside the band's to be levels
+    const est = estimateStyle(bandScene());
+    const red = est.candidates.find(c => c.kind === 'translucent' && c.fit.c[0] > 200);
+    assert.ok(red, `candidates ${est.candidates.map(c => `${c.kind} ${c.seed.map(Math.round)}`).join('; ')}`);
+    // (the dots on the page and over the band alone give 0.60: the colors are a JPEG's)
+    near(red.fit.alpha, 0.51, 0.02, 'α');
+    red.fit.c.forEach((v, ch) => near(v, BANDED.line[ch], 1, 'color'));
+    red.band.forEach((v, ch) => near(v, BANDED.band[ch], 1, 'band'));
+    const first = estimateStyle(bandScene(), { family: est.candidates.indexOf(red), candidates: est.candidates });
+    assert.ok(first.notes.some(n => /full color is taken to be the solid ink in their hue \(225, 74, 52/.test(n)), first.notes.join(' '));
+});
+
+test('a color line with no dot over a band is a family at the found family\'s α, by the line in its hue', () => {
+    const est = estimateStyle(bandScene());
+    const purple = est.candidates.find(c => c.kind === 'translucent' && c.fit.c[2] > 200);
+    assert.ok(purple, `candidates ${est.candidates.map(c => `${c.kind} ${c.seed.map(Math.round)}`).join('; ')}`);
+    near(purple.fit.alpha, 0.5, 0.02, 'α');
+    purple.fit.c.forEach((v, ch) => near(v, UNBANDED.line[ch], 1, 'color'));
+    const own = estimateStyle(bandScene(), { family: est.candidates.indexOf(purple), candidates: est.candidates });
+    assert.ok(own.notes.some(n => /No overlap of these dots shows how opaque they are/.test(n)), own.notes.join(' '));
+});
+
+test('an opaque family\'s light dots and dark text at a translucent family\'s α are no translucent family', () => {
+    // blue dots at α 0.3 with overlaps (levels measured, no line in their color), light gray dots (178) and black
+    // text: 178 lies 0.30 of the way from white to black, and no family here has its color from a line in its hue
+    const W = 520;
+    const H = 300;
+    const model = createDotModel(solidImage(W, H, [255, 255, 255]), { color: [40, 90, 240], alpha: 0.3, radius: 9 });
+    for (let k = 0; k < 10; k++)
+        model.addAll([{ x: 30 + 48 * k, y: 30 }, { x: 30 + 48 * k, y: 70 }, { x: 40 + 48 * k, y: 74 }]);
+    const gray = createDotModel(model.image, { color: [178, 178, 178], alpha: 1, radius: 9 });
+    for (let k = 0; k < 12; k++)
+        gray.add(30 + 40 * k, 140);
+    const im = gray.image;
+    for (let s = 0; s < 24; s++) {
+        for (let y = 200; y < 260; y++) {
+            for (let x = 20 + 20 * s; x < 26 + 20 * s; x++)
+                im.data.set([0, 0, 0], 3 * (y * W + x));
+        }
+    }
+    const est = estimateStyle(toRgba(im));
+    const kinds = est.candidates.map(c => `${c.kind} ${c.seed.map(Math.round)}`);
+    assert.ok(est.candidates.some(c => c.kind === 'translucent' && c.seed[2] > 200), kinds.join('; '));
+    assert.ok(est.candidates.some(c => c.kind === 'opaque' && Math.abs(c.seed[0] - 178) <= 3), kinds.join('; '));
+    assert.ok(!est.candidates.some(c => c.kind === 'translucent' && Math.abs(c.seed[0] - c.seed[2]) < 10), kinds.join('; '));
+});
