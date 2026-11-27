@@ -35,12 +35,14 @@ turn positions into data values.
 5. Check the tick values read from the labels, or type them where none were read, for data units; then Copy
    table or Save CSV.
 
-The About panel in the app has the details, the keys, and what to trust.
+The About panel in the app has the details and the keys.
 
 ## Limits
 
 - Opaque dots hide one another: a dot entirely behind others can't be found, so a stack's count is a lower bound.
 - The ± values come from pixel noise alone; the real error is a few tenths of a pixel.
+- Data values are only as good as the tick values, read or typed, and the ticks found. The Axes section gives each
+  axis's resolution in data units per pixel.
 - Round markers only. Triangles, squares and other shapes are future work.
 
 ## Development

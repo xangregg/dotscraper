@@ -1284,7 +1284,8 @@ No other bench row changed. In the page: 171 dots, 2 flagged, no console errors.
 **About panel and README** (2026-11-14). An About button at the toolbar's end opens a modal `<dialog>` (Esc and its
 Close button close it; the view's keys are ignored while it's open): what the app does and how (analysis by
 synthesis), the steps of using it, keys and mouse, what to trust (hidden opaque dots, noise-only standard errors, tick
-values), privacy (nothing is uploaded) and the license. README.md covers the same briefly, development commands, why
+values; dropped 2026-11-27 to spare a scroll bar, as mostly self-evident, its points in README's Limits), privacy
+(nothing is uploaded) and the license. README.md covers the same briefly, development commands, why
 the test images are local only, and deployment: GitHub Pages from the branch root, nothing to build. Without local
 test images (the deployed site) the test-image list is hidden and the empty view says to open, paste or drop an
 image; checked by serving only the deployable files (no console errors). The site is
