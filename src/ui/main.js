@@ -825,8 +825,13 @@ function renderStylePanel() {
         const needed = key === 'radius' && style && !(style.radius > 0);
         input.classList.toggle('needed', !!needed);
         input.placeholder = needed ? 'needed' : '';
-        input.title = notOwn ? 'Outlined dots: the ring and fill opacities are measured separately (see the notes)'
+        // a message of the moment, or else none, so the label's explanation shows (an empty title would hide it)
+        const message = notOwn ? 'Outlined dots: the ring and fill opacities are measured separately (see the notes)'
             : needed ? 'No isolated whole dot to measure the radius from: type it (px) to find the dots; Find dots refits it.' : '';
+        if (message)
+            input.title = message;
+        else
+            input.removeAttribute('title');
     }
     const fam0 = state.families[state.current];
     $('style-reset').disabled = !Object.keys(overrides).length && fam0.outlineEdit === undefined;

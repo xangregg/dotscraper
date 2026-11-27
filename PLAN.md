@@ -1426,6 +1426,9 @@ failures (radius unknown, no family, category ticks not paired).
   dots was Dots, open by default; it was renamed (a new id, so a remembered open state doesn't carry over) and
   closed when many families made the panel a wall of text.
 - Under the selected family, only what can be changed shows: radius, α, blur and Reset, and the outline row.
+  Radius, α and blur have tooltips on their labels: what each is, how it is measured, whether Find dots refits it,
+  and when to edit it (radius: the disc before blur, so where the edge is half covered; blur: the signs of a wrong
+  value). A field's own message of the moment (radius needed, α of outlined dots) replaces its label's.
   Overlap levels, full color, levels, fit, isolated count, the notes and the isolated dot vs. model are in a
   **Details** subsection, closed by default, whose summary says how many notes it holds.
 - Dot families are a list with a checkbox each (Find dots fits the checked ones), a swatch (the fill colors side

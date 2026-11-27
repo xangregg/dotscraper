@@ -98,8 +98,9 @@ export function wireTour(about) {
     });
     // the targets move as the header wraps and the panel fills, and the dialog's size decides which numbers it covers
     window.addEventListener('resize', place);
+    // the panel's sections, not the panel: its own size stays put while a family list filling in moves Axes down
     const observer = new ResizeObserver(place);
-    for (const el of [document.querySelector('header'), document.querySelector('aside'), about])
+    for (const el of [document.querySelector('header'), document.querySelector('aside'), ...document.querySelectorAll('aside > details'), about])
         observer.observe(el);
 
     show('intro');
