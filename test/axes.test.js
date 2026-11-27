@@ -147,8 +147,9 @@ test('regressions on the other test images', { skip: !has('pathogen-trade-time-s
     // its gray significance bracket (luminance 160) has three unlabeled "ticks" but is not an x axis
     assert.equal(bb.x, null);
     // the gray band under its names is no gridlines in pieces: a row of it is pieces of light ink between the
-    // letters, each as thick as the band (three more "lines" at 2175, 2287 and 2297 without the thickness)
-    assert.deepEqual(bb.lines.filter(l => l.dir === 'h' && l.pos > 2000).map(l => Math.round(l.pos * 10) / 10), [2276.5, 2298.5, 2331.5]);
+    // letters, each as thick as the band (three more "lines" at 2175, 2287 and 2297 without the thickness); and its
+    // rows through the names, at 2276.5, 2298.5 and 2331.5, have ink beside them on both sides (LINE_CLEAR_SHARE)
+    assert.deepEqual(bb.lines.filter(l => l.dir === 'h' && l.pos > 2000).map(l => Math.round(l.pos * 10) / 10), []);
 });
 
 test('regression: wages2025, navy ticks on gray axis lines, and the x axis\'s corner label isn\'t a y label', { skip: !has('wages2025.png') && 'local test image absent' }, () => {
@@ -541,6 +542,20 @@ test('bench-r: ggplot2\'s default theme at 72, 110 and 300 dpi, the ticks at the
         near(ax.y.spacing, yGap, 0.5, `${name} y spacing`);
         assert.ok([...ax.x.ticks, ...ax.y.ticks].every(t => t.label && t.source === 'tick'), name);
     }
+});
+
+const BENCH_R2 = new URL('../bench-r2/', import.meta.url).pathname;
+
+test('regression: bench-r2 gg-dense-alpha, no line through a dense cloud of translucent dots', { skip: !existsSync(BENCH_R2 + 'gg-dense-alpha.png') && 'bench-r2 absent' }, () => {
+    // before: every row and column through the cloud was inked, its bands were 19 dark "lines", and one of them,
+    // with dots for ticks, was taken for each axis (y 388 and x 561, inside the cloud)
+    const ax = detectAxes(readImage(BENCH_R2 + 'gg-dense-alpha.png'));
+    near(ax.x.line.pos, 623.9, 0.5, 'x axis');
+    near(ax.y.line.pos, 65.4, 0.5, 'y axis');
+    assert.equal(ax.x.ticks.filter(t => t.label).length, 4);
+    assert.equal(ax.y.ticks.filter(t => t.label).length, 4);
+    const inCloud = ax.lines.filter(l => l.to - l.from < 400).length;
+    assert.equal(inCloud, 0, `${inCloud} short lines`);
 });
 
 test('regression: ticks that stand off a panel\'s edge, gridline rims inside it, and a tick at its corner', () => {

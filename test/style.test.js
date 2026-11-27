@@ -84,6 +84,17 @@ test('gray text with two shades is not taken for a translucent family', () => {
     assert.ok(est.candidates.every(c => !c.translucent));
 });
 
+const DENSE = new URL('../bench-r2/gg-dense-alpha.png', import.meta.url).pathname;
+
+test('regression: bench-r2 gg-dense-alpha, small ringed dots in a dense cloud are a family', { skip: !existsSync(DENSE) && 'bench-r2 absent' }, () => {
+    // before: no two-dot lens was within 6 px of level 1's flat pixels (the dots' flat cores are 2 px across), so
+    // level 2 didn't nest in level 1 and no family was found
+    const est = estimateStyle(readPng(DENSE));
+    assert.ok(est.style, est.notes.join(' '));
+    near(est.style.alpha, 0.15, 0.015, 'α');
+    near(est.style.radius, 5.5, 0.3, 'radius');
+});
+
 const BENCH_LOCAL = new URL('../bench-local/', import.meta.url).pathname;
 const has = name => existsSync(BENCH_LOCAL + name);
 

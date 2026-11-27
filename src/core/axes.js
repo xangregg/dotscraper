@@ -52,6 +52,13 @@ const COLORED_EDGE_MIN_SHARE = 0.8; // of a light run's ink
 const LINE_MAX_THICKNESS_FRACTION = 0.02; // of the smaller image dimension …
 const LINE_MIN_MAX_THICKNESS = 4; // … but at least this many px
 const BAND_EXTENT_TOL = 0.1; // rows of one band have runs agreeing in start and end within this fraction of length
+// A line stands out from what is beside it: on one side at least, the row just past its antialiased edge
+// (DARK_EDGE_REACH) is clear of ink along this share of its length. Through a dense cloud of translucent dots every
+// row is inked across the cloud, and the rows fall into thin bands whose runs disagree (bench-r2 gg-dense-alpha: 19
+// dark "lines", one of them taken for each axis, the plot bounded inside the cloud; their sides 0.24 clear at most).
+// Every line of the bench's images that spans the plot has 0.53 or more. Rows nearer than the reach are the edge of
+// a blurred 1 px line, light ink all along it (layers.test's clipped dots: its y axis was lost, looked at there).
+const LINE_CLEAR_SHARE = 0.4;
 const TICK_MIN_LENGTH = 3; // px
 const TICK_MAX_LENGTH_FRACTION = 0.06; // of the image dimension along the tick
 const TICK_MAX_WIDTH_THICKNESSES = 3; // a tick is at most this many axis-line thicknesses wide (and ≥ 1 px)
@@ -459,9 +466,18 @@ export function findLines(image, ink, backgrounds) {
                 j++;
             }
             const thickness = j - i;
-            if (thickness <= maxThick) {
-                const from = Math.min(...runs.slice(i, j).map(r => r[0]));
-                const to = Math.max(...runs.slice(i, j).map(r => r[1]));
+            const from = Math.min(...runs.slice(i, j).map(r => r[0]));
+            const to = Math.max(...runs.slice(i, j).map(r => r[1]));
+            // the share of the band's length clear of ink in row k (beyond the image: clear)
+            const clear = k => {
+                if (k < 0 || k >= across)
+                    return 1;
+                let n = 0;
+                for (let a = from; a < to; a++)
+                    n += ink[idx(k, a)] ? 0 : 1;
+                return n / (to - from);
+            };
+            if (thickness <= maxThick && Math.max(clear(i - 1 - DARK_EDGE_REACH), clear(j + DARK_EDGE_REACH)) >= LINE_CLEAR_SHARE) {
                 // darkness-weighted center across the line; its luminance is that of its darkest row (the rows at
                 // the edges of a thin antialiased line are much lighter than its core)
                 let w = 0;

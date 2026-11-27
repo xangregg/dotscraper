@@ -88,6 +88,11 @@ const BOX_MIN_HALF_WIDTH = 4; // px
 // black dots is no level 1 (molar1: the "K_d" label at 62, 62, 62 and black dots as level 2, α 0.78, no dot whole).
 // Real families had 9–100% of their pieces touching; text's levels 0%, over 73–281 pieces.
 const NEST_REACH = 6; // px from a level-2 piece to level 1's flat pixels
+// … or farther for a family whose lone dots show its radius: small dots with a ring (ggplot2's shape 19 at an α, its
+// stroke over its fill) have flat cores 2 px across, and where two overlap, their crescents are too thin to be flat,
+// so a lens's nearest flat level 1 is on another dot (bench-r2 gg-dense-alpha, r 5.5: 0 of 20 lenses within 6 px, 12
+// within 1.5 r, and no family found). Text has no whole dot of its gray (molar1).
+const NEST_REACH_RADII = 1.5;
 const NEST_MIN_PIECES = 20; // level-2 pieces of NEST_MIN_PIECE_AREA px needed to judge (real families at 0: 7 or fewer)
 const NEST_MIN_PIECE_AREA = 3; // px
 const NEST_MIN_SHARE = 0.05; // of the pieces near level 1
@@ -449,7 +454,8 @@ function atSiblingAlpha(scan, c, alphas) {
     return null;
 }
 
-// Whether a translucent candidate's level 2 lies in its level 1 (NEST_REACH). Pixels are a level's when flat and
+// Whether a translucent candidate's level 2 lies in its level 1 (NEST_REACH, or NEST_REACH_RADII of its lone dots'
+// radius when it has any). Pixels are a level's when flat and
 // nearer its color than half the step between the two levels. True when there are too few pieces to judge, or level 1
 // or 2 was inferred.
 function levelsNest(scan, c) {
@@ -472,8 +478,11 @@ function levelsNest(scan, c) {
     }
     const to1 = distanceTransform(in1, width, height);
     const pieces = components(in2, width, height).filter(cp => cp.length >= NEST_MIN_PIECE_AREA);
-    const near = pieces.filter(cp => cp.some(p => to1[p] <= NEST_REACH * NEST_REACH)).length;
-    return pieces.length < NEST_MIN_PIECES || near >= NEST_MIN_SHARE * pieces.length;
+    const nearWithin = reach => pieces.filter(cp => cp.some(p => to1[p] <= reach * reach)).length;
+    if (pieces.length < NEST_MIN_PIECES || nearWithin(NEST_REACH) >= NEST_MIN_SHARE * pieces.length)
+        return true;
+    const lone = lonelyDots(scan, c);
+    return lone.length > 0 && nearWithin(NEST_REACH_RADII * median(lone.map(d => d.r))) >= NEST_MIN_SHARE * pieces.length;
 }
 
 // A box plot's box drawn under its dots in their own hue is a flat color on the family's line, where a deeper level

@@ -5161,3 +5161,29 @@ to `CLIP_SEARCH` px: a line along the edge, not dots, which fill no column that 
 lies right of the border. Full benchmark: only gg-loess-groups changes, 192 found → 141 for 140, P 0.719 → 0.979, R
 0.986, flagged 82 → 31; in the app the same 141 (72 and 69). Tests: a synthetic 2 px border at a line's end is
 inside the cut (cut 42 without the change, 40 with it), and gg-loess-groups has no dot past x 572 (51 without it).
+
+**gg-dense-alpha** (2026-11-26). 2000 black dots at α 0.15 (150 dpi, r 5.5) failed twice over.
+
+The axes: every row and column through the cloud is inked for 200 to 300 px without a break, and `findLines` cut
+those rows into thin bands whose runs disagree, 19 dark "lines". The chooser takes the dark line with the most ticks,
+and dots sticking off a streak were 12 ticks against the panel edge's 4, so the axes were at y 388 and x 561 and the
+mask covered most of the plot as outside it. A real line stands out from what is beside it: now the row just past
+a band's antialiased edge (`DARK_EDGE_REACH`) must be clear of ink along 40% of its length on one side at least
+(`LINE_CLEAR_SHARE`). Measured on every bench image: the cloud's streaks 0.24 at most, other such streaks (pathogen,
+beeswarm-boxplot's rows through the names in its gray band, synthetic, bread2, fibers-distance, stroked-dots) up to
+0.34, and every line that spans a plot 0.53 or more. Tried first one row nearer, at 0.3: that row is still the edge
+of a blurred 1 px line, light ink all along it, and layers.test's clipped dots lost their y axis. axes.test pinned
+beeswarm-boxplot's three rows through its names as lines; its comment says the band has none, and it now expects none.
+
+The family: with the axes right, the scan found none. The one candidate, gray at α 0.158 with 22 lone dots, failed
+`levelsNest`: none of its 20 level-2 pieces lay within 6 px of level 1's flat pixels. The dots are small and ringed
+(ggplot2 draws shape 19's stroke over its fill, so a rim is two levels deep), their flat cores are 2 px across, and
+where two overlap the crescents left are too thin to be flat, so a lens's nearest flat level 1 is on another dot,
+6 to 31 px away. A family with lone dots now gets 1.5 times their radius for the reach (`NEST_REACH_RADII`): 12 of 20
+within it. Text keeps the 6 px, having no whole dot of its gray (molar1). Flat pixels deeper on the line than level 2
+were tried as nesting too: only 9 such pixels in the cloud, no help.
+
+Result: 2023 found for 2000, P 0.988, R 0.999, RMSE 0.10 px, 1454 flagged (the cloud's ties). Full benchmark: only
+this row changes, and none fails now. Label benchmark: only its two axes change, now solved (4 of 4 each). Tests:
+the axes are the panel's edges with no short line in the cloud (the x axis at 387.5 without the clear-side test),
+and `estimateStyle` finds the family at α 0.15 and r 5.5 ("No dot family found" without the radius reach).
