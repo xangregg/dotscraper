@@ -1417,8 +1417,10 @@ failures (radius unknown, no family, category ticks not paired).
   paste (the layer takes no pointer events, so that click still works); and as numbers alone while About is open, with the dialog moved over the image view so
   the header and panel stay in sight. About's list has the same numbers. Each number and its label are laid out
   together, in a big window to read in order: 1 and 3 side by side under their buttons (1 ending at Open's right
-  edge, 3 starting at Find dots' left), 2 under the Dot families name, 5 ending at the edit buttons' right edge.
-  Export's 7 shows only beside About (easy to find, and its label broke the reading order). A step takes the first
+  edge, 3 starting at Find dots' left), 2 under the Dot families name and a little lower (`DROP`), its number lined
+  up over 6's, 4 inset 40 px into the image view (clear of the Image button), 5 ending at the edit buttons' right
+  edge. Axes' 6 and Export's 7 show only beside About (not needed to get started, and their labels broke the
+  left-to-right reading order). A step takes the first
   of its layouts that covers no header control, step target, number or label, then the same of fallbacks around the
   target, or else the one covering least (numbers and labels counting 10× controls); beside About, numbers are
   placed as if unlabeled. Checked at 1600 and 1280 px (dev and public, light and dark) and 375 px.

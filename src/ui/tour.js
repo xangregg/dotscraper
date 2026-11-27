@@ -9,7 +9,8 @@
 
 const BADGE = 30; // px, the number's circle (its width in styles.css)
 const GAP = 6; // px between a target and its number, and a number and its label
-const INSET = 16; // px from a region's corner to a number placed inside it
+const INSET = 40; // px from a region's corner to a number placed inside it, clear of the toolbar above it
+const DROP = 10; // px further below a section's name for underAligned, clear of the labels above it
 const MARGIN = 8; // px kept clear at the window's edges
 const NUMBER_WEIGHT = 10; // how much worse covering a number or label is than covering as much of a control
 const DIALOG_CLEAR = 6; // px around the About dialog that numbers stay out of
@@ -17,19 +18,19 @@ const DOCK_MIN_WIDTH = 500; // px, the narrowest image view the About dialog mov
 const DOCK_MARGIN = 16; // px between the moved dialog and the view's edges
 
 // target: the element the step uses; text: measure its first text node (a section's name) instead of the element;
-// layouts: where its number and label go, in order of preference (layoutAt); label: none for a step numbered only
-// beside the About dialog. A step takes the first layout that stays in the window and covers no header control,
+// layouts: where its number and label go, in order of preference (layoutAt); alignTo: for underAligned, the text
+// whose rightOf number its number lines up with; label: none for a step numbered only beside the About dialog. A step takes the first layout that stays in the window and covers no header control,
 // step target, number or label; failing those (a narrow screen), the same of FALLBACKS, and failing all, whichever
 // covers least. In a big window the labels read in order: 1 and 3 side by side under their buttons, 2 under its
-// section's name.
+// section's name, its number over 6's when About shows 6.
 const STEPS = [
-    { target: '#open-file', layouts: ['underEnd', 'underStart'], label: 'Select an image' },
-    { target: '#sec-families > summary', text: true, layouts: ['underStart', 'rightOf'], label: 'Review and edit dot families' },
+    { target: '#open-file', layouts: ['underEnd', 'underStart'], label: 'Import an image' },
+    { target: '#sec-families > summary', text: true, alignTo: '#sec-axes > summary', layouts: ['underAligned', 'underStart', 'rightOf'], label: 'Review and edit dot families' },
     { target: '#fit-run', layouts: ['underStart', 'underEnd'], label: 'Find dots' },
     { target: '#stage', layouts: ['inside'], label: 'Review the dots found' },
     { target: '[aria-label="Edit dots"]', layouts: ['underEnd', 'underStart'], label: 'Fix with Add, Remove and Move' },
-    { target: '#sec-axes > summary', text: true, layouts: ['rightOf', 'underStart'], label: 'Check the axes' },
-    // Export is easy to find, and a label beside its buttons would break the labels' reading order
+    // Axes and Export aren't needed to get started, and labels there would break the labels' reading order
+    { target: '#sec-axes > summary', text: true, layouts: ['rightOf', 'underStart'], label: null },
     { target: '[aria-label="Export"]', layouts: ['leftOf', 'underEnd'], label: null },
 ];
 // the number below, right or left of the target, each with its label on any side of it
@@ -130,7 +131,7 @@ function dock(about) {
 function placeSteps(items, dialog) {
     const W = window.innerWidth;
     const H = window.innerHeight;
-    const rects = items.map(({ step }) => targetRect(step));
+    const rects = items.map(({ step }) => targetRect(step.target, step.text));
     // the image view is a region numbered inside, not a control to keep clear of
     const taken = [...rects.filter((r, i) => r && !items[i].step.layouts.includes('inside')),
         ...[...document.querySelectorAll(KEEP_CLEAR)].filter(el => el.getClientRects().length).map(el => el.getBoundingClientRect())];
@@ -152,8 +153,9 @@ function placeSteps(items, dialog) {
         }
         let best = null;
         let bestCost = Infinity;
-        for (const name of [...step.layouts, ...FALLBACKS]) {
-            const at = layoutAt(name, r, w, h, W);
+        const align = step.alignTo ? targetRect(step.alignTo, true) : null;
+        for (const name of [...step.layouts, ...FALLBACKS].filter(n => n !== 'underAligned' || align)) {
+            const at = layoutAt(name, r, w, h, W, align);
             const boxes = labeled ? [at.badge, at.label] : [at.badge];
             if (!boxes.every(inWindow))
                 continue;
@@ -165,7 +167,7 @@ function placeSteps(items, dialog) {
             if (cost === 0)
                 break;
         }
-        best ??= layoutAt(step.layouts[0], r, w, h, W);
+        best ??= layoutAt(step.layouts.find(n => n !== 'underAligned'), r, w, h, W);
         badge.hidden = !!dialog && overlaps(best.badge, dialog, DIALOG_CLEAR);
         label.hidden = !labeled || badge.hidden;
         if (badge.hidden)
@@ -183,16 +185,18 @@ function placeSteps(items, dialog) {
 
 // The boxes of a number and its label (w × h px; 0 × 0 for none) in one layout by the target's box r, slid along
 // together to stay within the window's width W. The named layouts keep the label after its number, on one line:
-// underStart and underEnd under the target, starting at its left or ending at its right; rightOf and leftOf beside
-// it; inside its top-left corner. A fallback, `number:label`, puts the number below, right or left of the target
+// underStart and underEnd under the target, starting at its left or ending at its right; underAligned further
+// under it, its number where rightOf would put the number of the text a (a's right plus GAP); rightOf and leftOf
+// beside it; inside its top-left corner. A fallback, `number:label`, puts the number below, right or left of the target
 // and the label right, left, under, under-and-left-aligned or above the number.
-function layoutAt(name, r, w, h, W) {
+function layoutAt(name, r, w, h, W, a) {
     const span = BADGE + (w ? GAP + w : 0);
     const below = r.bottom + GAP;
     const middle = r.top + r.height / 2 - BADGE / 2;
     const named = {
         underStart: [r.left, below, 'right'],
         underEnd: [r.right - span, below, 'right'],
+        underAligned: a && [a.right + GAP, below + DROP, 'right'],
         rightOf: [r.right + GAP, middle, 'right'],
         leftOf: [r.left - GAP - span, middle, 'left'],
         inside: [r.left + INSET, r.top + INSET, 'right'],
@@ -237,12 +241,13 @@ function overlaps(a, b, clear) {
     return a.left < b.right + clear && a.right > b.left - clear && a.top < b.bottom + clear && a.bottom > b.top - clear;
 }
 
-// The target's box on screen, or null when it isn't shown
-function targetRect(step) {
-    const el = document.querySelector(step.target);
+// The box on screen of the element the selector picks, or of its first text node (text), or null when it isn't
+// shown
+function targetRect(selector, text) {
+    const el = document.querySelector(selector);
     if (!el || !el.getClientRects().length)
         return null;
-    if (!step.text)
+    if (!text)
         return el.getBoundingClientRect();
     const range = document.createRange();
     range.selectNodeContents(el.firstChild);
