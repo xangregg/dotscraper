@@ -1357,6 +1357,8 @@ the ordered model, and the style panel says "fitted by its outlines in drawing o
 **Diagnostic views are dev-only** (2026-11-15). Count, Mask, Classes and Model show only in dev mode (class
 `dev-only`); Image and Residual stay for everyone, the residual being how a user sees what the dots don't explain
 (the display-honesty rule). Checked headless: all six views on localhost, Image and Residual with `?dev=0`.
+The Mask section (Mask grow, the class and mask statistics, timing) went dev-only too (2026-11-27): without the
+Mask view a user can't see what it describes, and Mask grow is rarely needed; masked pixels still show in Residual.
 
 **Two toolbar rows** (2026-11-15). The header is two explicit rows, each a left and a right side pushed apart: row 1
 the name and the image source | export and About; row 2 Find dots, Stop and the status | the edit buttons. A narrow

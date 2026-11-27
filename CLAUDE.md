@@ -90,8 +90,9 @@ test/*.test.js          node:test + node:assert/strict
   prints image-sized arrays doesn't.
 - Serve locally: `npm run serve` (python3 on port **8003**, leaving 8000–8002 to related projects), then open
   http://localhost:8003/. Dev mode (test image list, `#image=` URL state, Save truth, the Count, Mask, Classes and
-  Model views) is on for a local host and off on the deployed site (https://xangregg.github.io/dotscraper/, GitHub
-  Pages from the branch root); `?dev` turns it on anywhere, `?dev=0` off.
+  Model views, the Mask section) is on for a local host and off on the deployed site
+  (https://xangregg.github.io/dotscraper/, GitHub Pages from the branch root); `?dev` turns it on anywhere, `?dev=0`
+  off.
 - Page check (server must be running): `npm run check:page -- http://localhost:8003/ --until '<js expr>'
   --eval '<js expr>' --screenshot out.png [--dark] [--width px]` (`--width` for narrow layouts; default 1280). Exits 1 on any console error, exception, or failed load.
 - Test image list: after adding an image to `bench-local/`, `npm run images:index` (the test suite fails if

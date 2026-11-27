@@ -2,7 +2,8 @@
 //
 // Dev mode (on where the app is served from this machine, or anywhere with ?dev; ?dev=0 turns it off) adds what only
 // development needs: the list of local test images, the current one's name kept in the URL hash (#image=<file>) so a
-// reload reopens it, Save truth, and the diagnostic views (Count, Mask, Classes, Model; elements with class dev-only). The deployed site never has the test images, so it doesn't look for them.
+// reload reopens it, Save truth, the diagnostic views (Count, Mask, Classes, Model) and the Mask section (elements
+// with class dev-only). The deployed site never has the test images, so it doesn't look for them.
 //
 // On each new image the app estimates every dot family (src/core/families.js, in a module worker, src/scan-worker.js,
 // with its progress shown: on large images it takes up to a minute) and builds the selected family's mask
