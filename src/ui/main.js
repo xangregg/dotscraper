@@ -790,8 +790,20 @@ function renderStylePanel() {
         : c0?.hollow ? `${style?.color.join(', ')} at the rings' darkest, nothing inside (rings fitted)`
         : c0?.oneColor ? 'one fill color, projected out (rings fitted)'
         : c0?.fillColors ? `${c0.fillColors} fill colors, projected out (each dot's read from its fill)` : 'varies by dot (color scale; rings fitted)';
-    $('style-c').textContent = !style ? '–' : est.scale ? scaleText : style.color.map(v => v.toFixed(1)).join(', ');
-    $('style-c').title = style && est.scale ? `fitted as one virtual family of color ${style.color.map(v => v.toFixed(1)).join(', ')}` : '';
+    // a swatch and whole 0–255 values; the estimate's decimals in the tooltip, before the label's explanation. A color
+    // scale's virtual color is no dot's, so it gets no swatch.
+    const cEl = $('style-c');
+    const exact = style ? style.color.map(v => v.toFixed(1)).join(', ') : '';
+    if (!style || est.scale)
+        cEl.textContent = !style ? '–' : scaleText;
+    else {
+        const sw = document.createElement('span');
+        sw.className = 'swatch';
+        sw.style.background = cssColor(style.color);
+        cEl.replaceChildren(sw, style.color.map(v => Math.round(v)).join(', '));
+    }
+    cEl.title = style && est.scale ? `fitted as one virtual family of color ${exact}`
+        : `${style ? `Estimated: ${exact}\n\n` : ''}${cEl.previousElementSibling.title}`;
     const nInferred = style?.inferredLevels?.length ?? 0;
     $('style-levels').textContent = style ? `${style.measuredLevels - nInferred} measured${nInferred ? `, ${nInferred} inferred` : ''}` : '–';
     const fam = est.familyMeasure;
