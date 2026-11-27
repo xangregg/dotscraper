@@ -7,6 +7,11 @@ import { createOutlineModel } from '../src/core/outline.js';
 import { buildMask } from '../src/core/layers.js';
 import { synthGraph, scatterPoints } from '../src/core/synth.js';
 import { matchDots } from '../src/core/metrics.js';
+import { existsSync } from 'node:fs';
+import { readImage } from '../tools/png.mjs';
+import { extractAll } from '../src/core/extract.js';
+import { detectAxes } from '../src/core/axes.js';
+import { readTruthCsv, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 
 const GREEN = [50, 161, 73];
 
@@ -327,4 +332,21 @@ test('discOverlap: the shared share of two equal discs, by brute force on a grid
         }
         assert.ok(Math.abs(discOverlap(u) - shared / inside) < 0.003, `u ${u}: ${discOverlap(u)} vs ${shared / inside}`);
     }
+});
+
+const R2 = new URL('../bench-r2/', import.meta.url).pathname;
+
+test('regression: bench-r2 gg-overlap, opaque dots settled between two places are relocated', { skip: !existsSync(R2 + 'gg-overlap.png') && 'bench-r2 absent' }, () => {
+    // before: 3 dots 4-6 px from any truth (150.8,362.9; 261.4,302.6; 362.3,234.4), unflagged, the page showing
+    // inside them, and one 2.3 px off (153.1,372.6); compass steps couldn't leave those places, refinement or not
+    const image = readImage(R2 + 'gg-overlap.png');
+    const truth = truthPixelsByTicks(readTruthCsv(R2 + 'gg-overlap.csv'), detectAxes(image)).dots;
+    const [{ fit }] = extractAll(image);
+    const m = matchDots(truth, fit.dots, 0.5 * fit.radius);
+    const unflagged = m.extra.map(j => fit.dots[j]).filter(d => !d.flags.length).map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`);
+    assert.deepEqual(unflagged, []);
+    // the dot beside the first, at the truth's 153.6,374.8, settles on it
+    const t = truth.findIndex(d => Math.hypot(d.x - 153.6, d.y - 374.8) < 0.5);
+    const d = m.pairs.find(p => p.truth === t)?.d;
+    assert.ok(d < 0.6, `153.6,374.8: matched ${d?.toFixed(2)} px off`);
 });

@@ -10,8 +10,8 @@
 //
 // Steps: candidates from a Hough vote with the known radius (each visible edge arc votes for its own center, which
 // finds dots inside clusters where blob detection fails); then rounds of compass-search refinement of each center,
-// births where the residual says a level is missing (coincident dots), deaths and merges where they lower the
-// objective, and a global radius refit. Everything is incremental: a change re-renders and re-scores only the
+// births where the residual says a level is missing (coincident dots), splits and relocations of opaque dots that
+// stand for two or between two, deaths and merges where they lower the objective, and a global radius refit. Everything is incremental: a change re-renders and re-scores only the
 // patch it touches.
 
 import { createDotModel, renderDots, solidImage, gaussianKernel, pixelCoverage } from './render.js';
@@ -98,6 +98,17 @@ const SPLIT_MIN_LOSS_MEDIANS = 4;
 const SPLIT_TABU_RADII = 0.25; // × r: a dot that failed to split isn't tried again until it moves this far
 const SPLIT_OFFSET_RADII = 0.4; // × r: each half starts this far from the dot
 const SPLIT_DIRECTIONS = 4; // directions tried, over half a turn
+// Relocations (opaque dots): a dot whose interior shows the page is tried at the best place near it. Measured on
+// bench-r2 gg-overlap, missing ink within RELOCATE_INSET of the rim: 0.94–3.13 px for the 5 dots 1.3–6 px from their
+// truth, at most 0.57 (median 0.22) for the 235 within 0.5 px of theirs. The objective decides each move, so the
+// candidates may be loose: they only cost time.
+const RELOCATE_INSET = 0.5; // px inside the rim: antialiased rim pixels show the page whatever the position
+const RELOCATE_MIN_MEDIANS = 2; // a candidate's missing ink is over this many times the median dot's …
+const RELOCATE_MIN_DEFICIT = 0.5; // … and over this many px (a clean fit's median is near 0)
+const RELOCATE_REACH_RADII = 1.5; // × r, how far from the dot the new place is looked for
+const RELOCATE_GRID_RADII = 0.15; // × r, the spacing of the places tried (1 px at gg-overlap's 6.8)
+const RELOCATE_MIN_MOVE = 2; // px: a best place nearer than this is refinement's to find (its largest step)
+const RELOCATE_MAX_PER_ROUND = 50; // candidates tried per round, worst first
 const RADIUS_SEARCH = 1; // px either side of the estimated radius
 const RADIUS_TOL = 0.01; // px
 const UNCERTAINTY_STEP = 0.25; // px, finite-difference step for the curvature
@@ -849,6 +860,100 @@ export function createFit(input, opts = {}) {
 
     const grow = ([x0, y0, x1, y1], d) => [Math.max(0, x0 - d), Math.max(0, y0 - d), Math.min(width, x1 + d), Math.min(height, y1 + d)];
 
+    // The ink an opaque dot's interior lacks: Σ (1 − t / t_dot) over its unmasked pixels within RELOCATE_INSET of the
+    // rim whose t is short of the dot's, in px. Near 0 for a dot where the image has one.
+    const fullT = colorDistance(B, fitColor);
+    function deficit(x, y) {
+        const rr = style.radius - RELOCATE_INSET;
+        let s = 0;
+        for (let yy = Math.max(0, Math.floor(y - rr)); yy < Math.min(height, Math.ceil(y + rr)); yy++) {
+            for (let xx = Math.max(0, Math.floor(x - rr)); xx < Math.min(width, Math.ceil(x + rr)); xx++) {
+                const p = yy * width + xx;
+                if (weight[p] && (xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 <= rr * rr)
+                    s += Math.max(0, 1 - imgT[p] / fullT);
+            }
+        }
+        return s;
+    }
+
+    // Opaque dots of one color show only their union's outline, so a dot can settle between two places, covering
+    // part of each and some page between them, where every compass step makes the union's fit worse (gg-overlap: 4
+    // dots 4–6 px from their truth, the page showing inside them). Such a dot, the page showing in its interior
+    // (deficit), is taken out and tried at every place on a grid within RELOCATE_REACH_RADII · r, the best put in
+    // and refined with its neighbors as a birth is, and kept if the neighborhood's objective falls and it passes
+    // what a birth must. The tabu is kept across rounds, as splits'. O(candidates · (reach / grid)² · (reach + r)²).
+    function relocations(tabu) {
+        if (!opaque || style.layered)
+            return 0;
+        const r = style.radius;
+        const slack = BIRTH_NEIGHBOR_MOVE_RADII * r;
+        const reach = RELOCATE_REACH_RADII * r;
+        const ids = [...pos.keys()].filter(id => !pinned.has(id) && !tethers.has(id));
+        const deficits = ids.map(id => ({ id, v: deficit(pos.get(id).x, pos.get(id).y) }));
+        const min = Math.max(RELOCATE_MIN_DEFICIT, RELOCATE_MIN_MEDIANS * (upperMedian(deficits.map(d => d.v)) ?? 0));
+        const candidates = deficits.filter(d => d.v > min).sort((a, b) => b.v - a.v).slice(0, RELOCATE_MAX_PER_ROUND);
+        const step = RELOCATE_GRID_RADII * r;
+        const offsets = [];
+        for (let dy = -reach; dy <= reach; dy += step) {
+            for (let dx = -reach; dx <= reach; dx += step) {
+                if (Math.hypot(dx, dy) <= reach)
+                    offsets.push([dx, dy]);
+            }
+        }
+        let moved = 0;
+        for (const { id } of candidates) {
+            const p0 = pos.get(id);
+            if (!p0 || tabu.some(t => Math.hypot(t.x - p0.x, t.y - p0.y) < SPLIT_TABU_RADII * r))
+                continue;
+            // the dots overlapping it where it stands or anywhere it may go
+            const neighbors = near(p0.x, p0.y, reach + NEIGHBOR_RADII * r).filter(nid => nid !== id);
+            let foot = grow(model.footprint(p0.x, p0.y), Math.ceil(reach + slack + COMPASS_STEPS[0] + 1));
+            for (const nid of neighbors)
+                foot = union(foot, grow(model.footprint(pos.get(nid).x, pos.get(nid).y), Math.ceil(slack + COMPASS_STEPS[0] + 1)));
+            const scoreRect = grow(foot, Math.ceil(style.blur ? 3 * style.blur + 1 : 0));
+            const before = loss(scoreRect) + (doublePrice ? prices([id, ...neighbors]) : 0);
+            const snap = model.snapshot(foot);
+            const saved = [[id, p0], ...neighbors.map(nid => [nid, pos.get(nid)])];
+            const lastId = Math.max(...pos.keys());
+            // the places, scored over what they can change (the rest of scoreRect is the same for each)
+            const searchRect = grow(model.influenceRect(p0.x, p0.y), Math.ceil(reach));
+            remove(id);
+            let best = null;
+            for (const [dx, dy] of offsets) {
+                const tid = add(p0.x + dx, p0.y + dy);
+                const l = loss(searchRect);
+                remove(tid);
+                if (!best || l < best.l)
+                    best = { l, x: p0.x + dx, y: p0.y + dy };
+            }
+            let kept = false;
+            if (Math.hypot(best.x - p0.x, best.y - p0.y) >= RELOCATE_MIN_MOVE) {
+                const nid = add(best.x, best.y);
+                refineDot(nid, RESWEEP_FIRST_STEP, slack);
+                for (const q of neighbors)
+                    refineDot(q, RESWEEP_FIRST_STEP, slack);
+                refineDot(nid, RESWEEP_FIRST_STEP, slack);
+                const at = pos.get(nid);
+                const after = loss(scoreRect) + (doublePrice ? prices([nid, ...neighbors]) : 0);
+                kept = after < before && visibleFraction(at.x, at.y) >= minVisible && filled(at.x, at.y) && removalGain(nid) > removalPrice(nid);
+            }
+            if (kept) {
+                moved++;
+                forgetTabu(tabu, scoreRect);
+                continue;
+            }
+            model.restore(snap);
+            for (const k of [...pos.keys()]) {
+                if (k > lastId)
+                    pos.delete(k);
+            }
+            for (const [nid, q] of saved)
+                pos.set(nid, q);
+            tabu.push({ x: p0.x, y: p0.y });
+        }
+        return moved;
+    }
+
     // Add a dot at (x, y), refine it, let its neighbors re-settle, and keep it if the neighborhood's loss falls by
     // more than λ; otherwise restore the neighborhood. Returns the rectangle scored when kept, else null.
     function tryBirth(x, y, z) {
@@ -1451,7 +1556,7 @@ export function createFit(input, opts = {}) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, pin: id => pinned.add(id), tether: (id, reach) => tethers.set(id, { ...pos.get(id), reach }), births, splits, deaths, merges, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
+        add, remove, refineAll, refineDot, pin: id => pinned.add(id), tether: (id, reach) => tethers.set(id, { ...pos.get(id), reach }), births, splits, relocations, deaths, merges, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
         get birthFailures() {
             return birthFailures;
         },
@@ -1565,6 +1670,7 @@ function fitOnce(input, opts, onProgress) {
     report('candidates', 0, true);
     let tabu = [];
     const splitTabu = []; // kept across rounds: a split that failed fails again unless the dot moves
+    const relocateTabu = []; // the same for relocations
     let rounds = 0;
     for (let round = 1; round <= MAX_ROUNDS; round++) {
         rounds = round;
@@ -1580,16 +1686,17 @@ function fitOnce(input, opts, onProgress) {
         const tb = Date.now();
         const born = fit.births(tabu);
         const split = fit.splits(splitTabu);
-        if (born || split)
+        const relocated = fit.relocations(relocateTabu);
+        if (born || split || relocated)
             fit.refineAll();
         const msBirths = Date.now() - tb;
         report('births', round);
         const td = Date.now();
         const died = fit.deaths();
         const merged = fit.merges();
-        log.push({ stage: 'round', round, sweeps, born, split, failed: fit.birthFailures, died, merged, dots: fit.ids().length, msRefine, msBirths, msDeathsMerges: Date.now() - td });
+        log.push({ stage: 'round', round, sweeps, born, split, relocated, failed: fit.birthFailures, died, merged, dots: fit.ids().length, msRefine, msBirths, msDeathsMerges: Date.now() - td });
         report('round', round, true);
-        if (!born && !split && !died && !merged)
+        if (!born && !split && !relocated && !died && !merged)
             break;
     }
     if (opts.refitRadius ?? true) {

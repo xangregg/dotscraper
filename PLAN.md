@@ -5315,3 +5315,36 @@ and stay an axis.
 Result: 15 lane axes (bench3's 9, bench-nature's 5, bench-plos's 1); of the other 250 axes, 248 solved, 0 wrong,
 2 unchecked (escape1's two labels, pathogen's y on a log(y + 1) scale, every label read right), none left unread;
 1493 of 1567 labels read right.
+
+#### Relocations: opaque dots settled between two places (2026-11-27)
+
+bench-r2 gg-overlap (250 opaque dots of one color, most overlapping) had 3 extras unflagged, 4–6 px from any truth
+(150.8,362.9; 261.4,302.6; 362.3,234.4), and a dot 2.3 px off (153.1,372.6), the page showing inside each. A fit
+started from the truth scores better (objective 345,392 against 355,046; 8 of the 250 die, hidden), and the fit's
+second round changed nothing: a local optimum, not too few iterations. Opaque dots of one color show only their
+union's outline, so a dot covering part of two places and some page between them can't leave by compass steps
+(2 px at most) without the union fitting worse first. Missing ink inside r − 0.5 px, Σ (1 − t / t_dot), tells them
+apart: 0.94–3.13 px for the 5 dots 1.3–6 px off (the 4 above and 536.4,132.6), at most 0.57 (median 0.22) for the
+235 within 0.5 px of their truth.
+
+A new move, `relocations` in fit.js, each round after births and splits: opaque dots of one style (not outlined)
+whose missing ink is over twice the median's and over 0.5 px, the worst 50, are each taken out and tried at every
+place of a 0.15 r grid within 1.5 r, the best (at least 2 px away) refined with its neighbors as a birth is, and kept
+if the neighborhood's objective falls and it passes what a birth must (visible, filled, pays for itself; Fewer
+doubles' prices). Failures are tabu across rounds, as splits' are.
+
+Result on gg-overlap: 4 relocations, precision 0.983 → 0.996, recall 0.944 → 0.956; the one extra left is
+304.2,250.5, flagged weak (moved by hand it gains 106 at 307.1,258.1, still 5 px from the missed 310.1,254.1). Still
+found only from the truth: 169.7,384.3, 291.3,286.7, 310.0,254.1 (objective 350,189 against the truth's 345,392).
+536.4,132.6 stays 1.3 px off: the page showing inside it is a light gray gridline between dots, masked as other ink,
+so the fit can't see it (ink under opaque dots could count as no dot there; not done).
+
+Full benchmark at 5 jobs (the default 10 now passes the memory guard's 16 GB, at HEAD too): 11 of 213 rows changed,
+time +0.3% (2,551 s → 2,560 s summed). Better: gg-overlap; cells1 P 0.904 → 0.944, R 0.917 → 0.931; crystal1 P
+0.980 → 0.985, R 0.995 → 1.000; gg-many 988 → 989 found, P 0.997 → 0.998, R 0.985 → 0.987; solid-opaque P 0.964 →
+0.969. Worse: aerobic R 0.761 → 0.752 (family 4's blue phantoms on yellow dots, 3 → 2, one of which had matched a
+yellow dot's truth in the pooled scoring); violin-beeswarm P 0.985 → 0.983 (a dot born on a dark line after 15
+relocations); autocor1 R 0.946 → 0.945 (20 relocations, mixed against truth: dots 5.6 → 0.8, 8.1 → 0.1 and 12.5 → 0.4
+px from theirs, and others moved off truth points that sit exactly where an earlier fit put them, one of them,
+521.8,777.0, with the page showing at its center). Test: gg-overlap's extras gone and 153.6,374.8 within 0.6 px
+(fails without the move).

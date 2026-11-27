@@ -86,8 +86,9 @@ test/*.test.js          node:test + node:assert/strict
 - Tests: `npm test` (runs `node --test`). Node 22+ (`tools/check-page.mjs` uses Node's built-in WebSocket).
 - Memory guard for long runs (tests, mutation checks, the bench): `NODE_OPTIONS="--import=$PWD/tools/mem-guard.mjs"
   npm test` kills any node process past 16 GB resident (`MEM_GUARD_GB` for another limit) and says so on stderr.
-  Clean runs stay far below it (each test file under 0.75 GB, the bench at 10 jobs 9 GB); a failing assertion that
-  prints image-sized arrays doesn't.
+  Clean test runs stay far below it (each test file under 0.75 GB); a failing assertion that prints image-sized
+  arrays doesn't. The full bench at its default 10 jobs now passes 16 GB (2026-11-27, it was 9 GB): run it, and
+  `npm run results`, with `--jobs 5` under the guard (about 10 minutes).
 - Serve locally: `npm run serve` (python3 on port **8003**, leaving 8000–8002 to related projects), then open
   http://localhost:8003/. Dev mode (test image list, `#image=` URL state, Save truth, the Count, Mask, Classes and
   Model views, the Mask section) is on for a local host and off on the deployed site
