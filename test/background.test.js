@@ -287,3 +287,42 @@ test('regression: two families\' own bands, one over the other: the overlap is a
     assert.deepEqual(layers.regions.map(r => r.mode), ['under', 'under', 'under'], JSON.stringify(layers.regions.map(r => [r.color.map(Math.round), r.mode, r.votes])));
     assert.ok(layers.regions.some(r => r.color.every((v, ch) => Math.abs(v - overlap[ch]) <= 2)), 'the overlap is a region');
 });
+
+test('regression: in a gray theme, a gray band over black dots is a layer, not the dots under the white margin (gg-loess)', () => {
+    // Every gray lies on the line from the white page margin toward black dots, so the band was read as black dots
+    // under a white "layer" and dropped. Its pixels lie far from the margin; a dot under a layer is surrounded by it.
+    const W2 = 240;
+    const H2 = 140;
+    const PANEL = [230, 230, 230];
+    const black = { color: [0, 0, 0], alpha: 1, radius: 6 };
+    const band = { color: [153, 153, 153], alpha: 0.4, y0: 50, y1: 90 };
+    const im = solidImage(W2, H2, WHITE);
+    for (let y = 20; y < 120; y++) {
+        for (let x = 30; x < 210; x++)
+            im.data.set(PANEL, 3 * (y * W2 + x));
+    }
+    const model = createDotModel(im, black);
+    const at = [];
+    for (let y = 32; y < 112; y += 19) {
+        for (let x = 44; x < 200; x += 31)
+            at.push({ x, y });
+    }
+    model.addAll(at);
+    const out = model.image;
+    for (let y = band.y0; y < band.y1; y++) {
+        for (let x = 30; x < 210; x++) {
+            for (let ch = 0; ch < 3; ch++)
+                out.data[3 * (y * W2 + x) + ch] = band.color[ch] * band.alpha + out.data[3 * (y * W2 + x) + ch] * (1 - band.alpha);
+        }
+    }
+    const drawn = quantize(out);
+    const over = PANEL.map((v, ch) => band.color[ch] * band.alpha + v * (1 - band.alpha));
+    const isBand = r => r.color.every((v, ch) => Math.abs(v - over[ch]) <= 1);
+    const { regions } = backgroundRegions(drawn, PANEL, [black], flatMask(drawn), black.radius, { page: true });
+    const found = regions.find(isBand);
+    assert.ok(found, JSON.stringify(regions.map(r => [r.color, r.mode])));
+    assert.equal(found.mode, 'over');
+    near(found.s, 1 - band.alpha, 0.03, 's');
+    // told from the dots' own background, a color off the regions found stays the dots' (violin-beeswarm)
+    assert.ok(!backgroundRegions(drawn, PANEL, [black], flatMask(drawn), black.radius).regions.some(isBand), 'not from the page');
+});

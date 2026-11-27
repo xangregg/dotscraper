@@ -24,6 +24,14 @@ const MODE_MIN_SHARE = 0.6; // of the region's dot pixels that one mode must exp
 // lung-tumor's 22 dots under its band, 6 px across inside their rings, give 24, every one for a layer over them (at
 // 50 the band was masked with its dots).
 const MODE_MIN_VOTES = 20;
+// An opaque dot over a region shows its own color, all the way along the line from the region's color B₂ to it; a
+// flat pixel short of that, on the line, is a dot seen through a layer. Where the page, the layer and the dots are
+// one gray, both lines are one and only this tells (bench-r2 gg-loess: black dots, 54 under a band of 192 with
+// s = 0.6, 0.73 of the way from it to black; its 'over' had come from the dots' color measured at 2, 2, 2). Only
+// when the regions are told from the page: told from violin-beeswarm's violin, the page is a region whose pixels
+// include the violins' second shade, and that shade, short of the dots on the line from white, made the page a
+// layer over the dots (16784 votes to 1138, s 0.66; 0 found right).
+const OPAQUE_UNDER_SHARE = 0.9; // of the way from B₂ to an opaque family's color
 // A pixel of a dot under a layer lies on the line from the layer's color B₂ along c − B, and one beside the layer on
 // the line from B: where it is on one (ON_LINE_ABS) and this far off the other, its own color says which side it is
 // on, whatever seed is nearest. Only within LABEL_REACH dot radii of a pixel of the layer's own color.
@@ -32,6 +40,16 @@ const LABEL_REACH = 2; // × the dots' radius
 // A region is an area, not a stroke: its pixels must hold discs this many dot radii across. dog-ages' black curve
 // and text (52 000 flat pixels after upscaling) are strokes.
 const REGION_OPEN_RADII = 0.75;
+// A flat color on the line from a region along a family's offset is that family's dots on the region only where
+// the region is beside it: a dot under a layer, or over a box, is surrounded by it, so most of its flat pixels lie
+// within DOT_ON_REACH dot radii of the region's own color. In a gray theme every gray is on the line from the white
+// page margin toward black dots, and bench-r2 gg-loess's gray band over its dots (192, 9592 flat pixels) was read
+// as such dots: 0.03 of it lies that near the margin. On the bench's images, the colors this keeps are 0.09 near or
+// less, and the dots it still rejects 0.86 or more. Only when the regions are told from the page, where a layer
+// over the dots is found (families.js shadedRegions): told from the dots' own background, a second shade of
+// violin-beeswarm's violins (0.2 near the page) became a region under the dots, with 18 extras along its error bars.
+const DOT_ON_REACH = 1.5; // × the dots' radius
+const DOT_ON_SHARE = 0.5; // of the color's flat pixels
 // Two bands drawn one over the other overlap in a color of their own: the upper band's B₂ plus s times the lower's
 // offset from B (step1: the blue band, 181, 207, 240, over the red, 237, 190, 179: 169, 165, 191 = blue + 0.65·(red −
 // B) in each channel, 2482 flat pixels; the other order fits no channel). The upper band is then a layer over
@@ -76,9 +94,10 @@ function offLine(e, u) {
  *   band: a region color in a translucent family's own hue; box: the band is a box under the dots (style.js boxBand)
  * @param {Uint8Array} flat  style.flatMask
  * @param {number} radius  px, the dots' radius
+ * @param {boolean} [page]  B is the page's color: a color off the regions found isn't their dots (DOT_ON_REACH)
  * @returns {number[][]}
  */
-export function regionColors(image, B, families, flat, radius) {
+export function regionColors(image, B, families, flat, radius, page = false) {
     const counts = new Map();
     const { width, height, data } = image;
     for (let p = 0; p < flat.length; p++) {
@@ -104,14 +123,35 @@ export function regionColors(image, B, families, flat, radius) {
         const { t, perp } = offLine(sub(c, B2), unit(d));
         return t > 0 && (perp <= ON_LINE_ABS || perp <= ON_LINE_REL * t);
     }));
+    const beside = (mask, o) => {
+        const nearest = nearestTransform(colorMask(image, o, REGION_COLOR_TOL), width, height);
+        const reach = DOT_ON_REACH * radius;
+        let near = 0;
+        let all = 0;
+        for (let p = 0; p < mask.length; p++) {
+            if (!mask[p] || !flat[p])
+                continue;
+            all++;
+            const q = nearest[p];
+            if (q < 0)
+                continue;
+            const dx = (q % width) - (p % width);
+            const dy = Math.floor(q / width) - Math.floor(p / width);
+            if (dx * dx + dy * dy <= reach * reach)
+                near++;
+        }
+        return near >= DOT_ON_SHARE * all;
+    };
     const out = [];
     for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1])) {
         if (count < REGION_MIN_PIXELS)
             break;
         const c = [key >> 16, (key >> 8) & 255, key & 255];
-        if (colorDistance(c, B) <= REGION_COLOR_TOL || isFamily(c) || out.some(o => colorDistance(c, o) <= REGION_COLOR_TOL || isDotOn(c, o)))
+        if (colorDistance(c, B) <= REGION_COLOR_TOL || isFamily(c) || out.some(o => colorDistance(c, o) <= REGION_COLOR_TOL))
             continue;
         const mask = colorMask(image, c, REGION_COLOR_TOL);
+        if (out.some(o => isDotOn(c, o) && (!page || beside(mask, o))))
+            continue;
         const wide = opening(mask, width, height, REGION_OPEN_RADII * radius);
         let area = 0;
         for (const v of wide)
@@ -130,6 +170,7 @@ export function regionColors(image, B, families, flat, radius) {
  * @param {{color: number[], alpha: number}[]} families
  * @param {Uint8Array} flat
  * @param {number} radius  px, the dots' radius
+ * @param {{page?: boolean}} [opts]  page: B is the page's color (DOT_ON_REACH, OPAQUE_UNDER_SHARE)
  * @returns {{regions: {color: number[], mode: 'over'|'under'|'unknown', s: number|null, pixels: number,
  *            base?: number[], stack?: number[], stackedOver?: number, box?: boolean}[], label: Uint8Array,
  *            sure: Uint8Array}}  label: 0 the main
@@ -137,10 +178,10 @@ export function regionColors(image, B, families, flat, radius) {
  *   region colors, with the base its pixels are undone to; sure: 1 where a pixel's own color says it lies under the
  *   layer it is labeled with (labelByColor)
  */
-export function backgroundRegions(image, B, families, flat, radius) {
+export function backgroundRegions(image, B, families, flat, radius, opts = {}) {
     const { width, height, data } = image;
     const n = width * height;
-    const colors = regionColors(image, B, families, flat, radius);
+    const colors = regionColors(image, B, families, flat, radius, !!opts.page);
     const label = new Uint8Array(n);
     const sure = new Uint8Array(n);
     if (!colors.length)
@@ -195,7 +236,7 @@ export function backgroundRegions(image, B, families, flat, radius) {
             }
         }
     });
-    const regions = colors.map((c, i) => ({ ...regionMode(image, B, c, families, flat, label, i + 1), ...(isBox[i] ? { box: true } : {}) }));
+    const regions = colors.map((c, i) => ({ ...regionMode(image, B, c, families, flat, label, i + 1, !!opts.page), ...(isBox[i] ? { box: true } : {}) }));
     if (!stacks.length) {
         regions.forEach((r, i) => {
             if (r.mode === 'over')
@@ -368,7 +409,7 @@ function stackedRegions(image, B, colors, flat) {
 
 // over or under, from the flat pixels inside the region that a dot shows in: which direction their offsets from B₂
 // take, c − B₂ (under) or c − B (over); and for an overlay, s from the commonest offset against one dot's
-function regionMode(image, B, B2, families, flat, label, k) {
+function regionMode(image, B, B2, families, flat, label, k, page) {
     const { data } = image;
     let under = 0;
     let over = 0;
@@ -378,6 +419,7 @@ function regionMode(image, B, B2, families, flat, label, k) {
     const dOver = families.map(f => unit(sub(f.color, B)));
     // one dot's offset from B along c − B: the first level of a translucent family, the color itself if opaque
     const t1 = families.map(f => colorDistance(f.color, B) * Math.min(1, f.alpha));
+    const whole = families.map(f => (page && f.alpha >= 1 ? OPAQUE_UNDER_SHARE * colorDistance(f.color, B2) : 0));
     for (let p = 0; p < label.length; p++) {
         if (label[p] !== k)
             continue;
@@ -393,7 +435,7 @@ function regionMode(image, B, B2, families, flat, label, k) {
         families.forEach((f, j) => {
             const u = offLine(e, dUnder[j]);
             const o = offLine(e, dOver[j]);
-            if (u.t > 0)
+            if (u.t > 0 && u.t >= whole[j])
                 bestU = Math.min(bestU, u.perp / u.t);
             if (o.t > 0 && o.perp / o.t < bestO) {
                 bestO = o.perp / o.t;

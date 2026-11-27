@@ -5187,3 +5187,40 @@ Result: 2023 found for 2000, P 0.988, R 0.999, RMSE 0.10 px, 1454 flagged (the c
 this row changes, and none fails now. Label benchmark: only its two axes change, now solved (4 of 4 each). Tests:
 the axes are the panel's edges with no short line in the cloud (the x axis at 387.5 without the clear-side test),
 and `estimateStyle` finds the family at α 0.15 and r 5.5 ("No dot family found" without the radius reach).
+
+**gg-loess's band over the dots** (2026-11-26). The pathogen case, seen again: ggplot2's gray confidence band (192 on
+the panel's 230, s = 0.6) drawn over black dots, which show 54 under it. 34 of 120 were missed. Two rules of
+`background.js` failed it, both where the page, the band and the dots are one gray.
+
+The band was never a region. `regionColors` takes the white page margin outside the panel first (53005 flat pixels),
+then drops any flat color on the line from a region along the dots' offset as the dots on that region (`isDotOn`). In
+a gray theme every gray is on the line from white toward black, so the band was black dots under a white "layer". A
+dot under a layer is surrounded by it: now the color is the dots' only if half of its flat pixels or more lie within
+1.5 dot radii of the region's own color (`DOT_ON_REACH`, `DOT_ON_SHARE`). The band: 0.03. Measured on every bench
+image's page pass: the colors this keeps 0.09 or less (gc's blue box 0.00, bread2's band overlap 0.06, gg-ellipse's
+ellipse overlap 0.08), the dots it still rejects 0.86 or more (beeswarm-boxplot's 229 has 0.32 against its 253 but
+1.00 against its 231). Applied in the second pass too, told from the family's background, it made violin-beeswarm's
+second violin shade a region under the dots, 18 extras along its error bars (P 0.985 → 0.960, as recorded at
+`shadedRegions` for its violins), so only the page pass has it, where a layer over the dots is found.
+
+Its mode was luck. `regionMode` votes by direction, and here both lines are the gray one; a tie goes under. The band
+voted over 547 to 0 only because the dots' color was measured at 2, 2, 2: in a synthetic image with exact black it was
+under. An opaque dot over a region shows its own color, the whole way from B₂ to it; a flat pixel on the line short of
+that is a dot seen through a layer. Under-votes from opaque families now need 0.9 of the way (`OPAQUE_UNDER_SHARE`;
+gg-loess's 54 is 0.73). Again the page pass only: told from violin-beeswarm's violin, the page is a region whose
+pixels include the second violin shade, which then voted the page a layer over the dots (16784 to 1138, s 0.66; 211
+found, none right).
+
+Result: gg-loess 87 found → 114 for 120, P 0.989 → 0.974, R 0.717 → 0.925, RMSE 0.27 → 0.15 px; the app gives the
+same 114 and says the layer was divided out. The 9 left are mostly dots under the band near its edge: at the five
+looked at, 13 to 24 of the dot's pixels under the band (54) take the panel's label, the nearest seed, and aren't
+divided out (`labelByColor` skips colors on the family's line, mpo, and here every color is on it); two of the nine
+are also under the blue curve. Two of the three extras are such dots fitted 3 to 5 px off, hence P 0.989 → 0.974.
+Full benchmark: only three rows change: gg-loess; gc (both boxes now layers over their dots, s 0.5, as the noisy
+scan the bench takes reads them: blue 4804 votes to 810, red 1891 to 102; 81 found → 69 for 64, P 0.790 → 0.928);
+and gg-ellipse (the ellipses stay regions under the dots, and their overlap is a region of its own, voted a layer
+at s 0.72: 193 → 190 for 180, P 0.922 → 0.932, but R 0.989 → 0.983, one more dot missed). pathogen is unchanged:
+its band was never rejected this way. Label benchmark unchanged (it reads no regions). Tests: a synthetic gray band
+over black dots in a panel with a white margin is a layer with s 0.6 from the page, and no region from the dots'
+background (fails with `DOT_ON_SHARE` 0 and with `OPAQUE_UNDER_SHARE` 0); gg-loess has one layer, s 0.6, and P ≥ 0.95,
+R ≥ 0.9 (fails with `DOT_ON_SHARE` 0). The bench's `--verbose` now prints the misses and extras of hand-truth images too.

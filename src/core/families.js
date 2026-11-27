@@ -456,7 +456,7 @@ export function pickedEstimate(image, seed, opts = {}) {
         return atSiblingRadius(image, seed, est, opts) ?? est;
     if (!est.style)
         return est;
-    const layers = backgroundRegions(image, scan.B, [candidateStyle(est.familyMeasure)], est.flat, est.style.radius ?? DEFAULT_RADIUS);
+    const layers = backgroundRegions(image, scan.B, [candidateStyle(est.familyMeasure)], est.flat, est.style.radius ?? DEFAULT_RADIUS, { page: true });
     return unmixEstimates(image, [est], scan.tol, layers)[0];
 }
 
@@ -492,7 +492,7 @@ function scaleReading(image, scan, jpeg, stage) {
 function shadedRegions(image, scan, first, radius) {
     const page = scan.B;
     let B = page;
-    let layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);
+    let layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius, { page: true });
     if (!layers.regions.some(r => r.mode === 'over') && first.background.color.some((v, ch) => v !== page[ch])) {
         B = first.background.color;
         layers = backgroundRegions(image, B, first.candidates.map(candidateStyle), first.flat, radius);

@@ -390,3 +390,18 @@ test('regression: culicine, pink and teal dots in darker rims over boxes of thei
     const m = matchDots(truth, found, 0.5 * results[0].fit.radius);
     assert.ok(m.precision >= 0.97 && m.recall >= 0.9, `recall ${m.recall}, precision ${m.precision}, ${found.length} dots`);
 });
+
+const R2 = dir('bench-r2');
+
+test('regression: bench-r2 gg-loess, the gray band over the black dots is divided out', { skip: !existsSync(R2 + 'gg-loess.png') && 'bench-r2 absent' }, () => {
+    // before: the band (192 on the gray panel) was read as black dots under the white page margin, never a layer, and
+    // the dots under it (54) were no level of the family: 87 found for 120, recall 0.717
+    const image = readImage(R2 + 'gg-loess.png');
+    const { layers } = estimateFamilies(image);
+    const over = layers.regions.filter(r => r.mode === 'over');
+    assert.equal(over.length, 1, JSON.stringify(layers.regions.map(r => [r.color, r.mode])));
+    assert.ok(Math.abs(over[0].s - 0.6) <= 0.03, `s ${over[0].s}`);
+    const px = truthPixelsByTicks(readTruthCsv(R2 + 'gg-loess.csv'), detectAxes(image));
+    const r = groupRow('gg-loess', px.dots, extractAll(image), 0);
+    assert.ok(r.recall >= 0.9 && r.precision >= 0.95, `P ${r.precision} R ${r.recall} (${r.found} found)`);
+});

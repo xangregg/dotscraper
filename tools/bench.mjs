@@ -438,7 +438,11 @@ function runJob(job, opts) {
     }
     const mark = results[0]?.jpegAuto ? ' (J)' : '';
     const label = `${set}/${name}`.slice(0, 30 - mark.length) + mark;
-    record(groupRow(label, truth.dots, results, Date.now() - t0), { ...meta, mode: modeOf(results, jpeg) });
+    const r = record(groupRow(label, truth.dots, results, Date.now() - t0), { ...meta, mode: modeOf(results, jpeg) });
+    if (opts.verbose) {
+        lines.push(`${label} ${results.map(q => `${q.est.style.alpha < 1 ? 'translucent' : 'opaque'} ${q.est.style.color.map(Math.round)} r ${q.fit.radius.toFixed(2)}`).join('; ')}`);
+        lines.push(`   missed ${r.missed.map(t => `${t.x.toFixed(1)},${t.y.toFixed(1)}`).join(' ')}  extra ${r.extra.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' ')}`);
+    }
     return out;
 }
 
