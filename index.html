@@ -3,19 +3,19 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>dotscraper</title>
+    <title>Dot Scraper</title>
     <meta name="description" content="Extract dot locations from images of graphs, including overlapping translucent dots, in the browser.">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="src/ui/main.js"></script>
 </head>
 <body>
-    <noscript><p class="warning">dotscraper runs in the browser and needs JavaScript.</p></noscript>
+    <noscript><p class="warning">Dot Scraper runs in the browser and needs JavaScript.</p></noscript>
     <header>
         <!-- the name and tagline beside two toolbar rows, so the rows' groups start at one left edge; on a narrow
              screen the name goes on a line of its own -->
         <div class="brand">
-            <h1>dotscraper <span id="dev-badge" class="dev-badge" hidden title="Dev mode: local test images and Save truth. Add ?dev=0 to the URL for the public view.">dev</span></h1>
+            <h1>Dot Scraper <span id="dev-badge" class="dev-badge" hidden title="Dev mode: local test images and Save truth. Add ?dev=0 to the URL for the public view.">dev</span></h1>
             <p class="tagline">Dot locations from images of graphs</p>
         </div>
         <!-- two rows, each a left and a right side that wrap onto lines of their own on narrow screens -->
@@ -36,7 +36,7 @@
                     <button type="button" id="save-csv" disabled title="Download the same table as a CSV file">Save CSV</button>
                     <button type="button" id="save-truth" disabled hidden title="Save the current dots as ground truth JSON (for bench-local/truth/)">Save truth</button>
                 </div>
-                <button type="button" id="about-open" title="What dotscraper does, how to use it, and its limits">About</button>
+                <button type="button" id="about-open" title="What Dot Scraper does, how to use it, and its limits">About</button>
             </div>
         </div>
         <div class="bar">
@@ -176,7 +176,7 @@
     </main>
     <dialog id="about" aria-labelledby="about-title">
         <form method="dialog" class="about-close"><button type="submit" aria-label="Close">Close</button></form>
-        <h2 id="about-title">dotscraper</h2>
+        <h2 id="about-title">Dot Scraper</h2>
         <p>Finds the dots in an image of a scatterplot or dot plot and reports where they are, in pixels and, once the
             axes have values, in data units. It is made for the hard case: dots that overlap, drawn with
             transparency, where counting blobs or circles fails.</p>

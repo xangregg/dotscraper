@@ -14,7 +14,7 @@ of the points in data units with the tick values in header lines. `Rscript make.
 | images | what they show |
 |---|---|
 | `log-e`, `log-e-hi`, `log-e-default` | base R, both axes log, `1e-03` to `1e+06`, at 96 and 170 dpi and at the device's default size (digits 9 px tall, where a minus sign touches its neighbor) |
-| `log-e-turned` | the same with the y labels turned along the axis, R's default: dotscraper doesn't read turned text |
+| `log-e-turned` | the same with the y labels turned along the axis, R's default: Dot Scraper doesn't read turned text |
 | `linear-e` | a linear axis from `0e+00` to `6e+05` |
 | `small-e-r72`, `-r120`, `-r220` | p-values on a log axis, `1e-07` to `1e-03`, and a linear axis in plain decimals |
 | `excel-E`, `jmp-e` | the forms of Excel (`2.E+05`, `2.0E+03`) and JMP (`1e-7`, `2e+3`), set by R |

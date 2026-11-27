@@ -60,7 +60,7 @@ loglog <- function(las) function() {
 }
 # R's device as it comes (480 × 480 at 72 dpi, 12 pt: digits 9 px tall), labels upright
 base("log-e-default", x, y, loglog(1), width = 480, height = 480, res = 72, xlog = TRUE, ylog = TRUE)
-# … and with the y labels turned along the axis, R's default: dotscraper doesn't read turned text
+# … and with the y labels turned along the axis, R's default: Dot Scraper doesn't read turned text
 base("log-e-turned", x, y, loglog(0), width = 480, height = 480, res = 72, xlog = TRUE, ylog = TRUE)
 base("log-e", x, y, loglog(1), xlog = TRUE, ylog = TRUE)
 base("log-e-hi", x, y, loglog(1), width = 1100, height = 900, res = 170, xlog = TRUE, ylog = TRUE)

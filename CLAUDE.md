@@ -2,12 +2,12 @@
 
 ## Project
 
-**dotscraper**: a browser app (to be served from GitHub Pages) that extracts dot locations from images of
-graphs, especially scatterplots whose dots overlap and are drawn with alpha transparency (`bench-local/dog-ages.png`
-is the main target), where ordinary circle or blob detection fails. The approach is analysis by synthesis: estimate
-the dots' style (color, size, alpha, edge blur), mask the non-dot layers, then iterate on a set of dot locations
-whose rendering reproduces the image, ignoring the masked pixels. Pixel locations become data values through the
-detected axis scales.
+**Dot Scraper** (repository and package `dotscraper`): a browser app (to be served from GitHub Pages) that extracts
+dot locations from images of graphs, especially scatterplots whose dots overlap and are drawn with alpha
+transparency (`bench-local/dog-ages.png` is the main target), where ordinary circle or blob detection fails. The
+approach is analysis by synthesis: estimate the dots' style (color, size, alpha, edge blur), mask the non-dot
+layers, then iterate on a set of dot locations whose rendering reproduces the image, ignoring the masked pixels.
+Pixel locations become data values through the detected axis scales.
 
 The spec, decisions and milestones are in **PLAN.md**. Read it before starting a phase, tick its checkboxes as
 work is completed, and record measured results there (what was tried, the numbers, what was decided).

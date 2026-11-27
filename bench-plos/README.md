@@ -1,6 +1,6 @@
 # bench-plos: figures from PLOS ONE
 
-Real published scatterplots and dot plots, used to benchmark and test dotscraper
+Real published scatterplots and dot plots, used to benchmark and test Dot Scraper
 (`npm run bench -- --set bench-plos`). Unlike the figures in `bench-local/` and `bench-nature/`, which stay off the
 repository, these come from open-access articles published under the
 [Creative Commons Attribution 4.0 license](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0), which permits
@@ -16,7 +16,7 @@ of this repository's code does not apply to them.
 - **`<name>-<DOI>.csv`**: for some figures, the plotted values in data units, with the axis tick values in header
   lines, taken from the data the article publishes. The benchmark places them in the image through the detected
   ticks.
-- **`truth/<name>-<DOI>.json`**: dot centers in image pixels, placed by hand in dotscraper for this project. They are
+- **`truth/<name>-<DOI>.json`**: dot centers in image pixels, placed by hand in Dot Scraper for this project. They are
   not part of the articles.
 
 ## Sources

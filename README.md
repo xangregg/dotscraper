@@ -1,4 +1,4 @@
-# dotscraper
+# Dot Scraper
 
 Finds the dots in an image of a scatterplot or dot plot and reports where they are, in pixels and, once the axes have
 values, in data units. It is made for the hard case: dots that overlap, drawn with transparency, where counting blobs
@@ -13,12 +13,12 @@ or circles fails.
 </p>
 
 Part of a scatterplot (a synthetic one, drawn to resemble a published figure), and the same part with the dots
-dotscraper finds: blue for a dot it is sure of, red for one it flags as doubtful (mostly hidden, deep in a stack, or
+Dot Scraper finds: blue for a dot it is sure of, red for one it flags as doubtful (mostly hidden, deep in a stack, or
 weakly supported).
 
 ## How it works
 
-Analysis by synthesis. dotscraper measures the dots' style (color, size, transparency, edge blur, outline), sets aside
+Analysis by synthesis. Dot Scraper measures the dots' style (color, size, transparency, edge blur, outline), sets aside
 what isn't dots (text, lines, axes, shaded bands), and then searches for the set of dot positions whose rendering
 reproduces the image. A dot hidden in a stack of translucent dots shows up as a darker level, not as an edge, so
 stacks can be counted. Each dot gets a position, a standard error and flags for anything doubtful; ticks on the axes

@@ -1,4 +1,4 @@
-# PLAN.md — dotscraper
+# PLAN.md — Dot Scraper
 
 ## 0. Goal
 

@@ -1,6 +1,6 @@
 # bench-pmc: figures from articles in PubMed Central
 
-Real published scatterplots and dot plots, used to benchmark and test dotscraper
+Real published scatterplots and dot plots, used to benchmark and test Dot Scraper
 (`npm run bench -- --set bench-pmc`). They come from open-access articles found through PubMed Central, chosen
 among those published under the
 [Creative Commons Attribution 4.0 license](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0), which permits
@@ -14,7 +14,7 @@ apply to them.
   of them from the raster image in its PDF) and cropped to the plot. The article's DOI is in the file name, with `/`
   written as `-`. Which numbered figure each one is was not recorded, except where an entry says; the DOI leads to
   the article.
-- **`truth/<name>-<DOI>.json`**: dot centers in image pixels, placed by hand in dotscraper for this project. They
+- **`truth/<name>-<DOI>.json`**: dot centers in image pixels, placed by hand in Dot Scraper for this project. They
   are not part of the articles.
 - **`truth-original/`**: the first hand-placed truth of potato and shap, kept from before those files were
   rewritten as one family each (PLAN.md).
