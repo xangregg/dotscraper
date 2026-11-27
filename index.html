@@ -153,7 +153,7 @@
                     <label title="Image − model for the selected family"><input type="radio" name="overlay" value="residual"><span>Residual</span></label>
                 </div>
                 <label class="toggle" title="Mark the dots found (D). In Add, Remove and Move, holding Shift hides the marks for a look at the image under them."><input type="checkbox" id="show-dots" checked> Dots</label>
-                <label class="toggle" title="Mark dots of one family almost in one place (magenta, with a shared ring). Off, they are drawn as other dots; their close flag stays in the counts, the table and the hover line."><input type="checkbox" id="show-close" checked> Close pairs</label>
+                <label class="toggle" title="Mark dots of one family almost in one place (magenta, with a shared ring). Off, they are drawn as other dots; their close flag stays in the counts, the table and the hover line."><input type="checkbox" id="show-close" checked> Pairs</label>
                 <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
                 <div class="zoom" role="group" aria-label="Zoom">
                     <button type="button" id="zoom-fit" title="Fit the image in the view (0)">Fit</button>
@@ -194,7 +194,7 @@
             <li><strong>Find dots.</strong> The fit runs in the background; Stop keeps what it has.</li>
             <li><strong>Review.</strong> Hover a dot for its position and uncertainty. Flagged dots are red: hover for
                 why. A magenta double ring marks dots of one family almost in one place, which for opaque dots may be
-                one dot counted twice; the Close pairs box hides these marks. The Residual view shows what the dots don't
+                one dot counted twice; the Pairs box hides these marks. The Residual view shows what the dots don't
                 explain.</li>
             <li><strong>Fix</strong> with Add, Remove and Move. Edits refit the dots nearby, but never dots you
                 placed or moved. Option-click (Alt-click) adds or removes without any refit.</li>
