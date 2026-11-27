@@ -1402,10 +1402,25 @@ failures (radius unknown, no family, category ticks not paired).
   highlights the dot it would take. **Undo** (⌘Z) keeps 100 steps, a Find dots included.
 - Edits re-added every outlined dot without its drawing order, and an added one went on top: `refitNear` now keeps
   each dot's z and places an added one with `bestZ` (regression test in outline.test.js).
-- The header holds the actions: source, Find dots and Stop with a progress bar and a status line of fixed width
-  (the stage, dot count and elapsed time, ticking between the fit's messages; the bar is indeterminate until the
-  first stage), the edit modes, and Copy CSV and Save truth. Above the image: the layer choice, Dots and Axes
-  toggles, zoom. Under it: a readout of the pixel and dot under the pointer and the layer's legend.
+- The header holds the actions. The main ones are in one row of larger buttons: the image source (Open…, and the
+  test image list in dev mode), Find dots and Stop, then the status line (the stage, dot count and elapsed time,
+  ticking between the fit's messages) with the progress bar under it (indeterminate until the first stage). The
+  status takes up to 250 px and gives up room first; its width ignores its text (`contain: inline-size`), so neither
+  the text nor the bar reflows the header. The others are in two rows at the right: Copy table, Save CSV, Save
+  truth and About; the edit modes. On a narrow screen each part wraps onto a line of its own. Above the image: the
+  layer choice, Dots and Axes toggles, zoom. Under it: a readout of the pixel and dot under the pointer and the
+  layer's legend.
+- For new users (src/ui/tour.js), the seven steps of About's "Using it" are numbered on the page: on every load and
+  on a click on the name (Dot Scraper, a button), with short labels, until the first click, key, wheel turn, drag or
+  paste (the layer takes no pointer events, so that click still works); and as numbers alone while About is open, with the dialog moved over the image view so
+  the header and panel stay in sight. About's list has the same numbers. Each number and its label are laid out
+  together, in a big window to read in order: 1 and 3 side by side under their buttons (1 ending at Open's right
+  edge, 3 starting at Find dots' left), 2 under the Dot families name, 5 ending at the edit buttons' right edge.
+  Export's 7 shows only beside About (easy to find, and its label broke the reading order). A step takes the first
+  of its layouts that covers no header control, step target, number or label, then the same of fallbacks around the
+  target, or else the one covering least (numbers and labels counting 10× controls); beside About, numbers are
+  placed as if unlabeled. Checked at 1600 and 1280 px (dev and public, light and dark) and 375 px.
+  At 1280 px in dev mode the test image list leaves the status line about 80 px.
 - The panel is 360 px wide, in collapsible sections that remember their state: Dot families open; Found dots,
   Axes, Mask and Image closed, each with a summary line (Found dots: the count and how many are flagged). Found
   dots was Dots, open by default; it was renamed (a new id, so a remembered open state doesn't carry over) and

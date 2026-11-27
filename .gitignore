@@ -13,3 +13,7 @@ bench-nature/
 # the one figure from PubMed Central that isn't CC BY (bench-pmc/README.md): local only
 bench-pmc/reading-10.1523-JNEUROSCI.1153-24.2024.png
 bench-pmc/truth/reading-10.1523-JNEUROSCI.1153-24.2024.json
+# collage of bench-nature/bench-local excerpts (third-party figures) and the tool and crop list that make it: local only
+bench-collage.png
+tools/bench-collage.py
+tools/bench-collage-crops.json

@@ -27,6 +27,7 @@ import {
     countOverlay, maskOverlay, classOverlay, residualOverlay, rgbOverlay, cssColor,
     COUNT_MAX_SHOWN, CLASS_COLORS, OFF_LINE_COLOR, MASK_TINT, RESIDUAL_FULL, RESIDUAL_DARKER, RESIDUAL_LIGHTER, RESIDUAL_MASKED,
 } from './overlays.js';
+import { wireTour } from './tour.js';
 
 const SAMPLE_SIZE = 80; // CSS px, each sample canvas
 const SAMPLE_MARGIN = 4; // px around the dot in the sample crop
@@ -1772,7 +1773,6 @@ function wireControls() {
         setStatus(`Saved ${state.fit.dots.length} dots as ${name}.`);
     });
     $('save-truth').addEventListener('click', saveTruth);
-    $('about-open').addEventListener('click', () => $('about').showModal());
     for (const key of ['radius', 'alpha', 'blur']) {
         $(`style-${key}`).addEventListener('change', e => {
             const v = Number(e.target.value);
@@ -1897,6 +1897,12 @@ async function init() {
     renderFamilies();
     renderStylePanel();
     renderFitControls();
+    const tour = wireTour($('about'));
+    $('about-open').addEventListener('click', () => {
+        $('about').showModal();
+        tour.showWithAbout();
+    });
+    $('show-steps').addEventListener('click', () => tour.showIntro());
 
     $('zoom-fit').addEventListener('click', () => view.fit());
     $('zoom-1').addEventListener('click', () => view.zoomTo(1));

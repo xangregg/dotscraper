@@ -12,6 +12,8 @@
     --warning: #d03b3b;
     --hint-bg: rgba(11, 11, 11, 0.78);
     --hint-ink: #fff;
+    /* the step numbers (tour.js): orange, apart from the controls' blue */
+    --step: #d96200;
     color-scheme: light;
 }
 
@@ -30,6 +32,7 @@
         --warning: #e66767;
         --hint-bg: rgba(240, 239, 236, 0.9);
         --hint-ink: #0b0b0b;
+        --step: #e8771a;
         color-scheme: dark;
     }
 }
@@ -66,13 +69,37 @@ header {
     background: var(--surface);
 }
 
-/* the toolbar rows take the rest of the width; below about 560 px they wrap under the name */
+/* the main actions take the room left, the status line giving it up first; a basis of 0 keeps a long status or
+   the progress bar from pushing the rows at the right onto a line of their own, and the automatic minimum width (the
+   buttons and the shortest status) still moves them under the name on a narrow screen */
+.actions {
+    display: flex;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 20px;
+}
+
+.actions .run {
+    flex: 1 1 0;
+    flex-wrap: nowrap;
+}
+
+button.big, select.big {
+    flex: none;
+    white-space: nowrap;
+    padding: 7px 16px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+/* the other actions: two rows at the right edge */
 .bars {
     display: flex;
-    flex: 1 1 560px;
     flex-direction: column;
+    align-items: flex-end;
     gap: 6px;
-    min-width: 0;
+    margin-left: auto;
 }
 
 .tagline {
@@ -81,21 +108,30 @@ header {
     color: var(--ink-2);
 }
 
-/* a toolbar row: its left and right sides pushed apart; on a narrow screen the right side wraps to a line of its own */
-.bar, .side {
+.bar {
     display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
     gap: 6px 20px;
-}
-
-.bar {
-    justify-content: space-between;
 }
 
 h1 {
     margin: 0;
     font-size: 18px;
+}
+
+/* the name is a button that shows the steps again, drawn as the heading's text */
+h1 button.title {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+}
+
+h1 button.title:hover {
+    color: var(--accent);
 }
 
 .group {
@@ -105,9 +141,18 @@ h1 {
     gap: 6px;
 }
 
-/* a fixed width, so the toolbar doesn't reflow as the text changes; the full text is the tooltip */
+/* the status line with the progress bar under it, up to a fixed width; its size ignores its text (contain), so the
+   toolbar doesn't reflow as the text changes or the bar shows; the full text is the tooltip */
+.meter {
+    display: flex;
+    flex: 0 1 250px;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 60px;
+    contain: inline-size;
+}
+
 .status {
-    width: 250px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -183,6 +228,70 @@ h1 {
     padding-left: 20px;
 }
 
+/* the steps numbered as on the page beside the dialog (tour.js) */
+#about ol {
+    padding-left: 0;
+    list-style: none;
+    counter-reset: step;
+}
+
+#about ol > li {
+    position: relative;
+    min-height: 30px;
+    padding-left: 40px;
+    counter-increment: step;
+}
+
+#about ol > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: -2px;
+}
+
+/* the steps layer over the page: a full-window popover that takes no pointer events */
+#tour {
+    inset: 0;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.step-badge, #about ol > li::before {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 2px solid var(--surface);
+    border-radius: 50%;
+    background: var(--step);
+    color: #fff;
+    font: 700 16px/1 system-ui, -apple-system, sans-serif;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.step-badge {
+    position: fixed;
+}
+
+.step-label {
+    position: fixed;
+    padding: 4px 12px;
+    border-radius: 14px;
+    background: var(--hint-bg);
+    color: var(--hint-ink);
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
 #about li {
     margin-bottom: 4px;
 }
@@ -220,8 +329,8 @@ kbd {
 }
 
 #fit-progress {
-    width: 120px;
-    height: 8px;
+    width: 100%;
+    height: 6px;
     accent-color: var(--accent);
 }
 
