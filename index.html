@@ -57,6 +57,7 @@
                     <button type="button" id="edit-add" aria-pressed="false" disabled title="Click to add a dot to the selected family; the dots nearby are refit (A; Esc to finish)">+ Add dot</button>
                     <button type="button" id="edit-remove" aria-pressed="false" disabled title="Click a dot of the selected family to remove it; the dots nearby are refit (R; Esc to finish)">− Remove dot</button>
                     <button type="button" id="edit-move" aria-pressed="false" disabled title="Click a dot of the selected family, then move it with the arrow keys: 1 px, or 0.1 px with Shift; it isn't refit (M; Esc to finish)">Move dot</button>
+                    <button type="button" id="edit-flag" aria-pressed="false" disabled title="Review flags: click a flagged dot you have checked to mark it reviewed, kept and drawn and counted as unflagged; its flags stay in the hover line and the table. Click it again to flag it again (F; Esc to finish)">Flag dot</button>
                     <button type="button" id="edit-clear" disabled title="Remove every dot of every family; Undo brings them back">Clear all</button>
                     <button type="button" id="edit-undo" disabled title="Undo the last edit (⌘Z)">Undo</button>
                 </div>
@@ -117,7 +118,7 @@
                 <summary>Found dots <span id="found-summary" class="summary-note"></span></summary>
                 <dl>
                     <dt>Dots</dt><dd id="fit-count">–</dd>
-                    <dt>Flagged</dt><dd id="fit-flags" title="weak: removing it costs little; hidden: under half visible; deep: in a stack deeper than the measured levels; close: another dot of its family within 0.35 radius, drawn with a double ring (translucent dots show a real pair by their darker overlap; opaque ones can't, so check it isn't one dot counted twice)">–</dd>
+                    <dt>Flagged</dt><dd id="fit-flags" title="weak: removing it costs little; hidden: under half visible; deep: in a stack deeper than the measured levels; close: another dot of its family within 0.35 radius, drawn with a double ring (translucent dots show a real pair by their darker overlap; opaque ones can't, so check it isn't one dot counted twice).&#10;&#10;Reviewed: flagged dots checked and kept with Flag dot, no longer counted here; their flags stay in the table.">–</dd>
                     <dt>Radius</dt><dd id="fit-radius" title="After the fit's radius refit">–</dd>
                     <dt>Residual sd</dt><dd id="fit-sigma" title="Robust sd of image − model inside dots, 0–255 units along the color line">–</dd>
                 </dl>
@@ -203,7 +204,8 @@
                 one dot counted twice; the Pairs box hides these marks. The Residual view shows what the dots don't
                 explain.</li>
             <li><strong>Fix</strong> with Add, Remove and Move. Edits refit the dots nearby, but never dots you
-                placed or moved. Option-click (Alt-click) adds or removes without any refit.</li>
+                placed or moved. Option-click (Alt-click) adds or removes without any refit. Flag dot marks a flagged
+                dot you have checked as reviewed: it is drawn and counted as unflagged, its flags kept in the table.</li>
             <li><strong>Axes:</strong> tick values are read from the labels when at least three of an axis's fit one
                 scale, or two on a log axis whose minor ticks confirm them; check them, and type over any that is
                 wrong. Labels like 10<sup>3</sup>, 2 × 10<sup>3</sup> and 1e+05 are read, and a y axis's labels
@@ -214,7 +216,7 @@
 
         <h3>Keys and mouse</h3>
         <dl class="keys">
-            <dt><kbd>A</kbd> <kbd>R</kbd> <kbd>M</kbd></dt><dd>Add, Remove, Move mode; <kbd>Esc</kbd> ends it</dd>
+            <dt><kbd>A</kbd> <kbd>R</kbd> <kbd>M</kbd> <kbd>F</kbd></dt><dd>Add, Remove, Move, Flag review mode; <kbd>Esc</kbd> ends it</dd>
             <dt>Arrows</dt><dd>move the chosen or last added dot 1 px; with <kbd>Shift</kbd>, 0.1 px</dd>
             <dt><kbd>D</kbd></dt><dd>show or hide the dots' marks; in Add, Remove and Move, holding <kbd>Shift</kbd> hides them</dd>
             <dt><kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd></dt><dd>undo an edit</dd>

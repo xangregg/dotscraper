@@ -92,7 +92,7 @@ const state = {
     dilate: null, // user's mask dilation for the selected family, px, or null for the default
     layers: null, // the selected family's buildMask result
     overlay: 'image',
-    mode: null, // null, 'pick', 'pick-outline', 'add', 'remove' or 'move': what a click in the view does
+    mode: null, // null, 'pick', 'pick-outline', 'add', 'remove', 'move' or 'review': what a click in the view does
     moving: null, // Move mode's chosen dot, { family, i } with i its index in that family's dots
     nudged: false, // the chosen dot has been nudged since it was chosen: its first nudge saved an undo step
     fit: null, // { families: [{ family, dots, radius, sigma }], dots (all, with family and r), ms, edited, partial }
@@ -375,6 +375,8 @@ function showPixel(x, y, point) {
 
     if ((state.mode === 'remove' || (state.mode === 'move' && !state.moving)) && state.fit)
         setHoverDot(nearestDot(state.fit.dots, x + 0.5, y + 0.5, REMOVE_HIT_RADII, d => d.family === state.current));
+    if (state.mode === 'review' && state.fit)
+        setHoverDot(nearestDot(state.fit.dots, x + 0.5, y + 0.5, REMOVE_HIT_RADII));
     const i = state.fit ? nearestDot(state.fit.dots, x + 0.5, y + 0.5) : -1;
     if (i < 0) {
         $('dot-line').textContent = '';
@@ -389,7 +391,7 @@ function showPixel(x, y, point) {
     const dd = dataAt(d.x, d.y);
     const data = dd.x === null && dd.y === null ? '' : ` = data ${formatData(dd.x, dd.resX)}, ${formatData(dd.y, dd.resY)}`;
     const fill = d.fill === undefined ? '' : `; fill ${fillLabel(d)}${d.fillSure ? '' : ' (mostly hidden: color unsure)'}`;
-    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.moved ? (d.placed ? ' (placed by hand)' : ' (moved by hand)') : d.placed ? ' (added by hand)' : ''}${d.flags?.length ? ` (${d.flags.join(', ')})` : ''}`;
+    $('dot-line').textContent = `Dot ${fam}${d.x.toFixed(2)}, ${d.y.toFixed(2)} px${se}${data}${extra}${fill}${d.moved ? (d.placed ? ' (placed by hand)' : ' (moved by hand)') : d.placed ? ' (added by hand)' : ''}${d.flags?.length ? ` (${d.reviewed ? 'reviewed: ' : ''}${d.flags.join(', ')})` : d.reviewed ? ' (reviewed)' : ''}`;
 }
 
 function setHoverDot(i) {
@@ -720,7 +722,7 @@ function renderFamilies() {
         count.className = 'count';
         const ff = familyFit(k);
         if (ff) {
-            const flagged = ff.dots.filter(d => d.flags.length).length;
+            const flagged = ff.dots.filter(flaggedNow).length;
             count.textContent = `${ff.dots.length} dots${flagged ? `, ${flagged} flagged` : ''}`;
         }
         li.append(box, sw, name, count);
@@ -993,6 +995,8 @@ function clickAt(x, y, { alt = false, point = null } = {}) {
         editAt('remove', x + 0.5, y + 0.5, alt);
     if (state.mode === 'move')
         chooseMoving(x + 0.5, y + 0.5);
+    if (state.mode === 'review')
+        toggleReviewed(x + 0.5, y + 0.5);
 }
 
 /** A family of a picked color, fitted on its own (on the image with any overlay divided out). */
@@ -1108,7 +1112,7 @@ async function outlineChanged(k) {
     styleChanged();
 }
 
-/** What a click in the view does: null (pan only), 'pick', 'pick-outline', 'add', 'remove', 'move', 'tick-x' or 'tick-y'. */
+/** What a click in the view does: null (pan only), 'pick', 'pick-outline', 'add', 'remove', 'move', 'review', 'tick-x' or 'tick-y'. */
 function setMode(mode) {
     const ticking = (state.mode?.startsWith('tick') ?? false) !== (mode?.startsWith('tick') ?? false);
     state.mode = mode;
@@ -1119,10 +1123,11 @@ function setMode(mode) {
     $('edit-add').setAttribute('aria-pressed', String(mode === 'add'));
     $('edit-remove').setAttribute('aria-pressed', String(mode === 'remove'));
     $('edit-move').setAttribute('aria-pressed', String(mode === 'move'));
+    $('edit-flag').setAttribute('aria-pressed', String(mode === 'review'));
     const stage = $('stage');
     stage.classList.toggle('picking', mode === 'pick' || mode === 'pick-outline');
     stage.classList.toggle('adding', mode === 'add' || mode === 'tick-x' || mode === 'tick-y');
-    stage.classList.toggle('removing', mode === 'remove' || mode === 'move');
+    stage.classList.toggle('removing', mode === 'remove' || mode === 'move' || mode === 'review');
     setHoverDot(-1);
     view.setGuide(null);
     updateModeHint();
@@ -1141,6 +1146,7 @@ function updateModeHint() {
         : state.mode === 'remove' ? `Removing from ${name}: click a dot to remove it (${OPTION_KEY}-click: nothing refitted) · drag to pan · Esc to finish`
         : state.mode === 'move' && !state.moving ? `Moving in ${name}: click a dot to choose it · drag to pan · Esc to finish`
         : state.mode === 'move' ? `Arrow keys move the dot ${NUDGE_STEP} px (Shift: ${NUDGE_FINE} px) · click another dot · Esc to finish`
+        : state.mode === 'review' ? 'Reviewing flags: click a flagged dot to mark it reviewed, kept (click again to flag it again) · drag to pan · Esc to finish'
         : state.mode === 'tick-x' ? 'Adding x ticks: click where a tick is (the line shows its x; zoom in to place it well) · drag to pan · Esc to finish'
         : state.mode === 'tick-y' ? 'Adding y ticks: click where a tick is (the line shows its y; zoom in to place it well) · drag to pan · Esc to finish'
         : '';
@@ -1169,6 +1175,7 @@ function renderFitControls() {
     $('edit-add').disabled = !editable;
     $('edit-remove').disabled = !editable || !familyFit()?.dots.length;
     $('edit-move').disabled = !editable || !familyFit()?.dots.length;
+    $('edit-flag').disabled = running || !state.fit?.dots.length;
     $('edit-clear').disabled = running || !state.fit?.dots.length;
     $('edit-undo').disabled = running || !state.undo.length;
     $('copy-table').disabled = !state.fit?.dots.length || running;
@@ -1180,7 +1187,8 @@ function renderFitControls() {
         $(id).disabled = running || state.scanning;
     if (!editable && (state.mode === 'add' || state.mode === 'remove'))
         setMode(null);
-    if ((state.mode === 'remove' && $('edit-remove').disabled) || (state.mode === 'move' && $('edit-move').disabled))
+    if ((state.mode === 'remove' && $('edit-remove').disabled) || (state.mode === 'move' && $('edit-move').disabled)
+        || (state.mode === 'review' && $('edit-flag').disabled))
         setMode(null);
 }
 
@@ -1194,15 +1202,17 @@ function renderDotsSection() {
         return;
     }
     const counts = {};
-    for (const d of fit.dots) {
+    for (const d of fit.dots.filter(flaggedNow)) {
         for (const f of d.flags)
             counts[f] = (counts[f] ?? 0) + 1;
     }
-    const flagged = fit.dots.filter(d => d.flags.length).length;
+    const flagged = fit.dots.filter(flaggedNow).length;
+    const reviewed = fit.dots.filter(d => d.reviewed).length;
     const many = fit.families.length > 1;
-    $('found-summary').textContent = `${fit.dots.length}${flagged ? `, ${flagged} flagged` : ''}`;
+    $('found-summary').textContent = `${fit.dots.length}${flagged ? `, ${flagged} flagged` : ''}${reviewed ? `, ${reviewed} reviewed` : ''}`;
     $('fit-count').textContent = many ? `${fit.dots.length} (${fit.families.map(f => f.dots.length).join(' + ')})` : String(fit.dots.length);
-    $('fit-flags').textContent = flagged ? `${flagged} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')})` : '0';
+    $('fit-flags').textContent = (flagged ? `${flagged} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')})` : '0')
+        + (reviewed ? `; ${reviewed} reviewed` : '');
     $('fit-radius').textContent = `${fit.families.map(f => f.radius.toFixed(2)).join(', ')} px`;
     const cur = familyFit();
     $('fit-sigma').textContent = cur ? fmt(cur.sigma, 2) + (many ? ` (${familyName(state.current)})` : '') : '–';
@@ -1397,15 +1407,17 @@ function editAt(kind, x, y, exact = false) {
         const res = refitNear({ ...fitInputFor(k), style: { ...currentStyle(), radius: f.radius } }, input, x, y, ADD_REACH / view.scale());
         // the refit assesses every dot again; the marks of what the user did stay, and a moved dot's position isn't
         // the fit's, so its standard errors and removal margin don't describe it
+        // (a dot reviewed stays so: the refit moves it a little at most)
         out = res.dots.map((d, i) => {
             const was = dots[res.from[i]];
+            const reviewed = was.reviewed ? { reviewed: true } : {};
             if (was.added)
                 return { ...d, placed: true };
             if (was.moved) {
                 const { seX, seY, margin, ...rest } = d;
-                return { ...rest, placed: was.placed, moved: true };
+                return { ...rest, placed: was.placed, moved: true, ...reviewed };
             }
-            return was.placed ? { ...d, placed: true } : d;
+            return was.placed ? { ...d, placed: true, ...reviewed } : { ...d, ...reviewed };
         });
         addedAt = res.from.findIndex(j => dots[j].added);
         sigma = res.sigma;
@@ -1445,6 +1457,39 @@ function chooseMoving(x, y) {
     updateModeHint();
     if (i >= 0)
         setStatus(`Chosen: dot at ${f.dots[i].x.toFixed(2)}, ${f.dots[i].y.toFixed(2)} px. Arrow keys move it.`);
+}
+
+// Flag dot (flag review): mark the dot nearest the click, of any family, reviewed (checked and kept), or flag it
+// again. Its flags stay, for the hover line and the table; the view and the counts treat it as unflagged. One undo
+// step each.
+function toggleReviewed(x, y) {
+    const i = nearestDot(state.fit.dots, x, y, REMOVE_HIT_RADII);
+    if (i < 0) {
+        setStatus('No dot here to mark reviewed.');
+        return;
+    }
+    const target = state.fit.dots[i];
+    const on = !target.reviewed;
+    pushUndo();
+    const families = state.fit.families.map(f => {
+        if (f.family !== target.family)
+            return f;
+        return {
+            ...f,
+            dots: f.dots.map(d => {
+                if (d.x !== target.x || d.y !== target.y)
+                    return d;
+                const { reviewed, ...rest } = d;
+                return on ? { ...rest, reviewed: true } : rest;
+            }),
+        };
+    });
+    setFits(families, { ...extraOf(state.fit), edited: true });
+    state.hoverDot = i;
+    const flags = target.flags.length ? ` (${target.flags.join(', ')})` : ' (not flagged)';
+    setStatus(on ? `Marked the dot at ${target.x.toFixed(2)}, ${target.y.toFixed(2)} px reviewed${flags}.`
+        : `The dot at ${target.x.toFixed(2)}, ${target.y.toFixed(2)} px is no longer marked reviewed${flags}.`);
+    fitChanged();
 }
 
 // Move the chosen dot by (dx, dy) px, as placed by hand: no refit, which would pull it back. The fit's per-dot
@@ -1495,8 +1540,9 @@ function dotsTable() {
     if (hasData)
         head.push('x', 'y', 'se_noise_x', 'se_noise_y');
     const fills = state.fit.dots.some(d => d.fill !== undefined);
-    // by_hand: added (clicked, then refined), moved (nudged) or placed (Option-click: exactly as clicked)
-    head.push('visible', 'depth', 'flags', 'by_hand');
+    // by_hand: added (clicked, then refined), moved (nudged) or placed (Option-click: exactly as clicked);
+    // reviewed: checked and kept with Flag dot (its flags are the fit's, kept)
+    head.push('visible', 'depth', 'flags', 'by_hand', 'reviewed');
     if (fills)
         head.push('fill');
     const rows = [head];
@@ -1512,7 +1558,7 @@ function dotsTable() {
             const value = (v, res) => (v === null || v === undefined ? '' : formatData(v, res));
             row.push(value(dd.x, dd.resX), value(dd.y, dd.resY), se(d.seX, dd.resX), se(d.seY, dd.resY));
         }
-        row.push(d.visible?.toFixed(2) ?? '', String(d.depth ?? ''), d.flags.join(' '), d.moved ? (d.placed ? 'placed' : 'moved') : d.placed ? 'added' : '');
+        row.push(d.visible?.toFixed(2) ?? '', String(d.depth ?? ''), d.flags.join(' '), d.moved ? (d.placed ? 'placed' : 'moved') : d.placed ? 'added' : '', d.reviewed ? 'yes' : '');
         if (fills)
             row.push(d.fill === undefined ? '' : fillLabel(d));
         rows.push(row);
@@ -1731,7 +1777,9 @@ function wireSections() {
 // it, so the view's keys work from there too
 const typing = e => (e.target instanceof HTMLInputElement && e.target.type !== 'checkbox') || e.target instanceof HTMLSelectElement
     || e.target instanceof HTMLTextAreaElement;
-const editing = () => state.mode === 'add' || state.mode === 'remove' || state.mode === 'move';
+const editing = () => state.mode === 'add' || state.mode === 'remove' || state.mode === 'move' || state.mode === 'review';
+// a flag the user hasn't reviewed: reviewed dots keep their flags but count, and are drawn, as unflagged
+const flaggedNow = d => d.flags.length > 0 && !d.reviewed;
 
 function setPeek(on) {
     if (state.peek === on)
@@ -1760,6 +1808,7 @@ function wireControls() {
     $('edit-add').addEventListener('click', () => setMode(state.mode === 'add' ? null : 'add'));
     $('edit-remove').addEventListener('click', () => setMode(state.mode === 'remove' ? null : 'remove'));
     $('edit-move').addEventListener('click', () => setMode(state.mode === 'move' ? null : 'move'));
+    $('edit-flag').addEventListener('click', () => setMode(state.mode === 'review' ? null : 'review'));
     $('edit-clear').addEventListener('click', clearDots);
     $('edit-undo').addEventListener('click', undo);
     $('show-axes').addEventListener('change', e => {
@@ -1874,6 +1923,9 @@ function wireControls() {
         }
         else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'm' && !$('edit-move').disabled) {
             setMode(state.mode === 'move' ? null : 'move');
+        }
+        else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'f' && !$('edit-flag').disabled) {
+            setMode(state.mode === 'review' ? null : 'review');
         }
         else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'd') {
             $('show-dots').click();

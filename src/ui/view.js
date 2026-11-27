@@ -159,7 +159,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     // a mark's stroke width in CSS px at the current zoom
     // drawn as a possible duplicate: flagged 'close', unless that display is off (then it is drawn by its other flags)
     function isClose(d) {
-        return marks.showClose !== false && !!d.flags?.includes('close');
+        return marks.showClose !== false && !d.reviewed && !!d.flags?.includes('close');
     }
 
     function markLine(d) {
@@ -176,7 +176,8 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         const paths = marks.dots.map((d, i) => {
             const line = markLine(d);
             const c = Math.max(MARK_CROSS, 2 * line) / scale;
-            const otherFlags = d.flags?.some(f => f !== 'close');
+            // a dot reviewed with Flag dot is drawn as unflagged
+            const otherFlags = !d.reviewed && d.flags?.some(f => f !== 'close');
             const color = i === marks.selected ? MARK_COLORS.selected
                 : isClose(d) ? MARK_COLORS.close : (otherFlags ? MARK_COLORS.flagged : MARK_COLORS.ok);
             const path = new Path2D();
@@ -222,7 +223,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
     function groupClose(m) {
         if (m.showClose === false)
             return [];
-        const ids = m.dots.flatMap((d, i) => (d.flags?.includes('close') ? [i] : []));
+        const ids = m.dots.flatMap((d, i) => (!d.reviewed && d.flags?.includes('close') ? [i] : []));
         const parent = new Map(ids.map(i => [i, i]));
         const root = i => (parent.get(i) === i ? i : root(parent.get(i)));
         for (let a = 0; a < ids.length; a++) {

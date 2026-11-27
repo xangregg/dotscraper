@@ -5348,3 +5348,24 @@ relocations); autocor1 R 0.946 → 0.945 (20 relocations, mixed against truth: d
 px from theirs, and others moved off truth points that sit exactly where an earlier fit put them, one of them,
 521.8,777.0, with the page showing at its center). Test: gg-overlap's extras gone and 153.6,374.8 within 0.6 px
 (fails without the move).
+
+#### A flag for dots showing the page inside them: measured, not added (2026-11-27)
+
+The missing ink relocations read (Σ (1 − t / t_dot) within r − 0.5 px) was tried as a flag after the fit, over the
+full benchmark's 96 images with opaque dots (12,574 dots, 291 extras). Over 3 × the image's median and 1 px it marks
+336 dots, 41 of them extras; over 2 × and 0.5 px, 866 with 55; over 4 × and 1.5 px, 251 with 33. The correct dots it
+marks come from about 20 images where the page or other ink does show inside dots: song-cents' white outlines
+crossing overlapped dots (66), aerobic's dots of other colors on top (35), gg-loess's and gg-colors' bands and other
+families, autocor1's white strokes. The images it was meant for come out clean after relocation. Not added: a
+relocation is judged by the objective, a flag by nothing.
+
+#### Flag dot: flagged dots marked reviewed (2026-11-27)
+
+A sixth edit button, Flag dot (key F; first named OK dot, but OK said too much), for flagged dots the user has checked and keeps: a click marks the dot under
+it, of any family, reviewed (`reviewed: true`); a second click unmarks it; each is one undo step. A reviewed dot is
+drawn as unflagged (no red, no magenta ring, out of its close group) and left out of the Flagged count, which says
+how many are reviewed ("92 (hidden 84, weak 3, close 10); 1 reviewed"; the Found dots summary "667, 92 flagged,
+1 reviewed"). Its flags stay, for display honesty: the hover line reads "(reviewed: weak, hidden)", and the table and
+CSV keep the flags column and add `reviewed` (yes). Refits of nearby dots (Add, Remove) keep the mark; a new Find
+dots clears it. Checked in the app on beeswarm-boxplot: mark, hover line, undo, mark again, an Add beside it (the
+mark kept through the refit), the copied table; no console errors.

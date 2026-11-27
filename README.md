@@ -31,7 +31,8 @@ turn positions into data values.
 2. Check the dot families it found, one per dot color. Add a missing one with *Add family by color*.
 3. Find dots, then review: hover a dot for its numbers; flagged dots are red, possible duplicates have a magenta
    double ring, and the Residual view shows what the dots don't explain.
-4. Fix with Add, Remove and Move (Option-click edits without refitting the dots nearby).
+4. Fix with Add, Remove and Move (Option-click edits without refitting the dots nearby), and mark a flagged dot
+   you have checked reviewed with Flag dot.
 5. Check the tick values read from the labels, or type them where none were read, for data units; then Copy
    table or Save CSV.
 
