@@ -69,16 +69,6 @@
                 <label class="check" title="For dots found twice: one dot fitted as two, or an extra dot beside a real one on a line or text of the dots' color. A dot that overlaps another of its color must then explain much more of the image to be kept (more the more they overlap); dots far enough apart to show apart are unaffected. Real ties and tightly packed dots may be counted as one. Applies to the next Find dots."><input type="checkbox" id="fewer-doubles"> Fewer doubles</label>
                 <div id="family-detail">
                     <h3 id="family-title"></h3>
-                    <div class="levels-row">
-                        <span class="label" title="The color of one dot, and of 2, 3, … dots stacked: translucent dots darken where they overlap. Dashed ones are extrapolated or inferred, not seen.">Overlap levels</span>
-                        <div id="levels" class="levels" aria-label="Overlap level colors"></div>
-                    </div>
-                    <dl>
-                        <dt>Full color</dt><dd id="style-c">–</dd>
-                        <dt data-levels>Levels</dt><dd id="style-levels" data-levels>–</dd>
-                        <dt data-levels>Fit</dt><dd id="style-fit" data-levels title="Geometric model of the levels, 0–255 units">–</dd>
-                        <dt>Isolated</dt><dd id="style-isolated" title="Whole single dots used for the radius and blur">–</dd>
-                    </dl>
                     <div class="params">
                         <label>Radius <input type="number" id="style-radius" step="0.01" min="0.5"> px</label>
                         <label>Alpha <input type="number" id="style-alpha" step="0.001" min="0.01" max="1"></label>
@@ -91,20 +81,33 @@
                         <button type="button" id="outline-pick" aria-pressed="false" title="Click the darkest part of a dot's outline in the image (Esc cancels)">Pick</button>
                         <label>Width <input type="number" id="outline-width" step="0.25" min="0.25"> px</label>
                     </div>
-                    <div id="style-notes" class="notes" role="status"></div>
-                    <details id="sample" class="sub">
-                        <summary>Isolated dot vs. model</summary>
-                        <div class="row">
-                            <canvas id="sample-real"></canvas>
-                            <canvas id="sample-model"></canvas>
-                            <canvas id="sample-diff"></canvas>
+                    <details id="family-info" class="sub">
+                        <summary>Details <span id="family-info-note" class="summary-note"></span></summary>
+                        <div class="levels-row">
+                            <span class="label" title="The color of one dot, and of 2, 3, … dots stacked: translucent dots darken where they overlap. Dashed ones are extrapolated or inferred, not seen.">Overlap levels</span>
+                            <div id="levels" class="levels" aria-label="Overlap level colors"></div>
                         </div>
-                        <p id="sample-caption" class="fine"></p>
+                        <dl>
+                            <dt>Full color</dt><dd id="style-c">–</dd>
+                            <dt data-levels>Levels</dt><dd id="style-levels" data-levels>–</dd>
+                            <dt data-levels>Fit</dt><dd id="style-fit" data-levels title="Geometric model of the levels, 0–255 units">–</dd>
+                            <dt>Isolated</dt><dd id="style-isolated" title="Whole single dots used for the radius and blur">–</dd>
+                        </dl>
+                        <div id="style-notes" class="notes" role="status"></div>
+                        <details id="sample" class="sub">
+                            <summary>Isolated dot vs. model</summary>
+                            <div class="row">
+                                <canvas id="sample-real"></canvas>
+                                <canvas id="sample-model"></canvas>
+                                <canvas id="sample-diff"></canvas>
+                            </div>
+                            <p id="sample-caption" class="fine"></p>
+                        </details>
                     </details>
                 </div>
             </details>
-            <details id="sec-dots" open>
-                <summary>Dots</summary>
+            <details id="sec-found">
+                <summary>Found dots <span id="found-summary" class="summary-note"></span></summary>
                 <dl>
                     <dt>Dots</dt><dd id="fit-count">–</dd>
                     <dt>Flagged</dt><dd id="fit-flags" title="weak: removing it costs little; hidden: under half visible; deep: in a stack deeper than the measured levels; close: another dot of its family within 0.35 radius, drawn with a double ring (translucent dots show a real pair by their darker overlap; opaque ones can't, so check it isn't one dot counted twice)">–</dd>

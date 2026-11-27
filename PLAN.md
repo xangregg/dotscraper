@@ -1406,8 +1406,13 @@ failures (radius unknown, no family, category ticks not paired).
   (the stage, dot count and elapsed time, ticking between the fit's messages; the bar is indeterminate until the
   first stage), the edit modes, and Copy CSV and Save truth. Above the image: the layer choice, Dots and Axes
   toggles, zoom. Under it: a readout of the pixel and dot under the pointer and the layer's legend.
-- The panel is 360 px wide, in collapsible sections that remember their state: Dot families and Dots open; Axes
-  (with a summary line), Mask and Image closed.
+- The panel is 360 px wide, in collapsible sections that remember their state: Dot families open; Found dots,
+  Axes, Mask and Image closed, each with a summary line (Found dots: the count and how many are flagged). Found
+  dots was Dots, open by default; it was renamed (a new id, so a remembered open state doesn't carry over) and
+  closed when many families made the panel a wall of text.
+- Under the selected family, only what can be changed shows: radius, α, blur and Reset, and the outline row.
+  Overlap levels, full color, levels, fit, isolated count, the notes and the isolated dot vs. model are in a
+  **Details** subsection, closed by default, whose summary says how many notes it holds.
 - Dot families are a list with a checkbox each (Find dots fits the checked ones), a swatch (the fill colors side
   by side, or a hatch when the dots vary in color), and their dot counts once fitted. Selecting one shows its
   style and overlays and no longer throws the fit away (it did). **+ Add family by color** adds a picked color as a

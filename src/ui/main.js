@@ -844,7 +844,10 @@ function renderStylePanel() {
     const stroke = style?.alpha >= 1 && !est.outlineMask ? strokeNow() : null;
     const strokeNote = stroke?.mask ? [`The dots have a stroke in the page’s color, about ${stroke.width.toFixed(1)} px wide (read where a whole dot lies over another). `
         + 'It cuts the dots under it; the fit ignores its pixels there (the Residual view shows them as masked).'] : [];
-    $('style-notes').replaceChildren(...[...est.notes, ...strokeNote].map(n => Object.assign(document.createElement('p'), { textContent: n })));
+    const notes = [...est.notes, ...strokeNote];
+    $('style-notes').replaceChildren(...notes.map(n => Object.assign(document.createElement('p'), { textContent: n })));
+    // the notes are inside the closed Details: say on its summary that there are some
+    $('family-info-note').textContent = notes.length ? `${notes.length} note${notes.length > 1 ? 's' : ''}` : '';
     renderSample();
 }
 
@@ -1168,6 +1171,7 @@ function renderDotsSection() {
         for (const id of ['fit-count', 'fit-flags', 'fit-radius', 'fit-sigma'])
             $(id).textContent = '–';
         $('fit-note').textContent = '';
+        $('found-summary').textContent = '';
         return;
     }
     const counts = {};
@@ -1177,6 +1181,7 @@ function renderDotsSection() {
     }
     const flagged = fit.dots.filter(d => d.flags.length).length;
     const many = fit.families.length > 1;
+    $('found-summary').textContent = `${fit.dots.length}${flagged ? `, ${flagged} flagged` : ''}`;
     $('fit-count').textContent = many ? `${fit.dots.length} (${fit.families.map(f => f.dots.length).join(' + ')})` : String(fit.dots.length);
     $('fit-flags').textContent = flagged ? `${flagged} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ')})` : '0';
     $('fit-radius').textContent = `${fit.families.map(f => f.radius.toFixed(2)).join(', ')} px`;
