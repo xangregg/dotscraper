@@ -176,7 +176,7 @@ export function createView({ stage, canvas, onHover, onClick, onZoom }) {
         const paths = marks.dots.map((d, i) => {
             const line = markLine(d);
             const c = Math.max(MARK_CROSS, 2 * line) / scale;
-            // a dot reviewed with Flag dot is drawn as unflagged
+            // a dot reviewed with Flag is drawn as unflagged
             const otherFlags = !d.reviewed && d.flags?.some(f => f !== 'close');
             const color = i === marks.selected ? MARK_COLORS.selected
                 : isClose(d) ? MARK_COLORS.close : (otherFlags ? MARK_COLORS.flagged : MARK_COLORS.ok);

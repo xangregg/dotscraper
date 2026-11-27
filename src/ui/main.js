@@ -1459,7 +1459,7 @@ function chooseMoving(x, y) {
         setStatus(`Chosen: dot at ${f.dots[i].x.toFixed(2)}, ${f.dots[i].y.toFixed(2)} px. Arrow keys move it.`);
 }
 
-// Flag dot (flag review): mark the dot nearest the click, of any family, reviewed (checked and kept), or flag it
+// Flag (flag review): mark the dot nearest the click, of any family, reviewed (checked and kept), or flag it
 // again. Its flags stay, for the hover line and the table; the view and the counts treat it as unflagged. One undo
 // step each.
 function toggleReviewed(x, y) {
@@ -1541,7 +1541,7 @@ function dotsTable() {
         head.push('x', 'y', 'se_noise_x', 'se_noise_y');
     const fills = state.fit.dots.some(d => d.fill !== undefined);
     // by_hand: added (clicked, then refined), moved (nudged) or placed (Option-click: exactly as clicked);
-    // reviewed: checked and kept with Flag dot (its flags are the fit's, kept)
+    // reviewed: checked and kept with Flag (its flags are the fit's, kept)
     head.push('visible', 'depth', 'flags', 'by_hand', 'reviewed');
     if (fills)
         head.push('fill');
