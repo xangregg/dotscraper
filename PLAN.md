@@ -5279,3 +5279,19 @@ Result: label benchmark 1504 → 1505 of 1610 read right, axes solved 244 → 24
 changes (bench-r2 130 → 131 of 131, 30 of 30 axes). The app reads 80, 60, 40. Tests: a synthetic tall unread glyph
 6 px (0.43 H) before "60" is left out, 4 px before it stays ("?60"); gg-ellipse reads its three, and gg-gray-small
 never reads "0" (fails with the trim off, and with 0.3 H and once the spacing).
+
+**bench-r's last unread axes: a second reading** (2026-11-27). Three axes read no scale, each for glyphs just short of
+a threshold. gg-gray-small (ggplot2's gray theme at 72 dpi, digits 6 px tall in gray30): its x "50"'s 5 scores 0.677
+and its y "10"'s 0 0.699, under `DIGIT_MIN_SCORE` (0.7), leaving two of three and two of four read; the y "40"'s 4
+scores 0.579. times-r72: "8 × 10³" with a typed superscript 4 px tall over 9 px digits, 0.44 H, under
+`RAISED_MIN_HEIGHT` (0.45), so no exponent, and its 3 scores 0.661. Now an axis whose labels fit no scale is read
+again with `LOOSE_DIGIT_MIN_SCORE` 0.65 (letters reach 0.6) and `LOOSE_RAISED_MIN_HEIGHT` 0.4, and that reading stands
+only when every label it reads fits its scale (at least `SCALE_MIN_AGREE`): a misread digit would have to land on
+the scale. Only axes with no scale are read again, so no axis that solved changes.
+
+Result: label benchmark 1505 → 1511 of 1610 read right, axes solved 245 → 248 of 265, 0 wrong; bench-r 52 of 52
+axes (gg-gray-small x 25, 50, 75; its y 30, 20, 10 read and 40 the scale's, marked so in the app; times-r72 y 8×10³
+to 2×10³). No other row changes: the unread Nature and PLOS axes stay unread. The guard (every label read must fit)
+changes nothing on the benchmark either: no axis there has a looser reading with a label off its scale, so it is a
+precaution no image tests yet. Test: the three axes read as above (fails with the strict thresholds for the second
+reading).

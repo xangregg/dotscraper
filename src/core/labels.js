@@ -71,6 +71,13 @@ const MINUS_CENTER = [0.3, 0.8];
 // that their axis's scale confirms (2026-11-21), the least sure digit scores 0.72 and all but that one 0.82 or more;
 // letters reach 0.6
 const DIGIT_MIN_SCORE = 0.7;
+// A second reading for an axis whose labels fit no scale (readAxisLabels): small type and small exponents fall just
+// short of DIGIT_MIN_SCORE and RAISED_MIN_HEIGHT (bench-r gg-gray-small, 6 px digits at 72 dpi: a "5" scores 0.677
+// and a "0" 0.699; times-r72's typed "³" is 4 px over 9 px digits, 0.44 H, and scores 0.661). Read again with these,
+// the reading stands only when every label read fits one scale, SCALE_MIN_AGREE of them at least: a digit misread
+// would have to land on the scale. (Letters reach 0.6.)
+const LOOSE_DIGIT_MIN_SCORE = 0.65;
+const LOOSE_RAISED_MIN_HEIGHT = 0.4;
 // Scientific notation, "1e+05" as R writes it and "2 × 10³": its signs (e, E, +, ×, and the x typed for ×) are told
 // by templates as digits are, a glyph being the sign it is most like when that is at least SIGN_MIN_SCORE and more
 // than its likeness to any digit. "e", "+" and "×" are lower than digits, at most SIGN_MAX_HEIGHT × H and at least
@@ -143,6 +150,7 @@ const MINOR_MAX_TOL = 0.02;
  * @property {number} top      px, the first row of the digits' line
  * @property {number} bottom   px, the row after its last
  * @property {Cover} cover     the coverage the glyphs were cut from
+ * @property {boolean} loose   found for the second reading (LOOSE_DIGIT_MIN_SCORE), and to be read so
  */
 
 /**
@@ -155,6 +163,7 @@ const MINOR_MAX_TOL = 0.02;
  *   box's middle when not given
  * @property {number[]} [limits]  [x0, x1), px: columns not to look beyond (the axis and its tick marks)
  * @property {number[]} [line]    [top, bottom), px: the digits' rows, when known from the axis's other labels
+ * @property {boolean} [loose]    the second reading's thresholds (LOOSE_DIGIT_MIN_SCORE, LOOSE_RAISED_MIN_HEIGHT)
  */
 
 /**
@@ -530,10 +539,10 @@ export function labelGlyphs(image, backgrounds, box, opts = {}) {
     while (number.length > 1 && number[number.length - 1].y0 >= bandStart && number[number.length - 1].y1 <= bandEnd)
         number = number.slice(0, -1);
     const after = raisedFrom(number[number.length - 1].x1);
-    const exponent = after.some(g => g.y1 - g.y0 >= RAISED_MIN_HEIGHT * H);
+    const exponent = after.some(g => g.y1 - g.y0 >= (opts.loose ? LOOSE_RAISED_MIN_HEIGHT : RAISED_MIN_HEIGHT) * H);
     return {
         glyphs: (exponent ? number : nearest).flatMap(splitWide).flatMap(cutMinus).map(inImage), raised: exponent ? after.map(inImage) : [],
-        height: H, top: top + rect[1], bottom: bottom + rect[1], cover,
+        height: H, top: top + rect[1], bottom: bottom + rect[1], cover, loose: !!opts.loose,
     };
 }
 
@@ -671,7 +680,8 @@ function glyphSign(cover, g, H) {
  * The glyphs of one line as text: each by its kind, a digit or a sign of scientific notation by its template.
  *
  * @param {Cover} cover
- * @param {{glyphs: Glyph[], height: number, top: number}} line  the glyphs, with their digits' height and top, px
+ * @param {{glyphs: Glyph[], height: number, top: number, loose?: boolean}} line  the glyphs, with their digits' height
+ *   and top, px; loose: digits from LOOSE_DIGIT_MIN_SCORE
  * @returns {{text: string, score: number}}  score: the least sure digit's or sign's correlation with its template
  */
 function lineText(cover, line) {
@@ -694,7 +704,7 @@ function lineText(cover, line) {
             text += '?';
             return;
         }
-        text += d.score >= DIGIT_MIN_SCORE ? d.digit : '?';
+        text += d.score >= (line.loose ? LOOSE_DIGIT_MIN_SCORE : DIGIT_MIN_SCORE) ? d.digit : '?';
         score = Math.min(score, d.score);
     });
     return { text, score };
@@ -711,13 +721,13 @@ function glyphsRead(found, signs = [0, 0]) {
     const glyphs = found.glyphs.slice(signs[0], found.glyphs.length - signs[1]);
     const all = [...glyphs, ...found.raised];
     const box = [Math.min(...all.map(g => g.x0)), Math.min(...all.map(g => g.y0)), Math.max(...all.map(g => g.x1)), Math.max(...all.map(g => g.y1))];
-    const number = lineText(found.cover, { glyphs, height: found.height, top: found.top });
+    const number = lineText(found.cover, { glyphs, height: found.height, top: found.top, loose: found.loose });
     if (found.raised.length) {
         // the exponent is a line of its own, of smaller digits: an integer, the power of an integer
         const tallest = Math.max(...found.raised.map(g => g.y1 - g.y0));
         const tall = found.raised.filter(g => g.y1 - g.y0 >= DIGIT_MIN_HEIGHT * tallest);
         const top = Math.min(...tall.map(g => g.y0));
-        const power = lineText(found.cover, { glyphs: found.raised, height: Math.max(...tall.map(g => g.y1)) - top, top });
+        const power = lineText(found.cover, { glyphs: found.raised, height: Math.max(...tall.map(g => g.y1)) - top, top, loose: found.loose });
         const base = /^(-?)(\d+)$/.exec(number.text);
         // … or of ten, times a number before it: "2×10" with a raised 3
         const times = /^(-?)(\d+\.?\d*|\.\d+)×10$/.exec(number.text);
@@ -983,16 +993,18 @@ export function labelOptions(image, backgrounds, axis, which) {
 }
 
 /**
- * Read an axis's tick labels.
+ * Read an axis's tick labels. When they fit no scale, they are read again with looser thresholds
+ * (LOOSE_DIGIT_MIN_SCORE), and that reading stands only if every label it reads fits its scale.
  *
  * @param {RgbaImage} image
  * @param {number[][]} backgrounds  0–255, the page's colors
  * @param {import('./axes.js').Axis} axis
  * @param {'x'|'y'} which  the axis it is
+ * @param {boolean} [loose]  this is the second reading
  * @returns {AxisReading}
  */
-export function readAxisLabels(image, backgrounds, axis, which) {
-    const options = labelOptions(image, backgrounds, axis, which);
+export function readAxisLabels(image, backgrounds, axis, which, loose = false) {
+    const options = labelOptions(image, backgrounds, axis, which).map(o => o && (loose ? { ...o, loose } : o));
     const founds = axis.ticks.map((t, i) => {
         const found = t.label && labelGlyphs(image, backgrounds, t.label, options[i]);
         return found && found.height > 0 ? found : null;
@@ -1006,7 +1018,12 @@ export function readAxisLabels(image, backgrounds, axis, which) {
         const trimmed = first[i]?.value === null && !signs[0] && !signs[1] ? withoutFarWord(found, options[i]?.near, spacing) : null;
         return trimmed ? glyphsRead(trimmed) : first[i];
     });
-    return { read, scale: consistentValues(axis.ticks.map((t, i) => ({ pos: t.pos, value: read[i]?.value ?? null }))) };
+    const scale = consistentValues(axis.ticks.map((t, i) => ({ pos: t.pos, value: read[i]?.value ?? null })));
+    if (scale || loose)
+        return { read, scale };
+    const second = readAxisLabels(image, backgrounds, axis, which, true);
+    const values = second.read.filter(r => r && r.value !== null).length;
+    return second.scale && second.scale.count === values ? second : { read, scale };
 }
 
 // px, the widest gap between a label's glyphs (0 for one glyph)
@@ -1031,7 +1048,7 @@ function withoutFarWord(found, near, spacing) {
     if (!startFar && near > g[0].x0)
         return null;
     // one character per glyph
-    const text = lineText(found.cover, { glyphs: g, height: found.height, top: found.top }).text;
+    const text = lineText(found.cover, { glyphs: g, height: found.height, top: found.top, loose: found.loose }).text;
     if (text.length !== g.length)
         return null;
     const far = startFar ? [...text] : [...text].reverse();

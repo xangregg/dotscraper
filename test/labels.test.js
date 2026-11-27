@@ -943,8 +943,8 @@ test('bench-r: R\'s labels in scientific notation, with "e" and with "×", down 
     // at 72 dpi two of plotmath's exponents touch the 0 under them, and are cut from it
     assert.deepEqual(read('times-r72', 'x').texts, ['0', '2×10^5', '4×10^5', '6×10^5']);
     assert.deepEqual(read('times-log', 'x').scale.values, [300, 1000, 3000, 10000]);
-    // … and the typed "³" is under an exponent's height, so the labels stay unread: no scale, no wrong value
-    assert.equal(read('times-r72', 'y').scale, null);
+    // … and the typed "³" is under an exponent's height (0.44 H), read by the second reading that the scale confirms
+    assert.deepEqual(read('times-r72', 'y').scale?.values, [8000, 6000, 4000, 2000]);
     // a point one pixel square in the digits' last row: the line the labels share, placed by each tick's position,
     // was a row higher at two of the six ticks and left it out ("000025")
     assert.deepEqual(read('small-e-r72', 'y').texts, ['0.00025', '0.00020', '0.00015', '0.00010', '0.00005', '0.00000']);
@@ -1022,4 +1022,20 @@ test('regression: gg-ellipse\'s turned "y" beside "60" is left out, and gg-gray-
     const small = readImage(BENCH_R + 'gg-gray-small.png');
     const r = readTickLabels(small, detectAxes(small));
     assert.ok(!r.y.read.some(x => x?.text === '0'), `y read ${r.y.read.map(x => x?.text)}`);
+});
+
+test('regression: labels just short of the thresholds are read again, and stand when all fit one scale (bench-r gg-gray-small, times-r72)', { skip: !(existsSync(BENCH_R + 'gg-gray-small.png') && existsSync(BENCH_R + 'times-r72.png')) && 'bench-r absent' }, () => {
+    // 6 px digits at 72 dpi: a "5" scores 0.677 and a "0" 0.699, below DIGIT_MIN_SCORE (0.7). Before, no scale on
+    // either axis; the "4" (0.579) stays unread and takes the scale's value
+    const small = readImage(BENCH_R + 'gg-gray-small.png');
+    const s = readTickLabels(small, detectAxes(small));
+    assert.deepEqual(s.x.read.map(r => r?.text), ['25', '50', '75']);
+    assert.deepEqual(s.x.scale?.values, [25, 50, 75]);
+    assert.deepEqual(s.y.read.map(r => r?.text), ['?0', '30', '20', '10']);
+    assert.deepEqual(s.y.scale?.values, [40, 30, 20, 10]);
+    // a typed "³" 4 px over 9 px digits (0.44 H, under RAISED_MIN_HEIGHT 0.45) and scoring 0.661: before, "8×10?"
+    const times = readImage(BENCH_R + 'times-r72.png');
+    const t = readTickLabels(times, detectAxes(times));
+    assert.deepEqual(t.y.read.map(r => r?.text), ['8×10^3', '6×10^3', '4×10^3', '2×10^3']);
+    assert.deepEqual(t.y.scale?.values, [8000, 6000, 4000, 2000]);
 });
