@@ -7,6 +7,12 @@
     <meta name="description" content="Extract dot locations from images of graphs, including overlapping translucent dots, in the browser.">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
+    <!-- Privacy-friendly analytics by Plausible -->
+    <script async src="https://plausible.io/js/pa-fZO4bBlZ8F0ix4bzcGuiI.js"></script>
+    <script>
+        window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+        plausible.init()
+    </script>
     <script type="module" src="src/ui/main.js"></script>
 </head>
 <body>
@@ -216,7 +222,9 @@
         </dl>
 
         <h3>Privacy</h3>
-        <p>Everything runs in your browser. Images are never uploaded; nothing leaves your computer.</p>
+        <p>Everything runs in your browser. Images are never uploaded; they never leave your computer. Visits are
+            counted with <a href="https://plausible.io/privacy-focused-web-analytics">Plausible</a>, which uses no
+            cookies and collects no personal data.</p>
 
         <p class="fine">Source, documentation and issues: <a href="https://github.com/xangregg/dotscraper">github.com/xangregg/dotscraper</a>.
             Open source under the BSD Zero Clause License. The code was largely written with

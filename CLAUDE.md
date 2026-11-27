@@ -29,7 +29,7 @@ work is completed, and record measured results there (what was tried, the number
 ## Layout (see PLAN.md §7 for what's planned)
 
 ```
-index.html              layout, loads src/ui/main.js as a module
+index.html              layout, loads src/ui/main.js as a module, and Plausible's analytics (ignores localhost)
 styles.css
 src/core/               pure algorithms: image.js (hash, pixel access, color tests and distance), render.js (forward model), style.js (dot
                         style: the families of an image and one family's style, with the band and box rules), scan.js
