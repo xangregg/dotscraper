@@ -253,7 +253,7 @@ bench-r: R renderings, 40 dots (scientific notation, ggplot2's gray theme)
 | log-e | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.02 | 0 | 4.1 | 1.4 | Base R at 96 dpi, both axes log, "1e-03" to "1e+06". |
 | log-e-default | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.07 | 0 | 3.1 | 1.1 | The same at R's default device size (72 dpi, r 3.1). |
 | log-e-hi | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.06 | 0 | 7.2 | 2.6 | The same at 170 dpi. |
-| log-e-turned | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.07 | 0 | 3.1 | 0.9 | R's default: the y labels turned along the axis, which are not read. The ticks are found, and the truth is placed through them. |
+| log-e-turned | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.07 | 0 | 3.1 | 0.9 | R's default: the y labels turned along the axis, read turned (8 of 8). |
 | small-e-r120 | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.07 | 0 | 5.1 | 2.2 | Base R at 120 dpi: p-values on a log x axis, "1e-07" to "1e-03". |
 | small-e-r220 | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.04 | 0 | 9.4 | 4.5 | The same at 220 dpi. |
 | small-e-r72 | data | exact | 40 | 40 | 1.000 | 1.000 | 0 | 0.11 | 0 | 3.1 | 0.8 | The same at 72 dpi (r 3.1). |
