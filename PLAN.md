@@ -5265,3 +5265,17 @@ Full benchmark: only this row changes (mpo, whose gray boxes are why `labelByCol
 Tests: four dots centered on a synthetic band's edge are black in their cores on both sides once it is divided out
 (the side under it left at 54 without the point labels), and the gg-loess test now asks for P and R ≥ 0.98 (114
 found, R 0.925, without them).
+
+**gg-ellipse's y labels** (2026-11-27). The y axis read no scale: "80", "??60" and "40". ggplot2 sets the axis title
+"y", turned, beside the middle label, its last column 4 px (0.4 H, digits 10 px tall) before the "6": nearer than
+`WORD_GAP` (0.45 H), so it joined the label as two unread glyphs, and with three ticks the two left can't make a
+scale. Now `readAxisLabels` reads such a label again without the unread glyphs at its end away from the tick, when a
+gap of at least `TITLE_MIN_GAP` (0.35 H) and `TITLE_MIN_SPACINGS` (2) × the widest gap between glyphs in the axis's
+labels that read sets them apart; the scale must still agree. Tried first with 0.3 H and only a gap wider than those
+within the label: bench-r gg-gray-small's "40", 6 px tall, its "4" unread 2 px (0.33 H) before the "0" where the
+axis's other digits are 1 px apart, became "0" (no scale, so nothing accepted, but a misreading all the same).
+
+Result: label benchmark 1504 → 1505 of 1610 read right, axes solved 244 → 245, still 0 wrong; only gg-ellipse's y
+changes (bench-r2 130 → 131 of 131, 30 of 30 axes). The app reads 80, 60, 40. Tests: a synthetic tall unread glyph
+6 px (0.43 H) before "60" is left out, 4 px before it stays ("?60"); gg-ellipse reads its three, and gg-gray-small
+never reads "0" (fails with the trim off, and with 0.3 H and once the spacing).

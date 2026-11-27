@@ -26,6 +26,15 @@ const GLYPH_INK = 0.3; // 0–1 of the label's darkest: a row or column with a p
 // Glyphs of one label are closer than this × the digits' height (Helvetica: digits 0.08–0.15 apart, 0.3 across a
 // decimal point, a minus sign 0.2 before its number); the next word, a rotated title or a tick mark is farther
 const WORD_GAP = 0.45;
+// A word nearer than WORD_GAP: the axis title beside a y axis's middle label (gg-ellipse: the turned "y" 0.4 H
+// before "60", read "??60"; its digits 0.1 H apart). Unread glyphs at a label's end away from its tick are left out
+// when a gap of at least TITLE_MIN_GAP × H, and TITLE_MIN_SPACINGS × the widest gap between glyphs in the axis's
+// labels that read (and in the glyphs kept), sets them apart (readAxisLabels); the axis's scale must still agree.
+// Digits are 0.08–0.15 apart, 0.3 across a decimal point, a minus sign 0.2 before its number. A misread digit must
+// not go: bench-r gg-gray-small's "40", 6 px tall, its "4" unread 2 px (0.33 H) before the "0", where the axis's
+// other digits are 1 px apart, was left as "0" at 0.3 H and once the spacing.
+const TITLE_MIN_GAP = 0.35;
+const TITLE_MIN_SPACINGS = 2;
 // Small digits touch: at 13 px a "4" and a "0" share a column of gray. A glyph wider than SPLIT_MIN_WIDTH × H and
 // not flat (a dash) is cut into round(width / DIGIT_PITCH × H) at its lightest columns, looked for within SPLIT_SEARCH
 // × H of even cuts (Helvetica's digits: ink 0.65–0.75 H wide, 0.77 H from one to the next)
@@ -989,8 +998,50 @@ export function readAxisLabels(image, backgrounds, axis, which) {
         return found && found.height > 0 ? found : null;
     });
     const signs = unitSigns(founds.filter(Boolean));
-    const read = founds.map(found => found && glyphsRead(found, signs));
+    const first = founds.map(found => found && glyphsRead(found, signs));
+    // the widest gap between glyphs in the labels that read: how this axis's digits are spaced
+    const spacing = Math.max(0, ...founds.filter((found, i) => first[i]?.value !== null && found).map(innerGap));
+    const read = founds.map((found, i) => {
+        // (with unit signs, a label's ends are theirs)
+        const trimmed = first[i]?.value === null && !signs[0] && !signs[1] ? withoutFarWord(found, options[i]?.near, spacing) : null;
+        return trimmed ? glyphsRead(trimmed) : first[i];
+    });
     return { read, scale: consistentValues(axis.ticks.map((t, i) => ({ pos: t.pos, value: read[i]?.value ?? null }))) };
+}
+
+// px, the widest gap between a label's glyphs (0 for one glyph)
+function innerGap({ glyphs }) {
+    return Math.max(0, ...glyphs.slice(1).map((g, j) => g.x0 - glyphs[j].x1));
+}
+
+/**
+ * A label without the unread glyphs at its end away from the tick, when a gap sets them apart as a word of their
+ * own (TITLE_MIN_GAP, TITLE_MIN_SPACINGS): an axis title too close to a label to be cut off at WORD_GAP.
+ *
+ * @param {FoundLabel} found
+ * @param {number} [near]  px, where the tick is along the label's line: beyond one end of the label, or no end is far
+ * @param {number} spacing  px, the widest gap between glyphs in the axis's labels that read
+ * @returns {FoundLabel|null}  null when there is nothing to leave out, or no gap that sets it apart
+ */
+function withoutFarWord(found, near, spacing) {
+    const g = found.glyphs;
+    if (near === undefined || g.length < 2 || found.raised.length)
+        return null;
+    const startFar = near >= g[g.length - 1].x1;
+    if (!startFar && near > g[0].x0)
+        return null;
+    // one character per glyph
+    const text = lineText(found.cover, { glyphs: g, height: found.height, top: found.top }).text;
+    if (text.length !== g.length)
+        return null;
+    const far = startFar ? [...text] : [...text].reverse();
+    const k = far.findIndex(ch => ch !== '?');
+    if (k <= 0)
+        return null;
+    const keep = startFar ? g.slice(k) : g.slice(0, g.length - k);
+    const gap = startFar ? keep[0].x0 - g[k - 1].x1 : g[g.length - k].x0 - keep[keep.length - 1].x1;
+    const apart = Math.max(TITLE_MIN_GAP * found.height, TITLE_MIN_SPACINGS * Math.max(spacing, innerGap({ glyphs: keep })));
+    return gap >= apart ? { ...found, glyphs: keep } : null;
 }
 
 /**

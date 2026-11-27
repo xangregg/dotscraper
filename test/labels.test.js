@@ -990,3 +990,36 @@ test('regression: a y axis\'s labels written along it are read turned (funnel, b
     assert.equal(r.y.scale.type, 'log');
     assert.deepEqual(r.y.scale.values, [1e6, 1e5, 1e4, 1e3, 100, 10, 1, 0.1]);
 });
+
+test('an axis title closer than a word gap is left out of its label: a tall unread glyph before "60"', () => {
+    // the title stands TITLE_GAP px before the middle label, nearer than WORD_GAP (0.45 × 14 = 6.3 px) but more than
+    // twice the digits' spacing (2 px): before, "?60", no scale. 4 px away it could be a digit of the label, and stays
+    const titled = gap => labeled({
+        xLabels: ['0', '50', '100'], yLabels: ['40', '60', '80'], height: 14,
+        before: image => {
+            const probe = drawText(blank(200, 40), '60', 0, 10, 14);
+            drawText(image, '$', 64 - (probe[2] - probe[0]) - gap, 310 - 135 - 7, 14, { right: true });
+        },
+    }).image;
+    const apart = axisValues(titled(6), 'y');
+    assert.deepEqual(apart.texts, ['80', '60', '40']);
+    assert.deepEqual(apart.scale?.values, [80, 60, 40]);
+    const near = axisValues(titled(4), 'y');
+    assert.equal(near.texts[1], '?60');
+    assert.equal(near.scale, null);
+});
+
+const BENCH_R2 = new URL('../bench-r2/', import.meta.url).pathname;
+
+test('regression: gg-ellipse\'s turned "y" beside "60" is left out, and gg-gray-small\'s misread "4" stays', { skip: !(existsSync(BENCH_R2 + 'gg-ellipse.png') && existsSync(BENCH_R + 'gg-gray-small.png')) && 'bench-r2 or bench-r absent' }, () => {
+    // the title 4 px (0.4 H) before "60", its digits 1 px apart: before, "??60" and no y scale
+    const ellipse = readImage(BENCH_R2 + 'gg-ellipse.png');
+    const { y } = readTickLabels(ellipse, detectAxes(ellipse));
+    assert.deepEqual(y.read.map(r => r?.text), ['80', '60', '40']);
+    assert.deepEqual(y.scale?.values, [80, 60, 40]);
+    // 6 px tall: its "4" unread 2 px before the "0", where the other labels' digits are 1 px apart. Left out, "40"
+    // read as "0"
+    const small = readImage(BENCH_R + 'gg-gray-small.png');
+    const r = readTickLabels(small, detectAxes(small));
+    assert.ok(!r.y.read.some(x => x?.text === '0'), `y read ${r.y.read.map(x => x?.text)}`);
+});
