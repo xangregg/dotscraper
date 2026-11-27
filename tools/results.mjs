@@ -3,7 +3,7 @@
 // writes the tables. The numbers are regenerated each time; the Notes column is hand-written and kept, matched by
 // set, image and kind of truth, so notes can be edited in RESULTS.md directly.
 //
-// Usage: node tools/results.mjs [--seeds n] [--jobs n]   (npm run results; the bench fits 10 images at a time unless
+// Usage: node tools/results.mjs [--seeds n] [--jobs n]   (npm run results; the bench fits 5 images at a time unless
 //        --jobs says otherwise, and the header says how many, since the times are longer than an image's alone)
 //        node tools/results.mjs --from-json bench.json [--out file]   (tables from a saved bench --json run)
 // Run it on the full bench: rows (and their notes) of images a run leaves out are dropped.

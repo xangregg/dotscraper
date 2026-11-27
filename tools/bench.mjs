@@ -9,7 +9,7 @@
 // Usage: node tools/bench.mjs [--seeds n] [--preset name] [--set dir] [--only substring] [--verbose] [--json file]
 //                             [--jobs n] [--fewer-doubles]
 //   --json  also write every row, and every image that fails, as JSON (tools/results.mjs builds RESULTS.md from it)
-//   --jobs  fit n images at a time, in worker threads (default 10, or the machine's cores if fewer; 1 for one at a
+//   --jobs  fit n images at a time, in worker threads (default 5, or the machine's cores if fewer; 1 for one at a
 //           time, in this process). The rows are the same; each image's time is longer than alone, so compare times
 //           only between runs at one job count.
 //   --fewer-doubles  fit with the app's "Fewer doubles" (fit.js fitDots' fewerDoubles)
@@ -36,8 +36,9 @@ const TRUTH_SETS = ['bench1', 'bench2', 'bench3'];
 const CSV_SETS = ['bench-local', 'bench-nature', 'bench-plos', 'bench-pmc', 'bench-r', 'bench-r2'];
 const MATCH_TOL_RADII = 0.5;
 // Images fitted at a time unless --jobs says otherwise. Measured on 12 performance cores, the full bench: 1,115 s one
-// at a time, 269 s at 6, 207 s at 10, where the slowest image (about 2 minutes) begins to set the time.
-const DEFAULT_JOBS = 10;
+// at a time, 269 s at 6, 207 s at 10, where the slowest image (about 2 minutes) begins to set the time. At 10 the
+// process now passes the memory guard's 16 GB (2026-11-27); 5 stays under it and takes about 10 minutes.
+const DEFAULT_JOBS = 5;
 // Jittered truth (a test image's CSV with "with jitter"): the truth is each dot's cell, and a dot matches a cell
 // within this box. Measured on pathogen: x up to about ±1 year (12.2 px; dots reach 0.83 year left of the first
 // year), y ±25 px about rows 0–2.
