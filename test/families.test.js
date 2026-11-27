@@ -393,9 +393,10 @@ test('regression: culicine, pink and teal dots in darker rims over boxes of thei
 
 const R2 = dir('bench-r2');
 
-test('regression: bench-r2 gg-loess, the gray band over the black dots is divided out', { skip: !existsSync(R2 + 'gg-loess.png') && 'bench-r2 absent' }, () => {
+test('regression: bench-r2 gg-loess, the gray band over the black dots is divided out, across its edges too', { skip: !existsSync(R2 + 'gg-loess.png') && 'bench-r2 absent' }, () => {
     // before: the band (192 on the gray panel) was read as black dots under the white page margin, never a layer, and
-    // the dots under it (54) were no level of the family: 87 found for 120, recall 0.717
+    // the dots under it (54) were no level of the family: 87 found for 120, recall 0.717; then the dots across its
+    // edge kept the page's label on their side under it (labelByColor): 114 found, recall 0.925
     const image = readImage(R2 + 'gg-loess.png');
     const { layers } = estimateFamilies(image);
     const over = layers.regions.filter(r => r.mode === 'over');
@@ -403,5 +404,5 @@ test('regression: bench-r2 gg-loess, the gray band over the black dots is divide
     assert.ok(Math.abs(over[0].s - 0.6) <= 0.03, `s ${over[0].s}`);
     const px = truthPixelsByTicks(readTruthCsv(R2 + 'gg-loess.csv'), detectAxes(image));
     const r = groupRow('gg-loess', px.dots, extractAll(image), 0);
-    assert.ok(r.recall >= 0.9 && r.precision >= 0.95, `P ${r.precision} R ${r.recall} (${r.found} found)`);
+    assert.ok(r.recall >= 0.98 && r.precision >= 0.98, `P ${r.precision} R ${r.recall} (${r.found} found)`);
 });

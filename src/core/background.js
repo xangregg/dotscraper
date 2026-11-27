@@ -240,7 +240,7 @@ export function backgroundRegions(image, B, families, flat, radius, opts = {}) {
     if (!stacks.length) {
         regions.forEach((r, i) => {
             if (r.mode === 'over')
-                labelByColor(image, B, r, families, seeds, near, label, sure, i + 1, LABEL_REACH * radius);
+                labelByColor(image, B, r, families, seeds, near, label, sure, i + 1, LABEL_REACH * radius, flat);
         });
     }
     const ownBand = c => families.some(f => f.band && !f.box && colorDistance(f.band, c) <= BAND_COLOR_TOL);
@@ -279,8 +279,12 @@ export function backgroundRegions(image, B, families, flat, radius, opts = {}) {
 // pixels of region k and of the page within `reach` px of a pixel of the region's color (`near`: its strips count,
 // which are no seeds) are labeled again by their colors (LABEL_OFF_LINE); the rest keep their nearest seed's region.
 // `sure` is set where the color says under the layer: such a pixel is wholly under it, even at the region's edge
-// (removeOverlays).
-function labelByColor(image, B, region, families, seeds, near, label, sure, k, reach) {
+// (removeOverlays). Where a family's two lines are one, an opaque family's flat pixels still tell: a dot wholly under
+// the layer is one color, B₂ + s·(c − B), and one beside it c (bench-r2 gg-loess: black dots, 54 under a gray band,
+// everything on the gray line; the band's edge crosses a dot as a line between 0 and 54, and the 54 side of a dot
+// across it took the page's label, 13 to 24 px of the five looked at left undivided: 9 missed, none with this). Flat
+// only: a dot's antialiased rim beside the layer passes through that color too.
+function labelByColor(image, B, region, families, seeds, near, label, sure, k, reach, flat) {
     const { width, height, data } = image;
     const own = new Uint8Array(label.length);
     for (let p = 0; p < label.length; p++)
@@ -288,8 +292,12 @@ function labelByColor(image, B, region, families, seeds, near, label, sure, k, r
     // a family's two lines are parallel, apart by the layer's color's distance from the family's line from B: where
     // they are too close the colors can't tell (mpo: black dots, gray boxes, every color on one line: the boxes'
     // lighter edges went to the page and the dots across them were fitted twice, 56 found for 45)
-    const dirs = families.map(f => unit(sub(f.color, B))).filter(d => offLine(sub(region.color, B), d).perp > LABEL_OFF_LINE);
-    if (!dirs.length)
+    const apart = f => offLine(sub(region.color, B), unit(sub(f.color, B))).perp > LABEL_OFF_LINE;
+    const dirs = families.filter(apart).map(f => unit(sub(f.color, B)));
+    const points = families.filter(f => !apart(f) && f.alpha >= 1)
+        .map(f => ({ own: f.color, under: region.color.map((v, ch) => v + region.s * (f.color[ch] - B[ch])) }))
+        .filter(pt => colorDistance(pt.own, pt.under) > LABEL_OFF_LINE);
+    if (!dirs.length && !points.length)
         return;
     const nearest = nearestTransform(own, width, height);
     // the least distance of an offset from the families' lines, among those it lies along by MODE_MIN_T or more
@@ -304,14 +312,29 @@ function labelByColor(image, B, region, families, seeds, near, label, sure, k, r
         if (Math.hypot(p % width - q % width, Math.floor(p / width) - Math.floor(q / width)) > reach)
             continue;
         const c = [data[4 * p], data[4 * p + 1], data[4 * p + 2]];
-        const page = off(sub(c, B));
-        const under = off(sub(c, region.color));
-        if (under <= ON_LINE_ABS && page > LABEL_OFF_LINE) {
-            label[p] = k;
-            sure[p] = 1;
+        if (dirs.length) {
+            const page = off(sub(c, B));
+            const under = off(sub(c, region.color));
+            if (under <= ON_LINE_ABS && page > LABEL_OFF_LINE) {
+                label[p] = k;
+                sure[p] = 1;
+                continue;
+            }
+            if (page <= ON_LINE_ABS && under > LABEL_OFF_LINE) {
+                label[p] = 0;
+                continue;
+            }
         }
-        else if (page <= ON_LINE_ABS && under > LABEL_OFF_LINE)
-            label[p] = 0;
+        if (!flat[p])
+            continue;
+        for (const pt of points) {
+            if (colorDistance(c, pt.under) <= ON_LINE_ABS) {
+                label[p] = k;
+                sure[p] = 1;
+            }
+            else if (colorDistance(c, pt.own) <= ON_LINE_ABS)
+                label[p] = 0;
+        }
     }
 }
 

@@ -5224,3 +5224,19 @@ its band was never rejected this way. Label benchmark unchanged (it reads no reg
 over black dots in a panel with a white margin is a layer with s 0.6 from the page, and no region from the dots'
 background (fails with `DOT_ON_SHARE` 0 and with `OPAQUE_UNDER_SHARE` 0); gg-loess has one layer, s 0.6, and P ≥ 0.95,
 R ≥ 0.9 (fails with `DOT_ON_SHARE` 0). The bench's `--verbose` now prints the misses and extras of hand-truth images too.
+
+**gg-loess's band edges** (2026-11-26). The 9 dots gg-loess still missed lay across the band's edges. The band is
+over the dots, so its edge crosses a dot as a line, black (0) on one side and 54 on the other. Which side a pixel is
+on comes from its nearest seed, corrected by its color (`labelByColor`) only where the family's line from the page and
+its line from the band are apart; here both are the gray line, so the 54 side of a dot near the edge kept the page's
+label (13 to 24 px of each of the five dots looked at), wasn't divided out, and the fit saw a gray half-dot. Two
+points on one line still differ: an opaque dot wholly under the layer is B₂ + s·(c − B) and one beside it c. Now,
+for an opaque family whose lines are one, a flat pixel within `ON_LINE_ABS` of the first is under the layer (and
+sure, as other colors there), one of the second is the page's. Flat only, as a dot's antialiased rim beside the
+layer passes through the first color too (all pixels, not just flat ones, gave the same 120 on gg-loess).
+
+Result: gg-loess 114 found → 120 for 120, P 0.974 → 1.000, R 0.925 → 1.000, RMSE 0.15 → 0.11 px; the app the same.
+Full benchmark: only this row changes (mpo, whose gray boxes are why `labelByColor` skips such lines, unchanged).
+Tests: four dots centered on a synthetic band's edge are black in their cores on both sides once it is divided out
+(the side under it left at 54 without the point labels), and the gg-loess test now asks for P and R ≥ 0.98 (114
+found, R 0.925, without them).

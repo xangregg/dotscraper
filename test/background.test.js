@@ -326,3 +326,50 @@ test('regression: in a gray theme, a gray band over black dots is a layer, not t
     // told from the dots' own background, a color off the regions found stays the dots' (violin-beeswarm)
     assert.ok(!backgroundRegions(drawn, PANEL, [black], flatMask(drawn), black.radius).regions.some(isBand), 'not from the page');
 });
+
+test('regression: in a gray theme, a black dot across a gray band\'s edge is divided out on its side under the band (gg-loess)', () => {
+    // Everything is on the gray line, so a pixel's direction can't say which side of the edge it is on; the half of a
+    // dot under the band (54 here) took the page's label from its nearest seed and stayed gray. An opaque dot wholly
+    // under the layer is one color, and one beside it another.
+    const W2 = 240;
+    const H2 = 140;
+    const PANEL = [230, 230, 230];
+    const black = { color: [0, 0, 0], alpha: 1, radius: 6 };
+    const band = { color: [153, 153, 153], alpha: 0.4, y0: 50, y1: 100 };
+    const im = solidImage(W2, H2, WHITE);
+    for (let y = 20; y < 120; y++) {
+        for (let x = 30; x < 210; x++)
+            im.data.set(PANEL, 3 * (y * W2 + x));
+    }
+    const model = createDotModel(im, black);
+    // dots across the band's upper edge, and some inside it and above it to vote
+    const across = [60, 100, 140, 180].map(x => ({ x, y: band.y0 }));
+    const at = [...across];
+    for (const x of [50, 80, 110, 140, 170]) {
+        at.push({ x, y: 30 });
+        at.push({ x, y: 75 });
+    }
+    model.addAll(at);
+    const out = model.image;
+    for (let y = band.y0; y < band.y1; y++) {
+        for (let x = 30; x < 210; x++) {
+            for (let ch = 0; ch < 3; ch++)
+                out.data[3 * (y * W2 + x) + ch] = band.color[ch] * band.alpha + out.data[3 * (y * W2 + x) + ch] * (1 - band.alpha);
+        }
+    }
+    const drawn = quantize(out);
+    const layers = backgroundRegions(drawn, PANEL, [black], flatMask(drawn), black.radius, { page: true });
+    assert.ok(layers.regions.some(r => r.mode === 'over'), JSON.stringify(layers.regions.map(r => [r.color, r.mode])));
+    const undone = removeOverlays(drawn, PANEL, layers);
+    // the dots' cores, away from their rims and from the band's edge row: black on both sides once undone
+    let gray = 0;
+    for (const d of across) {
+        for (let y = d.y - 4; y < d.y + 4; y++) {
+            for (let x = d.x - 4; x < d.x + 4; x++) {
+                if (y !== d.y && Math.hypot(x + 0.5 - d.x, y + 0.5 - d.y) <= 4 && undone.data[4 * (y * W2 + x)] > 20)
+                    gray++;
+            }
+        }
+    }
+    assert.equal(gray, 0, 'core pixels of the dots across the edge left gray');
+});
