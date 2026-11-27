@@ -77,10 +77,10 @@
                         <button type="button" id="style-reset" title="Use the estimated values again (outline included)">Reset</button>
                     </div>
                     <div class="params" id="outline-params" hidden>
-                        <label title="Each dot is a fill inside an outline: the outline counts as part of the dot, and an outline nearer another family's fill is that dot's. Changing it measures the opaque families again."><input type="checkbox" id="outline-on"> Outline</label>
-                        <input type="color" id="outline-color" aria-label="Outline color" title="The outline's color. A thin, blurred outline never shows its own, so use the darkest part of a ring (Pick).">
-                        <button type="button" id="outline-pick" aria-pressed="false" title="Click the darkest part of a dot's outline in the image (Esc cancels)">Pick</button>
-                        <label>Width <input type="number" id="outline-width" step="0.25" min="0.25"> px</label>
+                        <label title="Each dot is a fill inside an outline of another color: a ring drawn as part of the dot (R's pch 21, JMP's outlined markers). The dot's radius is the outline's outer edge, and its fill's is Radius − Width. An outline nearer another family's fill is that dot's.&#10;&#10;On when an outline was found. Turn it on when the dots have a ring it missed (dots fitted too small, rings left in the Residual view), or off when it took a plain edge for one. Changing it measures the opaque families again and drops this family's dots (Undo brings them back)."><input type="checkbox" id="outline-on"> Outline</label>
+                        <input type="color" id="outline-color" aria-label="Outline color" title="The outline's color. A thin, blurred outline never shows its own color, only blends of it with the fill and the page, so use the darkest part of a ring: Pick it from the image, or click here to choose one. Unavailable while Outline is off.">
+                        <button type="button" id="outline-pick" aria-pressed="false" title="Click the darkest part of a dot's outline in the image to use its color; this also turns the outline on (Esc cancels).">Pick</button>
+                        <label title="The outline's width in px, measured inward from the dot's edge: the fill's radius is Radius − Width. Estimated with the outline; 1.5 px when it's turned on for a family without one. Zoom in on an isolated dot to see its ring. Unavailable while Outline is off.">Width <input type="number" id="outline-width" step="0.25" min="0.25"> px</label>
                     </div>
                     <details id="family-info" class="sub">
                         <summary>Details <span id="family-info-note" class="summary-note"></span></summary>
