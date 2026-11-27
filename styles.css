@@ -431,8 +431,9 @@ dl {
     margin: 0;
 }
 
+/* labels of read-only values: not the muted gray, which is a disabled field's */
 dt {
-    color: var(--muted);
+    color: var(--ink-2);
 }
 
 dd {
@@ -515,7 +516,7 @@ dd {
 }
 
 .levels-row .label {
-    color: var(--muted);
+    color: var(--ink-2);
     cursor: help;
 }
 
@@ -530,7 +531,7 @@ dd {
     flex-direction: column;
     align-items: center;
     font-size: 10px;
-    color: var(--muted);
+    color: var(--ink-2);
 }
 
 .params {
@@ -541,8 +542,17 @@ dd {
     margin-top: 8px;
 }
 
+/* the muted color is a disabled field's (below), so a label takes it only with its field disabled */
 .params label {
+    color: var(--ink-2);
+}
+
+.params label:has(input:disabled) {
     color: var(--muted);
+}
+
+input[type="color"]:disabled {
+    opacity: 0.45;
 }
 
 /* ink, not inherited: these sit inside muted labels, and a muted value reads as a disabled field */
@@ -881,14 +891,14 @@ input.needed::placeholder {
 }
 
 .axis td.px {
-    color: var(--muted);
+    color: var(--ink-2);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     text-align: right;
 }
 
 .axis td.from {
-    color: var(--muted);
+    color: var(--ink-2);
     font-size: 12px;
     white-space: nowrap;
 }
