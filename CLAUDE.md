@@ -112,7 +112,8 @@ test/*.test.js          node:test + node:assert/strict
   Record results in PLAN.md.
 - Label benchmark: `npm run bench:labels [-- --set dir --verbose]` reads the tick labels of every image whose truth
   lists tick values and prints, per set, the labels read right and the axes solved, wrong (a scale accepted with a
-  wrong value: there should be none), unchecked and left alone. Record results in PLAN.md.
+  wrong value: there should be none), unchecked and left alone, and apart from those the lane (category) axes left
+  without a scale, as they should be (headers listing ticks 1, 2, ..., n). Record results in PLAN.md.
 - Digit templates: `node tools/make-digit-templates.mjs` (server running) rewrites `src/core/digit-templates.js`
   from the fonts of the machine it runs on; rerun the label benchmark after it.
 - Results table: `npm run results [-- --jobs n]` runs the full benchmark (about 3.5 minutes at the default 10 jobs,

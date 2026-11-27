@@ -7,9 +7,14 @@
 //              count in parentheses is those with every value right
 //   none       the rest: left to the user, as before
 //
+//   lanes      a category axis left without a scale, counted apart from the rest (not in axes or labels): the
+//              headers list such an axis's lanes as 1, 2, ..., n, and an axis whose ticks are listed so is taken
+//              for one. Its names may not read as numbers (landing1's "Single task") or may and aren't those
+//              (hair3's doses 0, 5, 20, ...); either way no scale is the right outcome. One given a scale is scored
+//              like any axis, so a scale at odds with its lanes counts as wrong.
+//
 // An axis in percent ("75%") whose header is in fractions (0.75) is solved when every value is 100 × the header's:
-// the reading is the axis's own unit. Category axes are in the headers as 1, 2, 3, ...: their names don't read as
-// numbers (none), or do and aren't those (hair3's doses 0, 5, 20, ...: unchecked, and not "right").
+// the reading is the axis's own unit.
 //
 // An axis whose header values aren't numbers is skipped; so is one whose ticks can't be paired with them.
 //
@@ -36,12 +41,15 @@ function headerValues(csv, axis) {
     return values.every(Number.isFinite) ? values : null;
 }
 
+// lanes, by the headers' convention: 1, 2, ..., n (escape1's group sizes 1 and 4 are numbers)
+const isLanes = values => values.every((v, i) => v === i + 1);
+
 const same = (a, b) => Math.abs(a - b) <= VALUE_TOL * Math.max(1, Math.abs(b));
 
 /**
  * One image's axes against the header's values.
  *
- * @returns {{axis: string, labels: number, right: number, outcome: 'solved'|'wrong'|'unchecked'|'none', allRight: boolean, detail: string}[]}
+ * @returns {{axis: string, labels: number, right: number, outcome: 'solved'|'wrong'|'unchecked'|'none'|'lanes', allRight: boolean, detail: string}[]}
  */
 function score(imagePath, csv) {
     const image = readImage(imagePath);
@@ -69,7 +77,7 @@ function score(imagePath, csv) {
         const isRight = (v, t) => v !== null && v !== undefined && same(v, unit * truth.get(t));
         const right = at.filter(({ t, i }) => isRight(read[i]?.value, t)).length;
         const allRead = at.every(({ i }) => read[i] && read[i].value !== null);
-        let outcome = allRead ? 'unchecked' : 'none';
+        let outcome = isLanes(values) ? 'lanes' : allRead ? 'unchecked' : 'none';
         if (scale)
             outcome = at.every(({ t, i }) => isRight(scale.values[i], t)) ? 'solved' : 'wrong';
         const detail = at.map(({ t, i }) => `${truth.get(t)}→${read[i]?.text ?? '∅'}${scale && !isRight(scale.values[i], t) ? `≠${Number(scale.values[i].toPrecision(6))}` : ''}`).join(' ');
@@ -104,10 +112,16 @@ for (const set of CSV_SETS) {
 }
 const totals = new Map();
 for (const job of jobs.filter(j => !only || j.set === only)) {
-    const t = totals.get(job.set) ?? { images: 0, axes: 0, labels: 0, right: 0, solved: 0, wrong: 0, unchecked: 0, uncheckedRight: 0, none: 0 };
+    const t = totals.get(job.set) ?? { images: 0, axes: 0, labels: 0, right: 0, solved: 0, wrong: 0, unchecked: 0, uncheckedRight: 0, none: 0, lanes: 0 };
     totals.set(job.set, t);
     t.images++;
     for (const a of score(job.image, job.csv)) {
+        if (a.outcome === 'lanes') {
+            t.lanes++;
+            if (verbose)
+                console.log(`${job.set}/${job.name} ${a.axis}: LANES ${a.detail}`);
+            continue;
+        }
         t.axes++;
         t.labels += a.labels;
         t.right += a.right;
@@ -118,8 +132,8 @@ for (const job of jobs.filter(j => !only || j.set === only)) {
             console.log(`${job.set}/${job.name} ${a.axis}: ${a.outcome.toUpperCase()} (${a.right} of ${a.labels} read) ${a.detail}`);
     }
 }
-console.log('\nset            images  axes  labels read right   axes solved  wrong  unchecked (right)  none');
-const sum = { images: 0, axes: 0, labels: 0, right: 0, solved: 0, wrong: 0, unchecked: 0, uncheckedRight: 0, none: 0 };
+console.log('\nset            images  axes  labels read right   axes solved  wrong  unchecked (right)  none  lanes');
+const sum = { images: 0, axes: 0, labels: 0, right: 0, solved: 0, wrong: 0, unchecked: 0, uncheckedRight: 0, none: 0, lanes: 0 };
 for (const [set, t] of [...totals, ['all', sum]]) {
     if (set !== 'all') {
         for (const key of Object.keys(sum))
@@ -129,6 +143,6 @@ for (const [set, t] of [...totals, ['all', sum]]) {
     const cell = (v, width) => String(v).padStart(width);
     console.log([
         set.padEnd(14), cell(t.images, 6), cell(t.axes, 5), ` ${cell(t.right, 5)} of ${String(t.labels).padEnd(5)}`, cell(pct(t.right, t.labels), 6),
-        ` ${cell(t.solved, 5)}`, cell(pct(t.solved, t.axes), 6), cell(t.wrong, 6), ` ${cell(t.unchecked, 9)}`, `(${t.uncheckedRight})`.padEnd(7), cell(t.none, 5),
+        ` ${cell(t.solved, 5)}`, cell(pct(t.solved, t.axes), 6), cell(t.wrong, 6), ` ${cell(t.unchecked, 9)}`, `(${t.uncheckedRight})`.padEnd(7), cell(t.none, 5), cell(t.lanes, 6),
     ].join(' '));
 }

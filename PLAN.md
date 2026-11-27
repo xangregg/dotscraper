@@ -5295,3 +5295,18 @@ to 2×10³). No other row changes: the unread Nature and PLOS axes stay unread. 
 changes nothing on the benchmark either: no axis there has a looser reading with a label off its scale, so it is a
 precaution no image tests yet. Test: the three axes read as above (fails with the strict thresholds for the second
 reading).
+
+#### Lane axes counted apart in the label benchmark (2026-11-27)
+
+The unread Nature and PLOS axes are all lanes, not scales: landing1's "Single task" and "Dual task", protrusion2's
+"DMSO" and "Swin A", protrusion1's nine treatments, cells1's "L5PTs" and "GrCs", hair2's "PBS −" to "DT +" (its
+plus signs read as stray 1s, with no scale), and hair3's doses 0, 5, 20, 50, 100 and 200 µM, read right and fitting
+no scale. No scale is the right outcome for each, yet the benchmark counted them as unread axes against 1, 2, ...
+in their headers. `tools/label-bench.mjs` now takes an axis whose header ticks are 1, 2, ..., n for lanes and,
+when it has no scale, counts it in a `lanes` column apart from the axes and labels (a lane axis given a scale is
+still scored, so a scale at odds with its lanes would count as wrong). escape1's 1 and 4 are group sizes, numbers,
+and stay an axis.
+
+Result: 15 lane axes (bench3's 9, bench-nature's 5, bench-plos's 1); of the other 250 axes, 248 solved, 0 wrong,
+2 unchecked (escape1's two labels, pathogen's y on a log(y + 1) scale, every label read right), none left unread;
+1493 of 1567 labels read right.
