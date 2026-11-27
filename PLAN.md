@@ -1424,7 +1424,9 @@ failures (radius unknown, no family, category ticks not paired).
   left-to-right reading order). A step takes the first
   of its layouts that covers no header control, step target, number or label, then the same of fallbacks around the
   target, or else the one covering least (numbers and labels counting 10× controls); beside About, numbers are
-  placed as if unlabeled. Checked at 1600 and 1280 px (dev and public, light and dark) and 375 px.
+  placed as if unlabeled, close to what they number: 1 and 3 over their buttons' bottom edges (`OVERLAP` 10 px),
+  5 left of the edit buttons (layouts tried first beside About, which may cover their own target). Checked at
+  1600 and 1280 px (dev and public, light and dark) and 375 px.
   At 1280 px in dev mode the test image list leaves the status line about 80 px.
 - The panel is 360 px wide, in collapsible sections that remember their state: Dot families open; Found dots,
   Axes, Mask and Image closed, each with a summary line (Found dots: the count and how many are flagged). Found

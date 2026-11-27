@@ -11,6 +11,7 @@ const BADGE = 30; // px, the number's circle (its width in styles.css)
 const GAP = 6; // px between a target and its number, and a number and its label
 const INSET = 40; // px from a region's corner to a number placed inside it, clear of the toolbar above it
 const DROP = 10; // px further below a section's name for underAligned, clear of the labels above it
+const OVERLAP = 10; // px of a number over its button's bottom edge (onStart, onEnd)
 const MARGIN = 8; // px kept clear at the window's edges
 const NUMBER_WEIGHT = 10; // how much worse covering a number or label is than covering as much of a control
 const DIALOG_CLEAR = 6; // px around the About dialog that numbers stay out of
@@ -18,17 +19,20 @@ const DOCK_MIN_WIDTH = 500; // px, the narrowest image view the About dialog mov
 const DOCK_MARGIN = 16; // px between the moved dialog and the view's edges
 
 // target: the element the step uses; text: measure its first text node (a section's name) instead of the element;
-// layouts: where its number and label go, in order of preference (layoutAt); alignTo: for underAligned, the text
-// whose rightOf number its number lines up with; label: none for a step numbered only beside the About dialog. A step takes the first layout that stays in the window and covers no header control,
-// step target, number or label; failing those (a narrow screen), the same of FALLBACKS, and failing all, whichever
-// covers least. In a big window the labels read in order: 1 and 3 side by side under their buttons, 2 under its
-// section's name, its number over 6's when About shows 6.
+// layouts: where its number and label go, in order of preference (layoutAt); about: layouts tried first for the
+// number alone beside the About dialog, where it may cover its own target; alignTo: for underAligned, the text whose
+// rightOf number its number lines up with; label: none for a step numbered only beside the About dialog. A step
+// takes the first layout that stays in the window and covers no header control, step target, number or label;
+// failing those (a narrow screen), the same of FALLBACKS, and failing all, whichever covers least. In a big window
+// the labels read in order: 1 and 3 side by side under their buttons, 2 under its section's name, its number over
+// 6's when About shows 6. Beside About the numbers sit close to what they number: 1 and 3 over their buttons' bottom
+// edges, 5 left of the edit buttons.
 const STEPS = [
-    { target: '#open-file', layouts: ['underEnd', 'underStart'], label: 'Import an image' },
+    { target: '#open-file', layouts: ['underEnd', 'underStart'], about: ['onEnd'], label: 'Import an image' },
     { target: '#sec-families > summary', text: true, alignTo: '#sec-axes > summary', layouts: ['underAligned', 'underStart', 'rightOf'], label: 'Review and edit dot families' },
-    { target: '#fit-run', layouts: ['underStart', 'underEnd'], label: 'Find dots' },
+    { target: '#fit-run', layouts: ['underStart', 'underEnd'], about: ['onStart'], label: 'Find dots' },
     { target: '#stage', layouts: ['inside'], label: 'Review the dots found' },
-    { target: '[aria-label="Edit dots"]', layouts: ['underEnd', 'underStart'], label: 'Fix with Add, Remove and Move' },
+    { target: '[aria-label="Edit dots"]', layouts: ['underEnd', 'underStart'], about: ['leftOf'], label: 'Fix with Add, Remove and Move' },
     // Axes and Export aren't needed to get started, and labels there would break the labels' reading order
     { target: '#sec-axes > summary', text: true, layouts: ['rightOf', 'underStart'], label: null },
     { target: '[aria-label="Export"]', layouts: ['leftOf', 'underEnd'], label: null },
@@ -137,7 +141,8 @@ function placeSteps(items, dialog) {
         ...[...document.querySelectorAll(KEEP_CLEAR)].filter(el => el.getClientRects().length).map(el => el.getBoundingClientRect())];
     // numbers and labels count for more than controls
     const marks = [];
-    const covered = b => taken.reduce((sum, t) => sum + overlapArea(b, t, GAP / 2), 0)
+    // (own: the target's box, which an About layout may cover; its button is in taken twice, as a target and a control)
+    const covered = (b, own) => taken.reduce((sum, t) => (own && sameBox(t, own) ? sum : sum + overlapArea(b, t, GAP / 2)), 0)
         + NUMBER_WEIGHT * marks.reduce((sum, t) => sum + overlapArea(b, t, GAP / 2), 0);
     const inWindow = b => b.top >= 0 && b.bottom <= H;
     items.forEach(({ step, badge, label }, i) => {
@@ -154,12 +159,14 @@ function placeSteps(items, dialog) {
         let best = null;
         let bestCost = Infinity;
         const align = step.alignTo ? targetRect(step.alignTo, true) : null;
-        for (const name of [...step.layouts, ...FALLBACKS].filter(n => n !== 'underAligned' || align)) {
+        const about = dialog && step.about ? step.about : [];
+        for (const name of [...about, ...step.layouts, ...FALLBACKS].filter(n => n !== 'underAligned' || align)) {
             const at = layoutAt(name, r, w, h, W, align);
             const boxes = labeled ? [at.badge, at.label] : [at.badge];
             if (!boxes.every(inWindow))
                 continue;
-            const cost = boxes.reduce((sum, b) => sum + covered(b), 0);
+            const own = about.includes(name) ? r : null;
+            const cost = boxes.reduce((sum, b) => sum + covered(b, own), 0);
             if (cost < bestCost) {
                 best = at;
                 bestCost = cost;
@@ -186,8 +193,9 @@ function placeSteps(items, dialog) {
 // The boxes of a number and its label (w × h px; 0 × 0 for none) in one layout by the target's box r, slid along
 // together to stay within the window's width W. The named layouts keep the label after its number, on one line:
 // underStart and underEnd under the target, starting at its left or ending at its right; underAligned further
-// under it, its number where rightOf would put the number of the text a (a's right plus GAP); rightOf and leftOf
-// beside it; inside its top-left corner. A fallback, `number:label`, puts the number below, right or left of the target
+// under it, its number where rightOf would put the number of the text a (a's right plus GAP); onStart and onEnd
+// like underStart and underEnd but moved up over the target's bottom edge; rightOf and leftOf beside it; inside its
+// top-left corner. A fallback, `number:label`, puts the number below, right or left of the target
 // and the label right, left, under, under-and-left-aligned or above the number.
 function layoutAt(name, r, w, h, W, a) {
     const span = BADGE + (w ? GAP + w : 0);
@@ -197,6 +205,8 @@ function layoutAt(name, r, w, h, W, a) {
         underStart: [r.left, below, 'right'],
         underEnd: [r.right - span, below, 'right'],
         underAligned: a && [a.right + GAP, below + DROP, 'right'],
+        onStart: [r.left, r.bottom - OVERLAP, 'right'],
+        onEnd: [r.right - span, r.bottom - OVERLAP, 'right'],
         rightOf: [r.right + GAP, middle, 'right'],
         leftOf: [r.left - GAP - span, middle, 'left'],
         inside: [r.left + INSET, r.top + INSET, 'right'],
@@ -235,6 +245,10 @@ function overlapArea(a, b, clear) {
     const w = Math.min(a.right, b.right + clear) - Math.max(a.left, b.left - clear);
     const h = Math.min(a.bottom, b.bottom + clear) - Math.max(a.top, b.top - clear);
     return w > 0 && h > 0 ? w * h : 0;
+}
+
+function sameBox(a, b) {
+    return a.left === b.left && a.top === b.top && a.right === b.right && a.bottom === b.bottom;
 }
 
 function overlaps(a, b, clear) {
