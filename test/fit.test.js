@@ -9,7 +9,8 @@ import { synthGraph, scatterPoints } from '../src/core/synth.js';
 import { matchDots } from '../src/core/metrics.js';
 import { existsSync } from 'node:fs';
 import { readImage } from '../tools/png.mjs';
-import { extractAll } from '../src/core/extract.js';
+import { extractAll, fitInput } from '../src/core/extract.js';
+import jpeg from 'jpeg-js';
 import { detectAxes } from '../src/core/axes.js';
 import { readTruthCsv, truthPixelsByTicks } from '../tools/truth-csv.mjs';
 
@@ -276,6 +277,54 @@ test('opaque outlined dots: one hidden under another at the same place goes, tho
     assert.equal(two.deaths(), 0);
 });
 
+test('regression: opaque dots in a JPEG, larger and softer than the model, aren\'t doubled (tegner, reward)', () => {
+    // half the dots 0.6 px larger than the others, blurred and saved as a JPEG: a second dot a few tenths of a radius
+    // from the first fills the edge the model's disc misses, and paid for itself (8 of 18 here)
+    const color = [56, 98, 180];
+    const small = [];
+    const big = [];
+    for (let k = 0; k < 18; k++)
+        (k % 2 ? big : small).push({ x: 30 + (k % 6) * 55 + 0.37 * k, y: 30 + Math.floor(k / 6) * 55 + 0.21 * k });
+    const { image: png, truth } = synthGraph({
+        width: 360, height: 200, background: [255, 255, 255], blur: 1.2, noise: 1, seed: 3,
+        families: [{ color, alpha: 1, radius: 10, points: small }, { color, alpha: 1, radius: 10.6, points: big }],
+    });
+    const jpg = jpeg.decode(jpeg.encode({ width: png.width, height: png.height, data: Buffer.from(png.data) }, 30).data, { useTArray: true });
+    const image = { width: jpg.width, height: jpg.height, data: new Uint8ClampedArray(jpg.data) };
+    const [fam] = extractAll(image, true);
+    const m = matchDots(truth, fam.fit.dots, 3);
+    assert.ok(m.extra.length === 0 && m.missed.length === 0, `extra ${m.extra.length}, missed ${m.missed.length}`);
+    // the pass itself: a pair 0.1 r apart becomes one between them; a pair 0.4 r apart and a pinned pair stay
+    const r = fam.fit.radius;
+    const fit = createFit(fitInput(fam.est.image, fam.est, fam.layers.mask, { ...fam.est.style, radius: r }));
+    const [a, b, c] = small;
+    for (const t of truth.filter(t => ![a, b, c].some(p => p.x === t.x && p.y === t.y)))
+        fit.add(t.x, t.y);
+    fit.add(a.x - 0.05 * r, a.y);
+    fit.add(a.x + 0.05 * r, a.y);
+    fit.add(b.x - 0.2 * r, b.y);
+    fit.add(b.x + 0.2 * r, b.y);
+    fit.pin(fit.add(c.x - 0.05 * r, c.y));
+    fit.pin(fit.add(c.x + 0.05 * r, c.y));
+    assert.equal(fit.mergeCoincident(), 1);
+    const near = p => fit.dots().filter(d => Math.hypot(d.x - p.x, d.y - p.y) < 0.5 * r);
+    assert.equal(near(a).length, 1);
+    assert.ok(Math.hypot(near(a)[0].x - a.x, near(a)[0].y - a.y) < 1, 'merged where the dot is');
+    assert.equal(near(b).length, 2);
+    assert.equal(near(c).length, 2);
+    // a sharp PNG fits each dot closely, so real pairs 0.15 r apart, which a second dot explains far better than
+    // a dot's typical misfit, stay two
+    const pts = [];
+    for (let k = 0; k < 12; k++)
+        pts.push({ x: 30 + (k % 6) * 55 + 0.37 * k, y: 40 + Math.floor(k / 6) * 80 + 0.21 * k });
+    const ties = [pts[2], pts[7], pts[9]].map(p => ({ x: p.x + 1.5, y: p.y + 0.3 }));
+    const sharp = synthGraph({
+        width: 360, height: 200, background: [255, 255, 255], blur: 0.4, noise: 0.5, seed: 5,
+        families: [{ color, alpha: 1, radius: 10, points: [...pts, ...ties] }],
+    });
+    const t = matchDots(sharp.truth, extractAll(sharp.image)[0].fit.dots, 1);
+    assert.ok(t.missed.length === 0 && t.extra.length === 0, `near-ties: missed ${t.missed.length}, extra ${t.extra.length}`);
+});
 
 test('fewerDoubles: dots on a dashed line of their color, unmasked, aren\'t doubled by the dashes; a pair 1.25 r apart stays two', () => {
     // the dashes 10 px wide, as in prot-cath-chris before its dashes were masked: a second dot beside a dot on the

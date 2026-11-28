@@ -130,6 +130,17 @@ const COINCIDENT_MIN_PAIRS = 3;
 // against the 10 a dot's cost is counted in (grapes: 8 of 70 dots, each 0.07–0.20 px from the one over it; the real
 // pairs there are 4.2 px apart and more). Such a dot goes with the deaths.
 const HIDING_ALPHA = 0.95;
+// Plain opaque dots, blurred or JPEG ones: two of one family closer than MERGE_OPAQUE_RADII × r are often one dot
+// whose edge the model doesn't fit. λ is about one pixel wrong by the full contrast, so such a sliver pays for a
+// second dot (tegner: 13 doubles 0.01–0.19 r from a found dot, removal margins 1.4–42 λ). No style fits them singly:
+// at the truth's places the objective is least at the fit's radius and blur, and births still add 10; at 0.5 px
+// more, none, but real dots die. So at the end of the fit such a pair goes as one when one dot fits its patch worse
+// by less than MERGE_OPAQUE_MEDIANS times the median dot's loss: what a dot there typically misfits anyway. Measured
+// (the rise over the median): tegner's 16 pairs 0.03–1.14, reward's teal 0.07–2.25, crimson 0.19–0.75, where the
+// exact renderings' near-ties are 2.5–60 (bench2's opaque sets), 1.2–6.5 (autocor1) and 0.97–9.3 (gg-many). Merged
+// whatever the rise, the full benchmark lost 62 real dots for 110 extras, mostly those near-ties.
+const MERGE_OPAQUE_RADII = 0.25;
+const MERGE_OPAQUE_MEDIANS = 1;
 // flag a dot this close to another of its family (× r): in the view the two marks are one, and for opaque dots one
 // dot counted twice looks like this (comment1: white outlines the opaque model lacks gave 10 pairs 0.1–2 px apart, 8
 // of them one dot). Real ties get it too (bench2 large-dots: 60 of 204); translucent ones show in the levels.
@@ -482,9 +493,12 @@ function blurPlane(src, width, height, sigma) {
  * @property {number} lambda  the price of a dot, in loss units
  * @property {number} loss  over the unmasked pixels, without the dots' price
  * @property {number} rounds
- * @property {object[]} log  one entry per stage ({ stage, … }: 'candidates', 'round', 'radius', 'assess', and
- *   'doubled' or 'coincident' before a fit made again at a larger radius), with counts and times
+ * @property {object[]} log  one entry per stage ({ stage, … }: 'candidates', 'round', 'radius', 'coincident merges'
+ *   (plain opaque dots), 'assess', and 'doubled' or 'coincident' before a fit made again at a larger radius), with
+ *   counts and times
  * @property {number} ms  the fit's time, refits included
+ * @property {{dots: number, close: number, coincident: number}} pairs  before the coincident merges: the dots, those
+ *   flagged close, and pairs within COINCIDENT_RADII · r
  */
 
 /**
@@ -770,6 +784,41 @@ export function createFit(input, opts = {}) {
                 pos.set(ids[i], posA);
                 pos.set(ids[j], posB);
             }
+        }
+        return merged;
+    }
+
+    // plain opaque dots within MERGE_OPAQUE_RADII · r of another, merged when one dot fits their patch worse by less
+    // than MERGE_OPAQUE_MEDIANS times the median dot's loss (the midpoint, refined within that distance); dots placed
+    // by hand are left alone. Returns how many pairs were merged.
+    function mergeCoincident() {
+        let merged = 0;
+        const med = upperMedian([...pos.keys()].map(id => loss(model.influenceRect(pos.get(id).x, pos.get(id).y)))) ?? 0;
+        for (const id of [...pos.keys()]) {
+            const a = pos.get(id);
+            if (!a || pinned.has(id))
+                continue;
+            const other = near(a.x, a.y, MERGE_OPAQUE_RADII * style.radius).find(o => o !== id && !pinned.has(o));
+            if (other === undefined)
+                continue;
+            const b = pos.get(other);
+            const grow = r => [Math.max(0, r[0] - 3), Math.max(0, r[1] - 3), Math.min(width, r[2] + 3), Math.min(height, r[3] + 3)];
+            const foot = grow(union(model.footprint(a.x, a.y), model.footprint(b.x, b.y)));
+            const rect = grow(union(model.influenceRect(a.x, a.y), model.influenceRect(b.x, b.y)));
+            const before = loss(rect);
+            const snap = model.snapshot(foot);
+            remove(id);
+            remove(other);
+            const m = add((a.x + b.x) / 2, (a.y + b.y) / 2);
+            refineDot(m, 0, MERGE_OPAQUE_RADII * style.radius);
+            if (loss(rect) - before < MERGE_OPAQUE_MEDIANS * med) {
+                merged++;
+                continue;
+            }
+            model.restore(snap);
+            pos.delete(m);
+            pos.set(id, a);
+            pos.set(other, b);
         }
         return merged;
     }
@@ -1556,7 +1605,7 @@ export function createFit(input, opts = {}) {
             return style;
         },
         lambda, weight, imgT,
-        add, remove, refineAll, refineDot, pin: id => pinned.add(id), tether: (id, reach) => tethers.set(id, { ...pos.get(id), reach }), births, splits, relocations, deaths, merges, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
+        add, remove, refineAll, refineDot, pin: id => pinned.add(id), tether: (id, reach) => tethers.set(id, { ...pos.get(id), reach }), births, splits, relocations, deaths, merges, mergeCoincident, fitFills, refitRadius, ringless, totalLoss, assess, bestZ,
         get birthFailures() {
             return birthFailures;
         },
@@ -1588,24 +1637,24 @@ export function fitDots(input, opts = {}, onProgress = () => {}) {
     // Opaque dots don't come in near-coincident pairs. When most do, the radius is too small: a disc can't cover a
     // dot, so the fit puts in two, and the radius refit settles small because the pairs already cover it
     // (beeswarm-boxplot's gray at 8.7 px: 474 dots, 352 in close pairs; at 9.2, 282 and none). Fit again larger.
-    const doubled = r => r.dots.filter(d => d.flags.includes('close')).length > DOUBLED_MAX_SHARE * r.dots.length;
+    const doubled = r => r.pairs.close > DOUBLED_MAX_SHARE * r.pairs.dots;
     if (input.style.alpha >= 1 && !input.style.layered && (opts.refitRadius ?? true)) {
         let k = 0;
         for (; k < DOUBLED_MAX_BUMPS && doubled(res); k++) {
             const next = fitOnce({ ...input, style: { ...input.style, radius: res.radius + DOUBLED_RADIUS_STEP } }, opts, onProgress);
-            next.log.unshift({ stage: 'doubled', radius: res.radius, close: res.dots.filter(d => d.flags.includes('close')).length, dots: res.dots.length });
+            next.log.unshift({ stage: 'doubled', radius: res.radius, close: res.pairs.close, dots: res.pairs.dots });
             next.ms += res.ms; // the time of the fits before it too
             res = next;
         }
         const objective = r => r.loss + r.lambda * r.dots.length;
-        for (; k < DOUBLED_MAX_BUMPS && coincidentPairs(res.dots, COINCIDENT_RADII * res.radius) >= COINCIDENT_MIN_PAIRS; k++) {
+        for (; k < DOUBLED_MAX_BUMPS && res.pairs.coincident >= COINCIDENT_MIN_PAIRS; k++) {
             const next = fitOnce({ ...input, style: { ...input.style, radius: res.radius + DOUBLED_RADIUS_STEP } }, opts, onProgress);
             next.ms += res.ms;
             if (objective(next) >= objective(res)) {
                 res.ms = next.ms;
                 break;
             }
-            next.log.unshift({ stage: 'coincident', radius: res.radius, pairs: coincidentPairs(res.dots, COINCIDENT_RADII * res.radius), dots: res.dots.length });
+            next.log.unshift({ stage: 'coincident', radius: res.radius, pairs: res.pairs.coincident, dots: res.pairs.dots });
             res = next;
         }
     }
@@ -1711,6 +1760,19 @@ function fitOnce(input, opts, onProgress) {
         log.push({ stage: 'radius', radius: r, born, died, dots: fit.ids().length, ms: Date.now() - tr });
         report('radius', rounds, true);
     }
+    // fitDots' radius checks read the pairs as the rounds left them: merged, a radius too small would hide its sign
+    const left = fit.dots();
+    const pairs = {
+        dots: left.length,
+        close: flagClose(left.map(d => ({ ...d, flags: [] })), fit.style.radius).filter(d => d.flags.includes('close')).length,
+        coincident: coincidentPairs(left, COINCIDENT_RADII * fit.style.radius),
+    };
+    if (st.alpha >= 1 && !st.layered) {
+        const merged = fit.mergeCoincident();
+        if (merged)
+            fit.refineAll();
+        log.push({ stage: 'coincident merges', merged, dots: fit.ids().length });
+    }
     const ringless = fit.ringless();
     if (ringless)
         log.push({ stage: 'rings', removed: ringless, dots: fit.ids().length });
@@ -1719,7 +1781,7 @@ function fitOnce(input, opts, onProgress) {
     log.push({ stage: 'assess', ms: Date.now() - ta });
     return {
         dots, radius: fit.style.radius, sigma, lambda: fit.lambda,
-        loss: fit.totalLoss(), rounds, log, ms: Date.now() - t0,
+        loss: fit.totalLoss(), rounds, log, ms: Date.now() - t0, pairs,
     };
 }
 

@@ -961,7 +961,8 @@ test('regression: beeswarm-boxplot, packed red and gray swarms are two families 
     const close = gray.fit.dots.filter(d => d.flags.includes('close')).length;
     assert.ok(close < 0.1 * gray.fit.dots.length, `${close} of ${gray.fit.dots.length} gray dots in close pairs`);
     assert.ok(gray.fit.dots.length >= 270 && gray.fit.dots.length <= 310, `${gray.fit.dots.length} gray dots`);
-    assert.ok(red.fit.dots.length >= 380 && red.fit.dots.length <= 430, `${red.fit.dots.length} red dots`);
+    // 378 since opaque pairs a JPEG's edges doubled are merged (fit.js MERGE_OPAQUE_RADII): the 5 that went were extras
+    assert.ok(red.fit.dots.length >= 370 && red.fit.dots.length <= 430, `${red.fit.dots.length} red dots`);
 });
 
 const COMMENT1 = 'comment1-2026-10-22.png';

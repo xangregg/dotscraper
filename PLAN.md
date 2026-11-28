@@ -5395,3 +5395,38 @@ Full benchmark: 3 rows changed. cycle 160 of 212 → 207 found right, 5 extras, 
 more extra. Time +2.6% summed. At 3 r cycle found 209 with 9 extras, 2% slower again: 2 r kept. Loosening the color
 tolerance of the hollow reading (off the ring's direction) lost the families. Tests: synthetic columns (fail without
 either change) and cycle's precision and recall at 0.97.
+
+#### Doubles from blurred or JPEG edges: opaque pairs merged (2026-11-27)
+
+Where the extras were, measured on the images whose notes blamed blurred edges. Most extras sit within 0.2 r of a
+matched dot, but for different reasons: tegner, gc and reward are opaque families with blur 0.7–1.0 px (JPEGs);
+comment1's pairs come from the white outlines the opaque model lacks (blur 0.14); bread1's are its black dots read as
+two levels of the grey15 family; grader1 and score2 are translucent or outlined, pairs at 0.00 r; about half of
+reward's 45 lie 0.4–1.0 r from any dot, unflagged, so not doubles either.
+
+Why the opaque pairs pay: λ is about one pixel wrong by an opaque dot's full contrast, so a second dot a pixel off
+the first, filling a sliver of edge the model's disc misses, pays for itself (tegner's 13 doubles: 0.01–0.19 r from
+a found dot, removal margins 1.4–42 λ; Fewer doubles at 4 adds about 8 λ to such a pair). No style fits tegner's dots
+singly: started at the truth's places, the objective is least at the fit's own radius and blur (11.96 px, 0.96 over
+a grid of ±0.5–1 px and ×0.5–2), and births there add 10 dots; at 0.5 px larger none, but dots die. The dots' size
+and edges vary dot to dot.
+
+Merging every opaque pair closer than 0.25 r at the end of the fit (`fit.js mergeCoincident`, after the rounds and
+the radius refit): extras 483 → 373, misses 892 → 954, the misses mostly real near-ties in exact renderings (bench2
+solid-opaque and gradient-opaque 12 each, gg-many 12, autocor1 6). What tells them apart is how much worse one dot
+fits the pair's patch, over the median dot's loss in that fit, since a JPEG misfits every dot by a lot and an exact
+rendering by little: tegner's 16 pairs 0.03–1.14, reward's teal 0.07–2.25 (black 0.25–1.26), crimson 0.19–0.75;
+bench2's opaque sets 2.5–60, autocor1 1.2–6.5, gg-many 0.97–9.3; comment1's 2.6–54 (so it keeps its doubles: its
+cause is the outlines). A pair goes as one when the rise is under the median (`MERGE_OPAQUE_MEDIANS` 1), plain opaque
+families only, dots placed by hand never. fitDots' doubled and coincident radius bumps read the pairs before the
+merge, which would otherwise hide a radius that is too small.
+
+Full benchmark against the code before: 23 rows changed, extras 483 → 406, misses 892 → 897, time +1.4% over the
+same rows. reward 46 → 25 extras (one more miss), tegner 13 → 1 (2 misses: the truth's own pairs 0.11 and 0.12 r
+apart), crimson 6 → 0, beeswarm-boxplot 12 → 7, corneal 8 → 4, phase1 3 → 0, biomarker 7 → 4, gc 5 → 2, healer
+3 → 0; one more miss each in cattle and gg-many. In the app (Chrome's decode) tegner gives 74 dots, 8 flagged, as the
+bench. A merged pair is one dot with no flag: for opaque dots a stack's count is a lower bound (README, Limits), and a
+pair that close can't be told from one dot with a wider edge. Tests: a JPEG of opaque dots of two sizes (8 of 18
+doubled without the merge), the pass itself (a pair 0.4 r apart and a pinned pair stay), and real pairs 0.15 r apart
+in a sharp PNG kept (merged if the rise isn't compared); adults1's rmse bound 0.1 → 0.11 (0.0998 → 0.1000) and
+beeswarm-boxplot's red count bound 380 → 370 (378: the 5 that went were extras).
