@@ -640,12 +640,13 @@ function overSegment(a, width, height, dx, dy, sign, isMin) {
 
 /**
  * What is under the rings in P: the largest of linear openings in `directions` directions, each with a segment
- * longer than a ring is across. O(pixels · directions · (2r + OPEN_EXTRA)).
+ * longer than a ring is across (2 · radius + OPEN_EXTRA; a larger radius for a longer one).
+ * O(pixels · directions · (2r + OPEN_EXTRA)).
  *
  * @param {Float32Array} P  width × height
  * @param {number} width
  * @param {number} height
- * @param {number} radius  px, the rings'
+ * @param {number} radius  px: the rings', or more for a longer segment
  * @param {number} [directions]  evenly spaced over the half turn
  * @returns {Float32Array}  width × height, in P's units
  */
@@ -902,6 +903,18 @@ const HOLLOW_OFF_REL = 0.3; // … this × the darkening along it, and the pixel
 const HOLLOW_INSIDE_TOL = 12; // 0–255 units
 const HOLLOW_INSIDE_MARGIN = 1.5; // px clear of the ring, inside and out
 const HOLLOW_OUTSIDE_WIDTH = 2; // px of surroundings
+// Hollow rings stacked a few px apart (cycle's dot plot: columns of two to four rings, 13 px across, 5–8 px apart).
+// Between walls that close, the fill around a pixel never reaches the page, so the rings' ink there read faint; a
+// hollow ring's inside is its surroundings, so once the ring is known each pixel is read again against a closing
+// HOLLOW_CLOSE_RADII × r to each side, which fills a ring and a stack of them. And a column's walls run straight for
+// more than a ring is across, so openings that long kept them as something under the rings: for hollow rings the
+// openings reach HOLLOW_UNDER_RADII × r to each side, past a stack, while a line runs on. In synthetic columns 5, 6
+// and 8 px apart, 15, 22 and 19 of 28 rings were found; with the opening alone 22, 22, 24; the closing alone 16, 16,
+// 24; both, 26, 26, 28 (at 3 × r, 28 each). Over the benchmark three rows changed: cycle 160 of 212 found → 207, with
+// 5 extras, each within 4 px of a true ring; song-cents 3 more rings, step1 3 more and an extra. At 3 × r cycle
+// found 209 with 9 extras, and the benchmark took 4.6% longer than at 2 × r (2.6% over before).
+const HOLLOW_CLOSE_RADII = 1;
+const HOLLOW_UNDER_RADII = 2;
 // thickRings: a solid family's ink is at least this far from the page toward its color, and solid where an opening by
 // this × its dots' radius keeps it; unknown out to this many px from there
 const THICK_SOLID_LEVEL = 0.5;
@@ -1035,7 +1048,6 @@ export function findHollowRings(image, B, known = [], opts = {}) {
     const { width, height, data } = image;
     const n = width * height;
     const F = localFill(image);
-    const v = new Float32Array(3 * n);
     const bins = new Map();
     // per known color that darkens the page: its direction, and the pixels within reach of pixels of that color
     const families = known.map(k => ({ k, d: B.map((x, ch) => x - k[ch]) })).filter(({ d }) => Math.hypot(...d) > HOLLOW_OWN_TOL).map(({ k, d }) => {
@@ -1046,13 +1058,11 @@ export function findHollowRings(image, B, known = [], opts = {}) {
         const solid = opts.solids?.find(s => Math.hypot(...s.color.map((x, ch) => x - k[ch])) <= HOLLOW_OWN_TOL) ?? null;
         return { dir: d.map(x => x / l), near: dilate(mask, width, height, HOLLOW_OWN_REACH), solid };
     });
+    const v = darkening(image, F);
     for (let p = 0; p < n; p++) {
-        const a = F[0][p] - data[4 * p];
-        const b = F[1][p] - data[4 * p + 1];
-        const c = F[2][p] - data[4 * p + 2];
-        v[3 * p] = a;
-        v[3 * p + 1] = b;
-        v[3 * p + 2] = c;
+        const a = v[3 * p];
+        const b = v[3 * p + 1];
+        const c = v[3 * p + 2];
         const m = Math.hypot(a, b, c);
         if (m < HOLLOW_MIN_INK)
             continue;
@@ -1083,25 +1093,15 @@ export function findHollowRings(image, B, known = [], opts = {}) {
     }
     const out = [];
     for (const u of dirs) {
-        const P = new Float32Array(n);
-        const unknown = new Uint8Array(n);
-        for (let p = 0; p < n; p++) {
-            const a = v[3 * p];
-            const b = v[3 * p + 1];
-            const c = v[3 * p + 2];
-            const t = a * u[0] + b * u[1] + c * u[2];
-            if (Math.hypot(a - t * u[0], b - t * u[1], c - t * u[2]) > Math.max(HOLLOW_OFF_ABS, HOLLOW_OFF_REL * Math.abs(t)))
-                unknown[p] = 1;
-            else
-                P[p] = Math.max(0, t) / WHITE_LENGTH;
-        }
         const hollow = (isolated, ring) => hollowInside(image, isolated, ring);
         // (when no thin-walled ring shows: at low resolution a wall of 2 px, blurred, is two thirds of a small ring's
         // box. cycle: rings 13 px across, 2 of 212 under ISO_FILL)
-        const found = outlinesInP(P, width, height, unknown, { hollow })
+        const read = ({ P, unknown }) => outlinesInP(P, width, height, unknown, { hollow })
             ?? outlinesInP(P, width, height, unknown, { hollow, wide: true, inside: opts.inside });
-        if (!found)
+        const first = read(hollowP(v, u));
+        if (!first)
             continue;
+        const found = read(hollowP(darkening(image, localFill(image, 2 * Math.ceil(HOLLOW_CLOSE_RADII * first.ring.radius) + 1)), u)) ?? first;
         const color = B.map((x, ch) => Math.round(Math.min(255, Math.max(0, x - u[ch] * found.ring.alpha * WHITE_LENGTH))));
         out.push({ ...found, plane: null, fillAlpha: 0, fillAlphaMeasured: false, hollow: { dir: u, color } });
     }
@@ -1113,6 +1113,36 @@ export function findHollowRings(image, B, known = [], opts = {}) {
         out.push({ ...found, plane: null, fillAlpha: 0, fillAlphaMeasured: false, hollow: { dir: u, color, thick: true } });
     }
     return out;
+}
+
+// Each pixel's darkening below the fill around it (localFill's planes F), per channel: 3 values a pixel
+function darkening(image, F) {
+    const { data } = image;
+    const n = F[0].length;
+    const v = new Float32Array(3 * n);
+    for (let p = 0; p < n; p++) {
+        for (let ch = 0; ch < 3; ch++)
+            v[3 * p + ch] = F[ch][p] - data[4 * p + ch];
+    }
+    return v;
+}
+
+// The darkening v along a ring's direction u, in white's distance (P), and where it points elsewhere (unknown)
+function hollowP(v, u) {
+    const n = v.length / 3;
+    const P = new Float32Array(n);
+    const unknown = new Uint8Array(n);
+    for (let p = 0; p < n; p++) {
+        const a = v[3 * p];
+        const b = v[3 * p + 1];
+        const c = v[3 * p + 2];
+        const t = a * u[0] + b * u[1] + c * u[2];
+        if (Math.hypot(a - t * u[0], b - t * u[1], c - t * u[2]) > Math.max(HOLLOW_OFF_ABS, HOLLOW_OFF_REL * Math.abs(t)))
+            unknown[p] = 1;
+        else
+            P[p] = Math.max(0, t) / WHITE_LENGTH;
+    }
+    return { P, unknown };
 }
 
 /**
@@ -1216,13 +1246,14 @@ export function relativeDarkness(image) {
 
 /**
  * The fill around each pixel, per channel: the largest of linear closings in OPEN_DIRECTIONS directions with a
- * CLOSE_LEN segment. A closing fills dark structures narrower than its segment (rings, thin lines) and keeps edges
- * between areas, whatever their colors. O(pixels · OPEN_DIRECTIONS · CLOSE_LEN).
+ * segment `len` px long (CLOSE_LEN by default). A closing fills dark structures narrower than its segment (rings, thin
+ * lines) and keeps edges between areas, whatever their colors. O(pixels · OPEN_DIRECTIONS · len).
  *
  * @param {import('./image.js').RgbaImage} image
+ * @param {number} [len]  px, odd
  * @returns {Float32Array[]}  three planes, 0–255
  */
-export function localFill(image) {
+export function localFill(image, len = CLOSE_LEN) {
     const { width, height, data } = image;
     const n = width * height;
     return [0, 1, 2].map(ch => {
@@ -1232,7 +1263,7 @@ export function localFill(image) {
             neg[p] = -data[4 * p + ch];
         const fill = new Float32Array(n).fill(-Infinity);
         for (let k = 0; k < OPEN_DIRECTIONS; k++) {
-            const o = lineOpening(neg, width, height, Math.PI * k / OPEN_DIRECTIONS, CLOSE_LEN);
+            const o = lineOpening(neg, width, height, Math.PI * k / OPEN_DIRECTIONS, len);
             for (let p = 0; p < n; p++)
                 fill[p] = Math.max(fill[p], -o[p]);
         }
@@ -1280,7 +1311,7 @@ export function outlinesInP(P, width, height, unknown = null, opts = {}) {
     // (rings as dark as ink are read unmasked alone: with the ink masked their cores are, and what is left to fit is
     // their antialiased rims, which can pass as faint rings: grapes, αk 0.24 from rings 0.86 at their cores)
     const black = !!opts.blackRings && ringPeak(P, width, height, used) >= MASK_INK;
-    const under = underRings(P, width, height, r0, black ? opts.blackDirections ?? OPEN_DIRECTIONS : OPEN_DIRECTIONS);
+    const under = underRings(P, width, height, opts.hollow ? HOLLOW_UNDER_RADII * r0 : r0, black ? opts.blackDirections ?? OPEN_DIRECTIONS : OPEN_DIRECTIONS);
     const read = (maskInk, darkness = maskInk ? null : 1) => {
         const ink = new Uint8Array(P.length);
         for (let y = 0; y < height && maskInk; y++) {

@@ -5369,3 +5369,29 @@ how many are reviewed ("92 (hidden 84, weak 3, close 10); 1 reviewed"; the Found
 CSV keep the flags column and add `reviewed` (yes). Refits of nearby dots (Add, Remove) keep the mark; a new Find
 dots clears it. Checked in the app on beeswarm-boxplot: mark, hover line, undo, mark again, an Add beside it (the
 mark kept through the refit), the copied table; no console errors.
+
+#### Misses under lines in the dots' color: measured; hollow rings stacked in columns (2026-11-27)
+
+The next item was to be dots crossed by a line or curve in their own color. Measured first, it isn't what loses them:
+of step1's 48 misses, 43 are red hollow rings under the blue band drawn over them and the dark curves, about 80%
+unread in their family's reading (a band over the dots, like pathogen's, left for now); of fibers-distance's 9, 4 are
+on its line, and all are at least 88% masked because the family is read as opaque (its note has the trade-off with
+fanc2); of aerobic's 55, 7 lie near the dashed diagonal, which is in no dot's color; of cycle's 52, about 10 are on
+the smoother, which isn't masked (it reads as ring ink), and about 42 are rings stacked two to four deep in columns.
+Started from the truth, cycle's fit kept 21 of the missed rings but scored worse: the model, not the search.
+
+Cycle's stacks: two readings of hollow rings lost them. (1) A pixel's darkness is read against the fill around it, a
+closing 5 px long; between walls a few px apart the closing never reaches the page (synthetic column: 170–230 where
+the page is 255), so the rings' ink inside a stack read faint. (2) What is under the rings is the largest of
+openings as long as a ring is across, and a column's walls run straight for longer, so they were kept as something
+under the rings. A ring added in a column then made the model darker than the image (removal gain −11,869 against a
+price of 510) and died. Now, for hollow rings, each pixel is read again, once the ring is known, against a closing
+r to each side (a hollow ring's inside is its surroundings, so this fills a ring and a stack), and the openings
+reach 2 r to each side. Either alone does little (synthetic columns 5, 6 and 8 px apart: 15, 22, 19 of 28 found
+before; 22, 22, 24 with the opening alone; 16, 16, 24 with the closing alone; 26, 26, 28 with both).
+
+Full benchmark: 3 rows changed. cycle 160 of 212 → 207 found right, 5 extras, each within 4 px of a true ring
+(near-coincident pairs), P 1.000 → 0.976, R 0.755 → 0.976; song-cents 3 fewer misses; step1 3 fewer misses and one
+more extra. Time +2.6% summed. At 3 r cycle found 209 with 9 extras, 2% slower again: 2 r kept. Loosening the color
+tolerance of the hollow reading (off the ring's direction) lost the families. Tests: synthetic columns (fail without
+either change) and cycle's precision and recall at 0.97.

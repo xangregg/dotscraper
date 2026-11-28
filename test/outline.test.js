@@ -464,18 +464,49 @@ test('findHollowRings: small blurred rings whose walls fill two thirds of their 
     assert.equal(results[0].fit.dots.length, dots.length);
 });
 
+// Columns of two to four translucent hollow rings each, a few px apart (bench-pmc cycle's dot plot), beside isolated
+// ones: the fill around a pixel was a closing too short to reach the page between walls that close, so the rings'
+// ink inside a stack read faint, and an opening as long as a ring is across kept a column's walls as something under
+// the rings; a ring added there made the model darker than the image, and it died. Before: 15, 22 and 19 of the 28
+// found at 5, 6 and 8 px apart; now 26, 26 and 28 (the two left are in the tightest columns, 3 deep)
+test('regression: hollow rings stacked in columns a few px apart are found', () => {
+    for (const [step, most] of [[5, 2], [6, 2], [8, 0]]) {
+        const dots = [];
+        for (let i = 0; i < 8; i++)
+            dots.push({ x: 30 + 40 * i, y: 30 });
+        for (let c = 0; c < 7; c++) {
+            for (let j = 0; j < 2 + (c % 3); j++)
+                dots.push({ x: 40 + 45 * c + 0.3 * j, y: 90 + j * step + (c % 2) * 40 });
+        }
+        const model = createDotModel(solidImage(W, H, WHITE), { color: [60, 70, 120], alpha: 0, radius: SMALL_RING.radius, ring: { inner: SMALL_RING.inner, alpha: 0.6 }, blur: SMALL_RING.blur });
+        for (const d of dots)
+            model.add(d.x, d.y);
+        const data = new Uint8ClampedArray(4 * W * H);
+        for (let p = 0; p < W * H; p++) {
+            for (let ch = 0; ch < 3; ch++)
+                data[4 * p + ch] = Math.round(model.image.data[3 * p + ch]);
+            data[4 * p + 3] = 255;
+        }
+        const results = extractAll({ width: W, height: H, data });
+        assert.equal(results.length, 1);
+        const found = results[0].fit.dots;
+        const m = matchDots(dots, found, SMALL_RING.radius / 2);
+        assert.ok(m.missed.length <= most && m.extra.length === 0, `step ${step} px: ${found.length} found for ${dots.length}, ${m.pairs.length} matched`);
+    }
+});
+
 const CYCLE = new URL('../bench-pmc/cycle-10.1371-journal.pone.0305300.g002.png', import.meta.url).pathname;
 const CYCLE_TRUTH = new URL('../bench-pmc/truth/cycle-10.1371-journal.pone.0305300.g002.json', import.meta.url).pathname;
 
 test('regression: cycle, small hollow rings at low resolution are a family', { skip: !existsSync(CYCLE) && 'bench-pmc absent' }, () => {
-    // before: no family: 2 of its 212 rings passed as hollow. Still missed: rings the smoother crosses, and those
-    // stacked two to four deep in a column
+    // before: no family: 2 of its 212 rings passed as hollow. Then 160 found, the rings stacked two to four deep in a
+    // column missed (P 1.000, R 0.755); now 207 of 212 (P and R 0.976), the extras beside near-coincident pairs
     const truth = JSON.parse(readFileSync(CYCLE_TRUTH, 'utf8')).dots;
     const results = extractAll(readImage(CYCLE));
     assert.equal(results.length, 1);
     assert.ok(Math.abs(results[0].fit.radius - 6.3) <= 0.5, `radius ${results[0].fit.radius}`);
     const m = matchDots(truth, results[0].fit.dots, results[0].fit.radius / 2);
-    assert.ok(m.precision >= 0.99 && m.recall >= 0.75, `${results[0].fit.dots.length} dots, P ${m.precision.toFixed(3)} R ${m.recall.toFixed(3)}`);
+    assert.ok(m.precision >= 0.97 && m.recall >= 0.97, `${results[0].fit.dots.length} dots, P ${m.precision.toFixed(3)} R ${m.recall.toFixed(3)}`);
 });
 
 test('regression: gray rings are found beside a family whose color darkens the page the same way', () => {
