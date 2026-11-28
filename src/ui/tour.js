@@ -21,18 +21,20 @@ const DOCK_MARGIN = 16; // px between the moved dialog and the view's edges
 // target: the element the step uses; text: measure its first text node (a section's name) instead of the element;
 // layouts: where its number and label go, in order of preference (layoutAt); about: layouts tried first for the
 // number alone beside the About dialog, where it may cover its own target; alignTo: for underAligned, the text whose
-// rightOf number its number lines up with; label: none for a step numbered only beside the About dialog. A step
+// rightOf number its number lines up with; between: [from, to, f], for the between layout, the steps whose numbers
+// its number goes the fraction f of the way across, from one to the other; label: none for a step numbered only
+// beside the About dialog. A step
 // takes the first layout that stays in the window and covers no header control, step target, number or label;
 // failing those (a narrow screen), the same of FALLBACKS, and failing all, whichever covers least. In a big window
 // the labels read in order: 1 and 3 side by side under their buttons, 2 under its section's name, its number over
-// 6's when About shows 6. Beside About the numbers sit close to what they number: 1 and 3 over their buttons' bottom
+// 6's when About shows 6, and 3, 4 and 5 stepping down to the right. Beside About the numbers sit close to what they number: 1 and 3 over their buttons' bottom
 // edges, 5 left of the edit buttons.
 const STEPS = [
     { target: '#open-file', layouts: ['underEnd', 'underStart'], about: ['onEnd'], label: 'Import an image' },
     { target: '#sec-families > summary', text: true, alignTo: '#sec-axes > summary', layouts: ['underAligned', 'underStart', 'rightOf'], label: 'Review and edit dot families' },
     { target: '#fit-run', layouts: ['underStart', 'underEnd'], about: ['onStart'], label: 'Find dots' },
-    { target: '#stage', layouts: ['inside'], label: 'Review the dots found' },
-    { target: '[aria-label="Edit dots"]', layouts: ['underEnd', 'underStart'], about: ['leftOf'], label: 'Fix with Add, Remove and Move' },
+    { target: '#stage', between: [3, 5, 0.35], layouts: ['between', 'inside'], label: 'Review the dots found' },
+    { target: '[aria-label="Edit dots"]', layouts: ['underStart', 'underEnd'], about: ['leftOf'], label: 'Fine-tune dot locations' },
     // Axes and Export aren't needed to get started, and labels there would break the labels' reading order
     { target: '#sec-axes > summary', text: true, layouts: ['rightOf', 'underStart'], label: null },
     { target: '[aria-label="Export"]', layouts: ['leftOf', 'underEnd'], label: null },
@@ -41,6 +43,8 @@ const STEPS = [
 const FALLBACKS = ['below', 'right', 'left'].flatMap(b => ['right', 'left', 'under', 'underLeft', 'above'].map(l => `${b}:${l}`));
 // what neither a number nor a label covers, besides the steps' targets
 const KEEP_CLEAR = 'header button:not([hidden]), header select:not([hidden])';
+// the layouts that need an x from placeSteps
+const NEEDS_X = ['underAligned', 'between'];
 
 const ACTIVITY = ['pointerdown', 'keydown', 'wheel', 'dragenter', 'paste'];
 
@@ -145,7 +149,9 @@ function placeSteps(items, dialog) {
     const covered = (b, own) => taken.reduce((sum, t) => (own && sameBox(t, own) ? sum : sum + overlapArea(b, t, GAP / 2)), 0)
         + NUMBER_WEIGHT * marks.reduce((sum, t) => sum + overlapArea(b, t, GAP / 2), 0);
     const inWindow = b => b.top >= 0 && b.bottom <= H;
-    items.forEach(({ step, badge, label }, i) => {
+    // each number's box once placed, for the between layout, whose steps are placed last
+    const placed = [];
+    const placeOne = ({ step, badge, label }, i) => {
         const r = rects[i];
         const labeled = !!step.label && !dialog;
         // measured while shown
@@ -158,10 +164,10 @@ function placeSteps(items, dialog) {
         }
         let best = null;
         let bestCost = Infinity;
-        const align = step.alignTo ? targetRect(step.alignTo, true) : null;
+        const x = alignedX(step, placed);
         const about = dialog && step.about ? step.about : [];
-        for (const name of [...about, ...step.layouts, ...FALLBACKS].filter(n => n !== 'underAligned' || align)) {
-            const at = layoutAt(name, r, w, h, W, align);
+        for (const name of [...about, ...step.layouts, ...FALLBACKS].filter(n => x != null || !NEEDS_X.includes(n))) {
+            const at = layoutAt(name, r, w, h, W, x);
             const boxes = labeled ? [at.badge, at.label] : [at.badge];
             if (!boxes.every(inWindow))
                 continue;
@@ -174,7 +180,7 @@ function placeSteps(items, dialog) {
             if (cost === 0)
                 break;
         }
-        best ??= layoutAt(step.layouts.find(n => n !== 'underAligned'), r, w, h, W);
+        best ??= layoutAt(step.layouts.find(n => !NEEDS_X.includes(n)), r, w, h, W);
         badge.hidden = !!dialog && overlaps(best.badge, dialog, DIALOG_CLEAR);
         label.hidden = !labeled || badge.hidden;
         if (badge.hidden)
@@ -182,29 +188,52 @@ function placeSteps(items, dialog) {
         badge.style.left = `${best.badge.left}px`;
         badge.style.top = `${best.badge.top}px`;
         marks.push(best.badge);
+        placed[i] = best.badge;
         if (label.hidden)
             return;
         label.style.left = `${best.label.left}px`;
         label.style.top = `${best.label.top}px`;
         marks.push(best.label);
-    });
+    };
+    const order = items.map((item, i) => i);
+    order.sort((a, b) => !!items[a].step.between - !!items[b].step.between);
+    for (const i of order)
+        placeOne(items[i], i);
 }
 
-// The boxes of a number and its label (w × h px; 0 × 0 for none) in one layout by the target's box r, slid along
+// The x of a step's number for the layouts that need one: underAligned's, from its alignTo text; between's, from the
+// numbers of its steps (both placed and shown); null when there is none
+function alignedX(step, placed) {
+    if (step.alignTo) {
+        const a = targetRect(step.alignTo, true);
+        return a ? a.right + GAP : null;
+    }
+    if (step.between) {
+        const [from, to, f] = step.between;
+        const p = placed[from - 1];
+        const q = placed[to - 1];
+        return p && q ? p.left + f * (q.left - p.left) : null;
+    }
+    return null;
+}
+
+// The boxes of a number and its label (w × h px; 0 × 0 for none) in one layout by the target's box r and, for
+// underAligned and between, the number's left x (px), slid along
 // together to stay within the window's width W. The named layouts keep the label after its number, on one line:
 // underStart and underEnd under the target, starting at its left or ending at its right; underAligned further
-// under it, its number where rightOf would put the number of the text a (a's right plus GAP); onStart and onEnd
+// under it, its number at x; between at x, as far down inside the target as inside; onStart and onEnd
 // like underStart and underEnd but moved up over the target's bottom edge; rightOf and leftOf beside it; inside its
 // top-left corner. A fallback, `number:label`, puts the number below, right or left of the target
 // and the label right, left, under, under-and-left-aligned or above the number.
-function layoutAt(name, r, w, h, W, a) {
+function layoutAt(name, r, w, h, W, x0) {
     const span = BADGE + (w ? GAP + w : 0);
     const below = r.bottom + GAP;
     const middle = r.top + r.height / 2 - BADGE / 2;
     const named = {
         underStart: [r.left, below, 'right'],
         underEnd: [r.right - span, below, 'right'],
-        underAligned: a && [a.right + GAP, below + DROP, 'right'],
+        underAligned: [x0, below + DROP, 'right'],
+        between: [x0, r.top + INSET, 'right'],
         onStart: [r.left, r.bottom - OVERLAP, 'right'],
         onEnd: [r.right - span, r.bottom - OVERLAP, 'right'],
         rightOf: [r.right + GAP, middle, 'right'],
